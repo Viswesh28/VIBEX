@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>VIBEX — Music Player</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -491,6 +494,17 @@
   #lyrOvContent { padding: 16px 18px 22px; overflow-y: auto; }
   #lyrOvContent .lyr-line { font-size: 17px; line-height: 1.6; padding: 8px 12px; }
   #lyrOvContent .lyr-plain { font-size: 15px; }
+
+  /* ---------- google login ---------- */
+  #authBox { padding: 0 6px; display: flex; flex-direction: column; gap: 8px; }
+  #loginBtn { width: 100%; font-size: 13px; padding: 10px; }
+  #profileBox { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; }
+  #profPic { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--imgbg); flex-shrink: 0; }
+  #profMeta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #profName { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #profMail { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #logoutBtn { padding: 6px 10px; font-size: 13px; flex-shrink: 0; }
+  #authNote { font-size: 11px; color: var(--muted); line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -513,6 +527,15 @@
     <div class="pl-sec-title side-extra"><span>PLAYLISTS</span><button id="plNewBtn" class="ghost">＋ New</button></div>
     <div id="plNav" class="side-extra"></div>
     <div class="side-div side-extra"></div>
+    <div id="authBox" class="side-extra">
+      <button id="loginBtn" class="ghost">🔐 Login with Google</button>
+      <div id="profileBox" style="display:none">
+        <img id="profPic" alt="" />
+        <div id="profMeta"><b id="profName"></b><span id="profMail"></span></div>
+        <button id="logoutBtn" class="ghost" title="Logout">⏻</button>
+      </div>
+      <div id="authNote"></div>
+    </div>
     <div class="api-box">
       <span id="modeBadge" class="mode-badge">connecting…</span>
       <span id="saverBadge">💾 DATA SAVER</span>
@@ -2247,6 +2270,7 @@ function statsOnPlay() {
   flushStats();
   const s = queue[currentIndex];
   if (!s) return;
+  logPlayToCloud(s);
   statCur = {
     id: s.id,
     name: decodeHtml(s.name),
@@ -2320,6 +2344,7 @@ function renderStats() {
     resultsEl.innerHTML += `<div class="empty-lib"><b>📊</b><p>No stats yet</p><span>Play some music and your listening stats will appear here.</span></div>`;
     setStatus("Play something to start building stats.");
   } else setStatus("Your listening stats — click a song to play it.");
+  renderCloudHistory();
   renderPlNav();
 }
 async function playStatSong(id, name) {
@@ -2523,6 +2548,82 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && lyrOvOpen && !$("plModal").classList.contains("open")) closeLyricsOv();
 });
 setInterval(() => { syncFull(); syncLyricsOv(); }, 250);
+
+// ---------- google login + cloud history (firebase) ----------
+const FIREBASE_CONFIG = null; // <-- paste your Firebase web config here (see README-FIREBASE.md)
+let cloudUser = null, cloudDb = null;
+function initFirebase() {
+  if (!FIREBASE_CONFIG) { $("authNote").textContent = "Cloud sync off — add Firebase config to enable login."; return; }
+  if (typeof firebase === "undefined") { $("authNote").textContent = "Couldn't load Google libraries (offline?)."; return; }
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    cloudDb = firebase.firestore();
+    firebase.auth().onAuthStateChanged(u => { cloudUser = u; paintAuth(); });
+  } catch (e) { $("authNote").textContent = "Firebase init failed: " + e.message; }
+}
+function paintAuth() {
+  const logged = !!cloudUser;
+  $("loginBtn").style.display = logged ? "none" : "block";
+  $("profileBox").style.display = logged ? "flex" : "none";
+  if (logged) {
+    $("profPic").src = cloudUser.photoURL || "";
+    $("profPic").style.display = cloudUser.photoURL ? "block" : "none";
+    $("profName").textContent = cloudUser.displayName || "User";
+    $("profMail").textContent = cloudUser.email || "";
+  }
+  if (view === "stats") renderStats();
+}
+function logPlayToCloud(s) {
+  if (!cloudUser || !cloudDb || !s) return;
+  cloudDb.collection("history").doc(cloudUser.uid).collection("plays").add({
+    id: s.id,
+    name: decodeHtml(s.name),
+    artist: artistsOf(s),
+    img: (s.image && s.image.length) ? s.image[s.image.length - 1].url : "",
+    at: firebase.firestore.FieldValue.serverTimestamp()
+  }).catch(() => {});
+}
+function fmtAgo(ts) {
+  if (!ts || !ts.toDate) return "";
+  const sec = Math.max(0, Math.round((Date.now() - ts.toDate().getTime()) / 1000));
+  if (sec < 60) return "just now";
+  if (sec < 3600) return Math.floor(sec / 60) + "m ago";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h ago";
+  return Math.floor(sec / 86400) + "d ago";
+}
+async function renderCloudHistory() {
+  if (!cloudUser || !cloudDb) return;
+  const sec = document.createElement("div");
+  sec.innerHTML = `<div class="sec-title">☁ Recent plays (all devices)</div><div class="spinner" style="margin:12px auto"></div>`;
+  resultsEl.appendChild(sec);
+  try {
+    const snap = await cloudDb.collection("history").doc(cloudUser.uid).collection("plays").orderBy("at", "desc").limit(20).get();
+    sec.querySelector(".spinner").remove();
+    if (snap.empty) {
+      sec.innerHTML += `<div style="font-size:13px;color:var(--muted)">No cloud plays yet — press play and they appear here.</div>`;
+      return;
+    }
+    snap.forEach(doc => {
+      const p = doc.data() || {};
+      const r = document.createElement("div");
+      r.className = "stat-row";
+      r.innerHTML = `<img src="${p.img || ""}" alt="" onerror="this.style.opacity=.25"/>\n        <div class="s-info"><div class="s-title">${esc(p.name || "Unknown")}</div><div class="s-artist">${esc(p.artist || "")}</div></div>\n        <div class="n">${fmtAgo(p.at)}</div>`;
+      r.onclick = () => playStatSong(p.id, p.name);
+      sec.appendChild(r);
+    });
+  } catch (e) {
+    const sp = sec.querySelector(".spinner");
+    if (sp) sp.remove();
+    sec.innerHTML += `<div style="font-size:13px;color:var(--muted)">Couldn't load cloud history.</div>`;
+  }
+}
+$("loginBtn").onclick = () => {
+  if (!cloudDb) { setStatus("Login isn't configured yet — see README-FIREBASE.md.", true); return; }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  firebase.auth().signInWithPopup(provider).catch(e => setStatus("Login failed: " + e.message, true));
+};
+$("logoutBtn").onclick = () => { if (cloudDb) firebase.auth().signOut(); };
+initFirebase();
 </script>
 </body>
 </html>
