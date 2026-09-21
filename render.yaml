@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: vibex
+    runtime: docker
+    plan: free
+    healthCheckPath: /
