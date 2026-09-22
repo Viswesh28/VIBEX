@@ -1,0 +1,51 @@
+MIT License
+
+Copyright (c) 2024 Viswesh28 and VIBEX contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+---
+
+SCOPE OF THIS LICENSE — PLEASE READ
+
+This MIT license covers ONLY the source code written for VIBEX, namely:
+
+  - music-app/index.html
+  - music-app/server.mjs
+  - Dockerfile, start.sh, setup.sh, render.yaml
+  - this repository's documentation
+
+This license does NOT and CANNOT grant any rights to:
+
+  1. Music recordings, compositions, or master audio — which remain the
+     property of their respective record labels, artists, publishers, and
+     rights holders.
+  2. Album artwork, artist photographs, or other imagery — which remain the
+     property of their respective rights holders.
+  3. Song lyrics — which remain the property of their respective publishers
+     and rights holders.
+  4. The name, logo, or trademarks of JioSaavn, Reliance Industries, or any
+     record label, all of which remain the property of their owners.
+  5. Third-party software bundled or vendored in this repository, which is
+     governed by its own license. See NOTICE.md.
+
+No copyright license to any music or media content is granted or implied by
+this file. See README.md ("Legal & Copyright") and DMCA.md.
+
+---
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
