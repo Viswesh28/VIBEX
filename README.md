@@ -39,7 +39,7 @@
 bash setup.sh
 
 # 2. start the music API (terminal 1)
-cd jiosaavn-api && PORT=3001 bun run run-local.ts
+cd jiosaavn-api && PORT=3001 bun run run-local.mjs
 
 # 3. start the VIBEX UI gateway (terminal 2)
 cd music-app && PORT=8000 API_TARGET=http://127.0.0.1:3001 node server.mjs
@@ -76,7 +76,7 @@ VIBEX/
 │   ├── index.html      # the entire VIBEX app (UI + player + all features)
 │   └── server.mjs      # gateway: serves UI, proxies /api, /dl downloads
 ├── jiosaavn-api/       # music metadata + stream backend (Bun + Hono)
-│   └── run-local.ts    # local runner (port 3001)
+│   └── run-local.mjs   # local runner (port 3001)
 ├── Dockerfile          # single-container build (UI + API together)
 ├── start.sh            # container entrypoint: starts both servers
 ├── render.yaml         # one-click Render blueprint
@@ -87,7 +87,7 @@ VIBEX/
 
 - **Frontend:** vanilla JS + CSS in a single file — zero build step, zero framework
 - **Gateway:** Node.js (static + `/api` proxy + `/dl` download server)
-- **Music API:** Bun + Hono + TypeScript (JioSaavn wrapper)
+- **Music API:** Bun + Hono + JavaScript (JioSaavn wrapper)
 - **Lyrics:** [LRCLIB](https://lrclib.net) (synced, keyless)
 - **Auth + cloud history:** Firebase (optional)
 - **Deploy:** Docker → Render / Railway / Fly / any VPS
