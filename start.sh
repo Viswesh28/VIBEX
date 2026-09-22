@@ -6,7 +6,7 @@ PORT="${PORT:-8000}"
 
 echo "Starting JioSaavn API on :$API_PORT ..."
 cd /app/jiosaavn-api
-PORT="$API_PORT" bun run run-local.ts &
+PORT="$API_PORT" bun run run-local.mjs &
 API_PID=$!
 
 echo "Waiting for API ..."
