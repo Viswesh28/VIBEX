@@ -9,6 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 8000)
 const API_TARGET = process.env.API_TARGET || 'http://127.0.0.1:3001'
 const API_TIMEOUT_MS = Number(process.env.API_TIMEOUT_MS || 15000)
+// How long non-HTML static assets may sit in the browser cache (seconds).
+const STATIC_MAX_AGE = Number(process.env.STATIC_MAX_AGE || 3600)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -142,11 +144,48 @@ const server = http.createServer(async (req, res) => {
       res.end('forbidden')
       return
     }
+    const stat = await fs.stat(file)
+    if (!stat.isFile()) {
+      res.writeHead(404, { 'content-type': 'text/plain' })
+      res.end('not found')
+      return
+    }
+
+    const ext = path.extname(file).toLowerCase()
+    // Weak validator from size + mtime: cheap, and changes whenever the file does.
+    const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`
+    const lastModified = stat.mtime.toUTCString()
+    // HTML revalidates on every load so edits land instantly; other assets may be
+    // held in cache and only revalidated once stale.
+    const cacheControl =
+      ext === '.html' || ext === ''
+        ? 'no-cache'
+        : `public, max-age=${STATIC_MAX_AGE}, must-revalidate`
+
+    // Conditional request -> 304, so repeat loads cost headers instead of the whole file.
+    const inm = req.headers['if-none-match']
+    const ims = req.headers['if-modified-since']
+    const matchesEtag = inm && inm.split(',').some((t) => t.trim() === etag)
+    const notModifiedSince =
+      !inm && ims && Date.parse(ims) >= Math.floor(stat.mtimeMs / 1000) * 1000
+    if (matchesEtag || notModifiedSince) {
+      res.writeHead(304, { etag, 'last-modified': lastModified, 'cache-control': cacheControl })
+      res.end()
+      return
+    }
+
     const data = await fs.readFile(file)
     res.writeHead(200, {
-      'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
-      'cache-control': 'no-store',
+      'content-type': MIME[ext] || 'application/octet-stream',
+      'content-length': data.length,
+      'cache-control': cacheControl,
+      etag,
+      'last-modified': lastModified,
     })
+    if (req.method === 'HEAD') {
+      res.end()
+      return
+    }
     res.end(data)
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain' })
