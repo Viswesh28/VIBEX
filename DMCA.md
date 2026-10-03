@@ -22,9 +22,8 @@ VIBEX is a front-end interface plus an API gateway. It:
   a third-party API, and streams them directly from that service's own CDN to
   the end user's browser.
 
-The only copyrighted-adjacent material that may appear in the repository is
-the reference imagery in `image-search/`, which is excluded from all builds
-and which maintainers are expected to delete before public distribution.
+The repository contains source code and documentation only. README screenshots
+are visual product previews and are not media used by the application.
 
 ---
 

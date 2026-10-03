@@ -20,7 +20,7 @@ This MIT license covers ONLY the source code written for VIBEX, namely:
 
   - music-app/index.html
   - music-app/server.mjs
-  - Dockerfile, start.sh, setup.sh, render.yaml
+  - setup.sh
   - this repository's documentation
 
 This license does NOT and CANNOT grant any rights to:

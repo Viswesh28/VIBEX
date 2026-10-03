@@ -63,6 +63,9 @@ export class AlbumController {
             }
         }), async (ctx) => {
             const { id, link } = ctx.req.valid('query');
+            if (!id && !link) {
+                return ctx.json({ success: false, message: 'Either an album ID or link is required' }, 400);
+            }
             const response = link ? await this.albumService.getAlbumByLink(link) : await this.albumService.getAlbumById(id);
             return ctx.json({ success: true, data: response });
         });

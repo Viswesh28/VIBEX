@@ -730,9 +730,7 @@
 <audio id="audioB" preload="metadata"></audio>
 
 <script>
-const LOCAL_API = "/api";                  // same-origin -> proxied to local jiosaavn-api:3001
-const CLOUD_API = "https://saavn.dev/api"; // public fallback
-let API_BASE = LOCAL_API;
+const API_BASE = "/api"; // same-origin gateway to the local jiosaavn-api service
 
 let currentTab = "songs";
 let view = "home";        // home | library
@@ -814,64 +812,49 @@ function updateEst() {
     `${q} ≈ ${perMin.toFixed(1)} MB/min ≈ ${songMB.toFixed(1)} MB/song`;
   $("npEst").textContent = `💾 ${q} · ~${songMB.toFixed(1)} MB`;
 }
-async function api(path, retried = false) {
-  let r;
+async function api(path) {
+  let response;
   try {
-    r = await fetch(API_BASE + path);
-  } catch (e) {
-    if (!retried && API_BASE === LOCAL_API) return failover(path);
-    throw new Error("Network error - cannot reach " + API_BASE);
+    response = await fetch(API_BASE + path, { headers: { accept: "application/json" } });
+  } catch {
+    throw new Error("Cannot reach the local API. Start both services and open the UI gateway.");
   }
-  if (!r.ok) {
-    if (!retried && API_BASE === LOCAL_API) return failover(path);
-    throw new Error("HTTP " + r.status);
+  let payload;
+  try { payload = await response.json(); } catch {
+    throw new Error("The API returned an invalid response.");
   }
-  let j;
-  try { j = await r.json(); } catch { throw new Error("Bad response from API"); }
-  if (!j || j.success !== true) {
-    if (!retried && API_BASE === LOCAL_API) return failover(path);
-    throw new Error((j && j.message) || "API error");
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.message || `API request failed (${response.status})`);
   }
-  return j.data;
+  return payload.data;
 }
-async function failover(path) {
-  API_BASE = CLOUD_API;
-  const badge = $("modeBadge");
-  badge.textContent = "CLOUD API (saavn.dev)";
-  badge.className = "mode-badge cloud";
-  $("apiUrl").textContent = "Local API failed - switched to public fallback";
-  return api(path, true);
-}
-async function probe(url) {
+
+async function probeApi() {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 8000);
+  const timer = setTimeout(() => ctl.abort(), 8000);
   try {
-    const r = await fetch(url + "/search/songs?query=test&limit=1", { signal: ctl.signal });
-    if (!r.ok) return false;
-    const j = await r.json();
-    return !!(j && j.success === true && j.data && j.data.results);
+    const response = await fetch(`${API_BASE}/search/songs?query=test&limit=1`, {
+      signal: ctl.signal,
+      headers: { accept: "application/json" }
+    });
+    const payload = await response.json().catch(() => null);
+    return response.ok && payload?.success === true && Array.isArray(payload.data?.results);
   } catch { return false; }
-  finally { clearTimeout(t); }
+  finally { clearTimeout(timer); }
 }
+
 async function initApi() {
   const badge = $("modeBadge");
-  if (await probe(LOCAL_API)) {
-    API_BASE = LOCAL_API;
-    badge.textContent = "LOCAL API (port 3001)";
+  if (await probeApi()) {
+    badge.textContent = "LOCAL API (same origin)";
     badge.className = "mode-badge live";
-    $("apiUrl").textContent = "Same-origin /api → your cloned jiosaavn-api";
-  } else if (await probe(CLOUD_API)) {
-    API_BASE = CLOUD_API;
-    badge.textContent = "CLOUD API (saavn.dev)";
-    badge.className = "mode-badge cloud";
-    $("apiUrl").textContent = "Local API down — using public fallback";
-  } else {
-    badge.textContent = "OFFLINE - open Live Preview";
-    badge.className = "mode-badge";
-    setStatus("No API reachable. Are you viewing the FILE preview? It has no network - open the LIVE PREVIEW on port 8000 instead (servers panel). If already on Live Preview, the backend may need a restart - tell me.", true);
-    return false;
+    $("apiUrl").textContent = "Same-origin /api → jiosaavn-api";
+    return true;
   }
-  return true;
+  badge.textContent = "API OFFLINE";
+  badge.className = "mode-badge";
+  setStatus("The local API is unavailable. Start jiosaavn-api on port 3001 and the UI gateway on port 8000.", true);
+  return false;
 }
 
 // ---------- views / library ----------

@@ -4,11 +4,10 @@
 
 **A sleek, Spotify-style music player for the web — search millions of songs, stream in high quality, download, and vibe.**
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Viswesh28/VIBEX)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Stack](https://img.shields.io/badge/stack-Node%20·%20Bun%20·%20Docker-blue)
+![Stack](https://img.shields.io/badge/stack-Node%20·%20Bun%20·%20Hono-blue)
 
-[✨ Features](#-features) · [🚀 Quick Start](#-quick-start) · [☁️ Deploy](#️-deploy-your-own-link) · [🔐 Login Setup](README-FIREBASE.md) · [⚖️ Legal](#legal)
+[✨ Features](#-features) · [🚀 Quick Start](#-quick-start) · [📸 Screenshots](#-screenshots) · [🔐 Login Setup](README-FIREBASE.md) · [⚖️ Legal](#legal)
 
 </div>
 
@@ -65,16 +64,15 @@ cd music-app && PORT=8000 API_TARGET=http://127.0.0.1:3001 node server.mjs
 
 Open **http://localhost:8000** and press play. 🎧
 
-## ☁️ Deploy Your Own Link
+## 📸 Screenshots
 
-One click — free Render hosting, no code changes:
+A quick look at the VIBEX experience. The UI is intentionally framework-free and
+runs directly from `music-app/index.html`.
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Viswesh28/VIBEX)
-
-Or manually: Render → **New +** → **Blueprint** → select this repo → **Apply**.
-Full walkthrough: [README-DEPLOY.md](README-DEPLOY.md).
-
-> 💡 Free-tier servers sleep when idle — the first visit wakes them in ~50s.
+<p align="center">
+  <img src="docs/screenshots/home.jpg" alt="VIBEX home feed" width="48%" />
+  <img src="docs/screenshots/player.jpg" alt="VIBEX music player" width="48%" />
+</p>
 
 ## 🔐 Google Login + Cloud History *(optional)*
 
@@ -95,9 +93,7 @@ VIBEX/
 │   └── server.mjs      # gateway: serves UI, proxies /api, /dl downloads
 ├── jiosaavn-api/       # music metadata + stream backend (Bun + Hono)
 │   └── run-local.mjs   # local runner (port 3001)
-├── Dockerfile          # single-container build (UI + API together)
-├── start.sh            # container entrypoint: starts both servers
-├── render.yaml         # one-click Render blueprint
+├── docs/screenshots/   # README product screenshots
 └── setup.sh            # local dependency installer
 ```
 
@@ -108,14 +104,14 @@ VIBEX/
 - **Music API:** Bun + Hono + JavaScript (JioSaavn wrapper)
 - **Lyrics:** [LRCLIB](https://lrclib.net) (synced, keyless)
 - **Auth + cloud history:** Firebase (optional)
-- **Deploy:** Docker → Render / Railway / Fly / any VPS
+- **Runtime:** local Node.js gateway + Bun API (no deployment configuration included)
 
 <a id="legal"></a>
 
-## ⚖️ Legal & Copyright — Read Before Deploying
+## ⚖️ Legal & Copyright — Read Before Running
 
-This section exists so that rights holders, hosts, and deployers all know
-exactly what this project is. Please read it before you fork or deploy.
+This section exists so that rights holders and users know exactly what this
+project is. Please read it before you run or fork it.
 
 ### 1. What this project is — and what it is not
 
@@ -166,9 +162,9 @@ Full details, including what was modified in the vendored fork, are in
 **[NOTICE.md](NOTICE.md)**. The upstream MIT license is preserved unmodified at
 [`jiosaavn-api/LICENSE`](jiosaavn-api/LICENSE).
 
-### 5. Your responsibility when you deploy this
+### 5. Your responsibility when you run this locally
 
-By deploying your own instance, **you** accept that:
+By running your own instance, **you** accept that:
 
 1. **You are responsible for your own compliance** with the copyright law of
    your jurisdiction and with JioSaavn's Terms of Service.
@@ -181,8 +177,6 @@ By deploying your own instance, **you** accept that:
 5. **Downloading** copies a temporary file to your own device for your own
    offline listening. Redistribution of those files is your action and your
    liability — not this project's.
-6. Remove the `image-search/` reference screenshots before any public
-   distribution (see §7).
 
 ### 6. DMCA and takedown requests
 
@@ -197,21 +191,7 @@ Valid notices are acknowledged **within 72 hours**. Full procedure, required
 elements under 17 U.S.C. § 512(c)(3), and counter-notification steps are in
 **[DMCA.md](DMCA.md)**.
 
-### 7. Action item for maintainers: `image-search/`
-
-The `image-search/` folder holds third-party UI reference screenshots gathered
-during design exploration. They are **not used by the app** and are already
-excluded from the Docker image via `.dockerignore` — but they are committed to
-Git, where they are the one piece of unlicensed third-party media in this
-repository.
-
-**Delete the folder before publishing:**
-
-```bash
-git rm -r image-search && git commit -m "chore: remove third-party reference images"
-```
-
-### 8. Plain-spoken limitation of all the above
+### 7. Plain-spoken limitation of all the above
 
 **Disclaimers do not create legal protection.** No notice in this file makes
 the unlicensed streaming or downloading of copyrighted music lawful, and none
@@ -220,7 +200,7 @@ notices genuinely do is (a) give required attribution to the upstream authors,
 (b) make clear that no media is hosted here, and (c) give rights holders a
 fast, working path to removal.
 
-Nothing in this repository is legal advice. For your own deployment, consult a
+Nothing in this repository is legal advice. For your own use, consult a
 lawyer in your jurisdiction — or, better, use a licensed streaming service.
 
 **Support the artists. 💚 Stream officially, buy the music, go to the shows.**
