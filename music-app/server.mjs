@@ -4,6 +4,7 @@ import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { tagAudio, lyricsQueries } from './tagger.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 8000)
@@ -11,6 +12,12 @@ const API_TARGET = process.env.API_TARGET || 'http://127.0.0.1:3001'
 const API_TIMEOUT_MS = Number(process.env.API_TIMEOUT_MS || 15000)
 // How long non-HTML static assets may sit in the browser cache (seconds).
 const STATIC_MAX_AGE = Number(process.env.STATIC_MAX_AGE || 3600)
+// Tagging needs the whole file in memory; stream anything larger than this untagged.
+const MAX_TAG_BYTES = Number(process.env.MAX_TAG_BYTES || 80 * 1024 * 1024)
+const LYRICS_TIMEOUT_MS = Number(process.env.LYRICS_TIMEOUT_MS || 6000)
+// Reject an LRCLIB hit whose runtime is this far from the track we asked for:
+// it is a different cut, and its synced timestamps would drift out of step.
+const LYRICS_MAX_DRIFT_S = Number(process.env.LYRICS_MAX_DRIFT_S || 15)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -23,6 +30,86 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.mjs': 'text/javascript',
+}
+
+const decodeEntities = (s) =>
+  String(s || '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+
+const artistsOf = (song) => {
+  const primary = song?.artists?.primary
+  const list = Array.isArray(primary) ? primary : Array.isArray(song?.artists) ? song.artists : []
+  return list.map((a) => decodeEntities(a?.name)).filter(Boolean)
+}
+
+function buildTags(song) {
+  return {
+    title: decodeEntities(song?.name),
+    artist: artistsOf(song).join(', '),
+    album: decodeEntities(song?.album?.name),
+    year: song?.year ? String(song.year) : '',
+    genre: song?.language ? decodeEntities(song.language) : '',
+    comment: song?.copyright ? decodeEntities(song.copyright) : '',
+  }
+}
+
+async function fetchCover(song) {
+  try {
+    const imgs = Array.isArray(song?.image) ? song.image : []
+    const pick = imgs.find((i) => i?.quality === '500x500') || imgs[imgs.length - 1]
+    if (!pick?.url) return null
+    const r = await fetch(pick.url, { signal: AbortSignal.timeout(8000) })
+    if (!r.ok) return null
+    const data = Buffer.from(await r.arrayBuffer())
+    if (!data.length) return null
+    return { data, mime: (r.headers.get('content-type') || 'image/jpeg').split(';')[0] }
+  } catch {
+    return null
+  }
+}
+
+// Same LRCLIB lookup the UI does: closest duration wins, synced preferred.
+async function fetchLyricsText(song) {
+  const dur = Number(song?.duration) || 0
+  const queries = lyricsQueries(decodeEntities(song?.name), artistsOf(song))
+  for (const q of queries) {
+    try {
+      const r = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, {
+        headers: { accept: 'application/json', 'user-agent': 'VIBEX' },
+        signal: AbortSignal.timeout(LYRICS_TIMEOUT_MS),
+      })
+      if (!r.ok) continue
+      const arr = await r.json()
+      if (!Array.isArray(arr) || !arr.length) continue
+      // Same song, different release: pick whichever candidate runs closest to
+      // the length JioSaavn reports, so synced timestamps stay in step.
+      const scored = arr
+        .filter((x) => x && !x.instrumental && (x.syncedLyrics || x.plainLyrics))
+        .sort((a, b) => Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur))
+      const best = scored[0]
+      if (!best) continue
+      if (dur && best.duration && Math.abs(best.duration - dur) > LYRICS_MAX_DRIFT_S) continue
+      const text = (best.syncedLyrics || '').trim() || (best.plainLyrics || '').trim()
+      if (text) return text
+    } catch {
+      // Try the next query; lyrics are optional and must never fail a download.
+    }
+  }
+  return null
+}
+
+async function addTags(buf, contentType, song) {
+  if (!song) return buf
+  const tags = buildTags(song)
+  const [cover, lyrics] = await Promise.all([fetchCover(song), fetchLyricsText(song)])
+  if (lyrics) tags.lyrics = lyrics
+  const out = tagAudio(buf, contentType, tags, cover)
+  return out && out.length ? out : buf
 }
 
 const server = http.createServer(async (req, res) => {
@@ -72,13 +159,19 @@ const server = http.createServer(async (req, res) => {
           return CDN_HOSTS.some(x => h === x || h.endsWith('.' + x))
         } catch { return false }
       }
-      const songUrlFromApi = async () => {
+      let songMeta = null
+      const songFromApi = async () => {
+        if (songMeta) return songMeta
         if (!/^[A-Za-z0-9_-]+$/.test(songId)) return null
         const r = await fetch(`${API_TARGET}/api/songs/${songId}`, { headers: { accept: 'application/json' } })
         if (!r.ok) return null
         const j = await r.json().catch(() => null)
         const d = j && j.data
-        const s = Array.isArray(d) ? d[0] : (d && d.songs && d.songs[0]) || (d && d.song) || d
+        songMeta = Array.isArray(d) ? d[0] : (d && d.songs && d.songs[0]) || (d && d.song) || d
+        return songMeta
+      }
+      const songUrlFromApi = async () => {
+        const s = await songFromApi()
         const urls = (s && s.downloadUrl) || []
         if (!urls.length) return null
         const hit = urls.find(x => x.quality === wantQ) || urls[urls.length - 1]
@@ -117,10 +210,30 @@ const server = http.createServer(async (req, res) => {
           'access-control-allow-origin': '*',
           'cache-control': 'no-store',
         }
-        const clen = r.headers.get('content-length')
-        if (clen) headers['content-length'] = clen
+        // Buffer the file so we can write real metadata into it. Anything huge,
+        // or an explicit ?tags=0, falls through to the original raw stream.
+        const clen = Number(r.headers.get('content-length') || 0)
+        const wantTags = url.searchParams.get('tags') !== '0'
+        if (wantTags && songId && (!clen || clen <= MAX_TAG_BYTES)) {
+          try {
+            const raw = Buffer.from(await r.arrayBuffer())
+            const out = await addTags(raw, ct, await songFromApi())
+            headers['content-length'] = String(out.length)
+            res.writeHead(200, headers)
+            res.end(out)
+            return
+          } catch {
+            if (res.headersSent) { try { res.end() } catch {} ; return }
+            // fall through to an untagged retry below
+            const again = await fetchCDN(target)
+            if (again.err || !again.r) { deny(502, 'Download failed'); return }
+            got = again
+          }
+        }
+
+        if (clen) headers['content-length'] = String(clen)
         res.writeHead(200, headers)
-        const reader = r.body.getReader()
+        const reader = got.r.body.getReader()
         let alive = true
         res.on('close', () => { alive = false; try { reader.cancel() } catch {} })
         for (;;) {
