@@ -47,12 +47,8 @@ Upstream project: <https://github.com/sumitkolhe/jiosaavn-api>
 
 ## 3. Client-side libraries loaded at runtime
 
-| Component | License | Owner | Where |
-|---|---|---|---|
-| Firebase JS SDK v10.12.0 (`firebase-app-compat`, `firebase-auth-compat`, `firebase-firestore-compat`) | Apache-2.0 | Google LLC | Loaded from `www.gstatic.com` in `music-app/index.html`. **Optional** — the app runs with `FIREBASE_CONFIG = null`. |
-
-Firebase and Google are trademarks of Google LLC. Use of Firebase is subject
-to the [Firebase Terms of Service](https://firebase.google.com/terms).
+None. `music-app/index.html` ships no third-party JavaScript — the UI, player,
+and visualizer are hand-written vanilla JS with no CDN dependencies.
 
 ---
 

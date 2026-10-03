@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Stack](https://img.shields.io/badge/stack-Node%20·%20Bun%20·%20Hono-blue)
 
-[✨ Features](#-features) · [🚀 Quick Start](#-quick-start) · [📸 Screenshots](#-screenshots) · [🔐 Login Setup](README-FIREBASE.md) · [⚖️ Legal](#legal)
+[✨ Features](#-features) · [🚀 Quick Start](#-quick-start) · [📸 Screenshots](#-screenshots) · [⚖️ Legal](#legal)
 
 </div>
 
@@ -44,7 +44,6 @@
 | 📻 **Endless radio** | Auto-extending stations seeded from any song |
 | 🎵 **Custom playlists** | Create, rename, reorder — saved on your device |
 | 📊 **Listening stats** | Plays, minutes, top songs & artists |
-| 🔐 **Google login** *(optional)* | Cloud-synced listening history across all your devices |
 | 🌗 **Dark / light** | Premium glass UI with a Data Saver mode for slow networks |
 
 ## 🚀 Quick Start
@@ -109,16 +108,6 @@ framework-free and renders straight from `music-app/index.html` — no build ste
   </tr>
 </table>
 
-## 🔐 Google Login + Cloud History *(optional)*
-
-The app works fully without it. To enable cross-device history:
-
-1. Create a free project at [console.firebase.google.com](https://console.firebase.google.com)
-2. Enable **Google sign-in** + **Firestore**
-3. Paste the web config into the marked `FIREBASE_CONFIG` line in `music-app/index.html`
-
-Step-by-step with screenshots-level detail: [README-FIREBASE.md](README-FIREBASE.md).
-
 ## 📁 Project Structure
 
 ```
@@ -138,7 +127,6 @@ VIBEX/
 - **Gateway:** Node.js (static + `/api` proxy + `/dl` download server)
 - **Music API:** Bun + Hono + JavaScript (JioSaavn wrapper)
 - **Lyrics:** [LRCLIB](https://lrclib.net) (synced, keyless)
-- **Auth + cloud history:** Firebase (optional)
 - **Runtime:** local Node.js gateway + Bun API (no deployment configuration included)
 
 <a id="legal"></a>
@@ -177,7 +165,6 @@ to your browser. Nothing is copied onto a VIBEX server at any point.
 - All **songs, compositions, master recordings, album artwork, artist
   imagery, and lyrics** are the exclusive property of their respective record
   labels, artists, publishers, photographers, and other rights holders.
-- **Google™** and **Firebase™** are trademarks of Google LLC.
 - No affiliation, endorsement, or sponsorship by any of the above is claimed
   or implied.
 
@@ -190,7 +177,6 @@ VIBEX stands on other people's work, and they get full credit:
 | `jiosaavn-api/` (vendored fork) | MIT | **Sumit Kolhe** — [upstream](https://github.com/sumitkolhe/jiosaavn-api) |
 | Hono, Zod, Scalar | MIT | respective authors |
 | `node-forge` | BSD-3-Clause | Digital Bazaar, Inc. |
-| Firebase JS SDK | Apache-2.0 | Google LLC |
 | Lyrics | — | **LRCLIB**, credited on-screen |
 
 Full details, including what was modified in the vendored fork, are in
