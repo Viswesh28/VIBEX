@@ -1,6 +1,6 @@
 #!/bin/bash
 # Reinstall everything after a workspace restore (node_modules is never saved).
-# Usage: bash ~/setup.sh
+# Usage: bash setup.sh
 set -e
 export PATH="$HOME/.bun/bin:$PATH"
 if ! command -v bun >/dev/null; then
@@ -9,9 +9,11 @@ if ! command -v bun >/dev/null; then
   export PATH="$HOME/.bun/bin:$PATH"
 fi
 chmod +x "$HOME"/.bun/bin/* 2>/dev/null || true
-cd ~/jiosaavn-api
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR/jiosaavn-api"
 bun install --production
 rm -rf ~/.bun/install/cache && mkdir -p ~/.bun/install/cache
 echo "Done. Start servers with:"
-echo '  PORT=3001 bun run run-local.mjs   (in ~/jiosaavn-api)'
-echo '  PORT=8000 API_TARGET=http://127.0.0.1:3001 node server.mjs   (in ~/music-app)'
+echo '  PORT=3001 bun run run-local.mjs   (from jiosaavn-api/)'
+echo '  PORT=8000 API_TARGET=http://127.0.0.1:3001 node server.mjs   (from music-app/)'
+echo 'Open http://localhost:8000 (the gateway proxies all /api requests).'

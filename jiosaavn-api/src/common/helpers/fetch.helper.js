@@ -9,8 +9,9 @@ export const useFetch = async ({ endpoint, params, context }) => {
     Object.keys(params).forEach((key) => url.searchParams.append(key, String(params[key])));
     const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
     const response = await fetch(url.toString(), {
-        headers: { 'Content-Type': 'application/json', 'User-Agent': randomUserAgent }
+        headers: { Accept: 'application/json', 'User-Agent': randomUserAgent },
+        signal: AbortSignal.timeout(15000)
     });
-    const data = await response.json();
-    return { data: data, ok: response.ok };
+    const data = await response.json().catch(() => null);
+    return { data, ok: response.ok };
 };

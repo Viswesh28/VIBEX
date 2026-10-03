@@ -90,6 +90,9 @@ export class ArtistController {
             }
         }), async (ctx) => {
             const { link, id, page = 0, sortBy = 'popularity', sortOrder = 'asc', songCount = 10, albumCount = 10 } = ctx.req.valid('query');
+            if (!id && !link) {
+                return ctx.json({ success: false, message: 'Either an artist ID or link is required' }, 400);
+            }
             const response = link
                 ? await this.artistService.getArtistByLink({ token: link, page, songCount, albumCount, sortBy, sortOrder })
                 : await this.artistService.getArtistById({ artistId: id, page, songCount, albumCount, sortBy, sortOrder });

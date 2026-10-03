@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 8000)
 const API_TARGET = process.env.API_TARGET || 'http://127.0.0.1:3001'
+const API_TIMEOUT_MS = Number(process.env.API_TIMEOUT_MS || 15000)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -30,7 +31,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
       const target = API_TARGET + url.pathname + url.search
       try {
-        const r = await fetch(target, { headers: { accept: 'application/json' } })
+        const r = await fetch(target, {
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        })
         const buf = Buffer.from(await r.arrayBuffer())
         res.writeHead(r.status, {
           'content-type': r.headers.get('content-type') || 'application/json',
@@ -133,7 +137,7 @@ const server = http.createServer(async (req, res) => {
     // --- Static files ---
     const p = url.pathname === '/' ? '/index.html' : url.pathname
     const file = path.normalize(path.join(__dirname, decodeURIComponent(p)))
-    if (!file.startsWith(__dirname)) {
+    if (path.relative(__dirname, file).startsWith('..' + path.sep) || path.isAbsolute(path.relative(__dirname, file))) {
       res.writeHead(403)
       res.end('forbidden')
       return

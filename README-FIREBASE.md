@@ -74,8 +74,7 @@ Google login only works on domains you allow:
 
 1. Firebase console → **Authentication → Settings → Authorized domains** →
    **Add domain**.
-2. Add your Render domain (e.g. `vibex.onrender.com`).
-   (For local testing, `localhost` already works.)
+2. Add the domain where you run VIBEX (for local testing, `localhost` already works).
 
 ## What you get
 

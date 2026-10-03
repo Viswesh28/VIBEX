@@ -82,13 +82,11 @@ labels, artists, publishers, photographers, and other rights holders.
 
 ---
 
-## 6. Reference material
+## 6. README screenshots
 
-The `image-search/` directory, if present, contains third-party UI reference
-screenshots collected during design exploration. **These images are not part
-of the application, are not shipped in the Docker image (see `.dockerignore`),
-and are not covered by this project's license.** They should be removed before
-any public distribution — see README.md ("Legal & Copyright").
+The images under `docs/screenshots/` are static UI previews included for
+documentation only. They are not loaded by the application and contain no
+audio, artwork catalogue, lyrics, or other streaming media.
 
 ---
 
