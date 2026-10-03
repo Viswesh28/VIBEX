@@ -57,16 +57,19 @@ bash setup.sh
 # 2. start the music API (terminal 1)
 cd jiosaavn-api && PORT=3001 bun run run-local.mjs
 
-# 3. start the VIBEX UI gateway (terminal 2)
-cd music-app && PORT=8000 API_TARGET=http://127.0.0.1:3001 node server.mjs
+# 3. build the front-end and start the VIBEX gateway (terminal 2)
+cd music-app && npm install && npm start
 ```
+
+`npm start` runs the Vite build and then the gateway. During UI work,
+`npm run dev` gives you Vite's dev server with hot reload; it proxies `/api`
+and `/dl` to the gateway, so keep that running too.
 
 Open **http://localhost:8000** and press play. 🎧
 
 ## 📸 Screenshots
 
-Real captures from a local run against the bundled API. The UI is intentionally
-framework-free and renders straight from `music-app/index.html` — no build step.
+Real captures from a local run against the bundled API.
 
 <p align="center">
   <img src="docs/screenshots/home.jpg" alt="VIBEX home feed with trending Tamil and Bollywood playlists" width="100%" />
@@ -113,8 +116,15 @@ framework-free and renders straight from `music-app/index.html` — no build ste
 ```
 VIBEX/
 ├── music-app/
-│   ├── index.html      # the entire VIBEX app (UI + player + all features)
-│   └── server.mjs      # gateway: serves UI, proxies /api, /dl downloads
+│   ├── src/
+│   │   ├── components/ # UI components (sidebar, player bar, views, overlays)
+│   │   ├── state/      # React contexts: settings, library, player, UI, status
+│   │   ├── hooks/      # visualizer, lyrics sync, sleep timer, shortcuts
+│   │   ├── lib/        # api client, formatters, song helpers, LRC parser
+│   │   └── styles/     # global stylesheet
+│   ├── index.html      # Vite entry shell
+│   ├── tagger.mjs      # zero-dependency ID3v2.3 / MP4 tag writer
+│   └── server.mjs      # gateway: serves the build, proxies /api, /dl downloads
 ├── jiosaavn-api/       # music metadata + stream backend (Bun + Hono)
 │   └── run-local.mjs   # local runner (port 3001)
 ├── docs/screenshots/   # README product screenshots
@@ -123,7 +133,7 @@ VIBEX/
 
 ## 🛠️ Tech Stack
 
-- **Frontend:** vanilla JS + CSS in a single file — zero build step, zero framework
+- **Frontend:** React 18 + Vite — component-based, built to static assets
 - **Gateway:** Node.js (static + `/api` proxy + `/dl` download server)
 - **Music API:** Bun + Hono + JavaScript (JioSaavn wrapper)
 - **Lyrics:** [LRCLIB](https://lrclib.net) (synced, keyless)

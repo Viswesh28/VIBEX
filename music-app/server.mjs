@@ -1,5 +1,6 @@
-// Gateway: serves this folder's static files + proxies /api/* to the local JioSaavn API.
-// Run: PORT=8000 API_TARGET=http://127.0.0.1:3001 node server.mjs
+// Gateway: serves the built React app + proxies /api/* to the local JioSaavn API.
+// Run: npm run build && PORT=8000 API_TARGET=http://127.0.0.1:3001 node server.mjs
+// (or `npm start`, which does both).
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -12,6 +13,8 @@ const API_TARGET = process.env.API_TARGET || 'http://127.0.0.1:3001'
 const API_TIMEOUT_MS = Number(process.env.API_TIMEOUT_MS || 15000)
 // How long non-HTML static assets may sit in the browser cache (seconds).
 const STATIC_MAX_AGE = Number(process.env.STATIC_MAX_AGE || 3600)
+// Vite's output. Filenames there are content-hashed, so they can be cached hard.
+const STATIC_ROOT = process.env.STATIC_ROOT || path.join(__dirname, 'dist')
 // Tagging needs the whole file in memory; stream anything larger than this untagged.
 const MAX_TAG_BYTES = Number(process.env.MAX_TAG_BYTES || 80 * 1024 * 1024)
 const LYRICS_TIMEOUT_MS = Number(process.env.LYRICS_TIMEOUT_MS || 6000)
@@ -249,16 +252,29 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
-    // --- Static files ---
+    // --- Static files (the Vite build) ---
     const p = url.pathname === '/' ? '/index.html' : url.pathname
-    const file = path.normalize(path.join(__dirname, decodeURIComponent(p)))
-    if (path.relative(__dirname, file).startsWith('..' + path.sep) || path.isAbsolute(path.relative(__dirname, file))) {
+    let file = path.normalize(path.join(STATIC_ROOT, decodeURIComponent(p)))
+    const rel = path.relative(STATIC_ROOT, file)
+    if (rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
       res.writeHead(403)
       res.end('forbidden')
       return
     }
-    const stat = await fs.stat(file)
-    if (!stat.isFile()) {
+
+    let stat = await fs.stat(file).catch(() => null)
+    // Single-page app: anything that isn't a real file falls back to the shell,
+    // so a deep link or a refresh still boots the client.
+    if ((!stat || !stat.isFile()) && !path.extname(file)) {
+      file = path.join(STATIC_ROOT, 'index.html')
+      stat = await fs.stat(file).catch(() => null)
+    }
+    if (!stat || !stat.isFile()) {
+      if (!(await fs.stat(STATIC_ROOT).catch(() => null))) {
+        res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('The front-end has not been built yet. Run `npm install && npm run build` in music-app/.')
+        return
+      }
       res.writeHead(404, { 'content-type': 'text/plain' })
       res.end('not found')
       return
@@ -270,10 +286,15 @@ const server = http.createServer(async (req, res) => {
     const lastModified = stat.mtime.toUTCString()
     // HTML revalidates on every load so edits land instantly; other assets may be
     // held in cache and only revalidated once stale.
+    // Vite fingerprints everything under /assets/, so those can be cached hard
+    // and never revalidated; the HTML shell that references them must not be.
+    const hashed = url.pathname.startsWith('/assets/')
     const cacheControl =
       ext === '.html' || ext === ''
         ? 'no-cache'
-        : `public, max-age=${STATIC_MAX_AGE}, must-revalidate`
+        : hashed
+          ? 'public, max-age=31536000, immutable'
+          : `public, max-age=${STATIC_MAX_AGE}, must-revalidate`
 
     // Conditional request -> 304, so repeat loads cost headers instead of the whole file.
     const inm = req.headers['if-none-match']

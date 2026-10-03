@@ -45,10 +45,23 @@ Upstream project: <https://github.com/sumitkolhe/jiosaavn-api>
 
 ---
 
-## 3. Client-side libraries loaded at runtime
+## 3. Client-side libraries
 
-None. `music-app/index.html` ships no third-party JavaScript — the UI, player,
-and visualizer are hand-written vanilla JS with no CDN dependencies.
+The front-end in `music-app/` is a React application built with Vite.
+
+| Package | License | Author / Owner |
+|---|---|---|
+| `react` | MIT | Meta Platforms, Inc. and affiliates |
+| `react-dom` | MIT | Meta Platforms, Inc. and affiliates |
+| `vite` | MIT | Evan You and Vite contributors |
+| `@vitejs/plugin-react` | MIT | Evan You and Vite contributors |
+
+Nothing is loaded from a CDN at runtime: React is bundled into the hashed
+assets under `music-app/dist/assets/`, which the gateway serves same-origin.
+
+Everything else in the UI — the dual-deck crossfading player, the canvas
+visualizer, the LRC parser and lyrics sync, and the ID3/MP4 tag writer in
+`music-app/tagger.mjs` — is hand-written with no further dependencies.
 
 ---
 
