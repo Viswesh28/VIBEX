@@ -66,13 +66,48 @@ Open **http://localhost:8000** and press play. 🎧
 
 ## 📸 Screenshots
 
-A quick look at the VIBEX experience. The UI is intentionally framework-free and
-runs directly from `music-app/index.html`.
+Real captures from a local run against the bundled API. The UI is intentionally
+framework-free and renders straight from `music-app/index.html` — no build step.
 
 <p align="center">
-  <img src="docs/screenshots/home.jpg" alt="VIBEX home feed" width="48%" />
-  <img src="docs/screenshots/player.jpg" alt="VIBEX music player" width="48%" />
+  <img src="docs/screenshots/home.jpg" alt="VIBEX home feed with trending Tamil and Bollywood playlists" width="100%" />
+  <br/><sub><b>Home</b> — trending feed, pulled live</sub>
 </p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/player.jpg" alt="Now playing with live spectrum visualizer and queue" /></td>
+    <td width="50%"><img src="docs/screenshots/fullscreen.jpg" alt="Immersive full-screen player" /></td>
+  </tr>
+  <tr>
+    <td><sub><b>Now playing</b> — live spectrum visualizer, queue, 320 kbps download</sub></td>
+    <td><sub><b>Full-screen</b> — immersive view, click any song title to enter</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/lyrics.jpg" alt="Time-synced lyrics with the active line highlighted" /></td>
+    <td><img src="docs/screenshots/search.jpg" alt="Search results for songs" /></td>
+  </tr>
+  <tr>
+    <td><sub><b>Synced lyrics</b> — karaoke-style line highlighting via LRCLIB</sub></td>
+    <td><sub><b>Search</b> — songs, albums, playlists &amp; artists</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/artist.jpg" alt="Artist page showing follower count and top songs" /></td>
+    <td><img src="docs/screenshots/library.jpg" alt="Library of liked songs" /></td>
+  </tr>
+  <tr>
+    <td><sub><b>Artist</b> — follower counts, top songs, artist radio</sub></td>
+    <td><sub><b>Library</b> — everything you've hearted, stored on device</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/stats.jpg" alt="Listening statistics" /></td>
+    <td><img src="docs/screenshots/light.jpg" alt="Light theme" /></td>
+  </tr>
+  <tr>
+    <td><sub><b>Stats</b> — plays, minutes listened, top songs &amp; artists</sub></td>
+    <td><sub><b>Light theme</b> — one-click toggle, same glass UI</sub></td>
+  </tr>
+</table>
 
 ## 🔐 Google Login + Cloud History *(optional)*
 
