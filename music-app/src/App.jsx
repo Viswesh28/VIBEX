@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { probeApi } from './lib/api.js'
 import { dlUrlFor } from './lib/song.js'
+import { isNative } from './lib/config.js'
 import { decodeHtml } from './lib/format.js'
 
 import { ArtistView } from './components/ArtistView.jsx'
@@ -15,21 +16,31 @@ import { PlaylistModal } from './components/PlaylistModal.jsx'
 import { PlaylistView } from './components/PlaylistView.jsx'
 import { SearchView } from './components/SearchView.jsx'
 import { Sidebar } from './components/Sidebar.jsx'
+import { MobileNav } from './components/MobileNav.jsx'
 import { StatsView } from './components/StatsView.jsx'
 import { Chips, TopBar } from './components/TopBar.jsx'
 
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts.js'
+import { useMediaSession } from './hooks/useMediaSession.js'
+import { useAndroidBack } from './hooks/useAndroidBack.js'
 import { useSleepTimer } from './hooks/useSleepTimer.js'
 import { usePlayer } from './state/PlayerContext.jsx'
+import { useSettings } from './state/SettingsContext.jsx'
 import { useStatus } from './state/StatusContext.jsx'
 import { useUI } from './state/UIContext.jsx'
 
 export default function App() {
   const [apiOnline, setApiOnline] = useState(null)
+  const [drawer, setDrawer] = useState(false)
+  // Native builds with no backend address can't probe anything yet.
   const [heading, setHeading] = useState({ title: 'Home', count: '' })
 
   const { status, setStatus } = useStatus()
-  const { current, currentQuality, togglePlay, nextTrack, prevTrack, seekBy, pause } = usePlayer()
+  const {
+    current, currentQuality, isPlaying, clock,
+    togglePlay, nextTrack, prevTrack, seekBy, seekTo, play, pause,
+  } = usePlayer()
+  const { dataSaver } = useSettings()
   const {
     view, back, canGoBack, searchQuery, searchTab,
     plModal, fullOpen, setFullOpen, lyricsOpen, setLyricsOpen, closePlaylistModal,
@@ -59,6 +70,20 @@ export default function App() {
     else if (lyricsOpen) setLyricsOpen(false)
     else if (fullOpen) setFullOpen(false)
   }, [plModal, lyricsOpen, fullOpen, closePlaylistModal, setLyricsOpen, setFullOpen])
+
+  // Lockscreen / notification controls. Essential once this runs on a phone,
+  // and a genuine upgrade for desktop media keys too.
+  const mediaActions = useMemo(
+    () => ({ play, pause, next: nextTrack, prev: prevTrack, seekBy, seekTo }),
+    [play, pause, nextTrack, prevTrack, seekBy, seekTo]
+  )
+  useMediaSession({ current, isPlaying, clock, dataSaver, actions: mediaActions })
+
+  const backActions = useMemo(
+    () => ({ closeDrawer: () => setDrawer(false), closePlaylistModal, setLyricsOpen, setFullOpen, back }),
+    [closePlaylistModal, setLyricsOpen, setFullOpen, back]
+  )
+  useAndroidBack({ drawer, plModal, lyricsOpen, fullOpen, canGoBack, actions: backActions })
 
   useKeyboardShortcuts({
     onToggle: togglePlay,
@@ -94,13 +119,29 @@ export default function App() {
    * the response as a real user-initiated download rather than a popup.
    */
   const onDownload = useCallback(
-    (e) => {
+    async (e) => {
       e?.preventDefault()
       if (!current) {
         setStatus('No downloadable link for this song — replay it and retry.', true)
         return
       }
-      const w = window.open(dlUrlFor(current, currentQuality), 'vibex_dl')
+      // Android has no gateway to ask, so it fetches, tags and saves the file
+      // itself using the very same tagger the server uses.
+      if (isNative()) {
+        try {
+          const { downloadSongNative } = await import('./lib/download.js')
+          const r = await downloadSongNative(current, currentQuality, (stage) =>
+            setStatus(`${stage} ${decodeHtml(current.name)}`)
+          )
+          const mb = (r.bytes / 1048576).toFixed(1)
+          setStatus(`Saved ${r.name} (${mb} MB${r.tagged ? ', tagged' : ''}) to Documents/VIBEX`)
+        } catch (err) {
+          setStatus(err?.message || 'Download failed.', true)
+        }
+        return
+      }
+      const url = dlUrlFor(current, currentQuality)
+      const w = window.open(url, 'vibex_dl')
       if (!w) setStatus("Popup blocked — right-click the ⬇ button and choose 'Save link as…'.", true)
       else setStatus(`Downloading: ${decodeHtml(current.name)} — check your Downloads folder.`)
     },
@@ -112,8 +153,12 @@ export default function App() {
       return (
         <div className="empty-lib">
           <b>🔌</b>
-          <p>API offline</p>
-          <span>Start jiosaavn-api on port 3001, then reload.</span>
+          <p>{isNative() ? 'No connection' : 'API offline'}</p>
+          <span>
+            {isNative()
+              ? 'VIBEX needs the internet to reach JioSaavn. Reconnect and reopen the app.'
+              : 'Start jiosaavn-api on port 3001, then reload.'}
+          </span>
         </div>
       )
     switch (view.kind) {
@@ -141,9 +186,12 @@ export default function App() {
   return (
     <>
       <div id="app">
-        <Sidebar apiOnline={apiOnline} />
+        <Sidebar apiOnline={apiOnline} open={drawer} onClose={() => setDrawer(false)} />
+        {drawer && (
+          <div className="drawer-scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
+        )}
         <div id="mainCol">
-          <TopBar sleep={sleep} />
+          <TopBar sleep={sleep} onMenu={() => setDrawer(true)} />
           <main id="content">
             {showChips && <Chips />}
             {showBack && (
@@ -163,6 +211,7 @@ export default function App() {
         <NowPlaying onDownload={onDownload} />
       </div>
 
+      <MobileNav />
       <PlayerBar onDownload={onDownload} />
       <FullPlayer onDownload={onDownload} />
       <LyricsOverlay />

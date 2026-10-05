@@ -6,7 +6,7 @@ import { useUI } from '../state/UIContext.jsx'
 const TABS = ['songs', 'albums', 'playlists', 'artists']
 const CHIPS = ['Anirudh hits', 'A.R. Rahman', 'Tamil 90s hits', 'Arijit Singh', 'Ilaiyaraaja', 'Vijay songs']
 
-export function TopBar({ sleep }) {
+export function TopBar({ sleep, onMenu }) {
   const { theme, toggleTheme } = useSettings()
   const { searchQuery, setSearchQuery, searchTab, search } = useUI()
   const [setOpen, setSetOpen] = useState(false)
@@ -23,6 +23,9 @@ export function TopBar({ sleep }) {
 
   return (
     <header id="topbar">
+      <button id="menuBtn" className="ghost" aria-label="Open menu" onClick={onMenu}>
+        ☰
+      </button>
       <div className="search-wrap">
         <input
           id="searchInput"

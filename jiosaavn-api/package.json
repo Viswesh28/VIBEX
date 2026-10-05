@@ -9,8 +9,11 @@
   "main": "src/server.js",
   "module": "src/server.js",
   "exports": {
-    "require": "./src/server.js",
-    "import": "./src/server.js"
+    ".": {
+      "require": "./src/server.js",
+      "import": "./src/server.js"
+    },
+    "./src/*": "./src/*"
   },
   "sideEffects": false,
   "imports": {

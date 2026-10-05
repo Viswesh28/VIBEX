@@ -5,7 +5,7 @@ import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { tagAudio, lyricsQueries } from './tagger.mjs'
+import { addTags } from './tagger.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 8000)
@@ -35,89 +35,51 @@ const MIME = {
   '.mjs': 'text/javascript',
 }
 
-const decodeEntities = (s) =>
-  String(s || '')
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-
-const artistsOf = (song) => {
-  const primary = song?.artists?.primary
-  const list = Array.isArray(primary) ? primary : Array.isArray(song?.artists) ? song.artists : []
-  return list.map((a) => decodeEntities(a?.name)).filter(Boolean)
-}
-
-function buildTags(song) {
-  return {
-    title: decodeEntities(song?.name),
-    artist: artistsOf(song).join(', '),
-    album: decodeEntities(song?.album?.name),
-    year: song?.year ? String(song.year) : '',
-    genre: song?.language ? decodeEntities(song.language) : '',
-    comment: song?.copyright ? decodeEntities(song.copyright) : '',
-  }
-}
-
-async function fetchCover(song) {
-  try {
-    const imgs = Array.isArray(song?.image) ? song.image : []
-    const pick = imgs.find((i) => i?.quality === '500x500') || imgs[imgs.length - 1]
-    if (!pick?.url) return null
-    const r = await fetch(pick.url, { signal: AbortSignal.timeout(8000) })
-    if (!r.ok) return null
-    const data = Buffer.from(await r.arrayBuffer())
-    if (!data.length) return null
-    return { data, mime: (r.headers.get('content-type') || 'image/jpeg').split(';')[0] }
-  } catch {
-    return null
-  }
-}
-
-// Same LRCLIB lookup the UI does: closest duration wins, synced preferred.
-async function fetchLyricsText(song) {
-  const dur = Number(song?.duration) || 0
-  const queries = lyricsQueries(decodeEntities(song?.name), artistsOf(song))
-  for (const q of queries) {
-    try {
-      const r = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, {
-        headers: { accept: 'application/json', 'user-agent': 'VIBEX' },
-        signal: AbortSignal.timeout(LYRICS_TIMEOUT_MS),
-      })
-      if (!r.ok) continue
-      const arr = await r.json()
-      if (!Array.isArray(arr) || !arr.length) continue
-      // Same song, different release: pick whichever candidate runs closest to
-      // the length JioSaavn reports, so synced timestamps stay in step.
-      const scored = arr
-        .filter((x) => x && !x.instrumental && (x.syncedLyrics || x.plainLyrics))
-        .sort((a, b) => Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur))
-      const best = scored[0]
-      if (!best) continue
-      if (dur && best.duration && Math.abs(best.duration - dur) > LYRICS_MAX_DRIFT_S) continue
-      const text = (best.syncedLyrics || '').trim() || (best.plainLyrics || '').trim()
-      if (text) return text
-    } catch {
-      // Try the next query; lyrics are optional and must never fail a download.
-    }
-  }
-  return null
-}
-
-async function addTags(buf, contentType, song) {
-  if (!song) return buf
-  const tags = buildTags(song)
-  const [cover, lyrics] = await Promise.all([fetchCover(song), fetchLyricsText(song)])
-  if (lyrics) tags.lyrics = lyrics
-  const out = tagAudio(buf, contentType, tags, cover)
-  return out && out.length ? out : buf
-}
-
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`)
+
+    // The mobile build runs from https://localhost inside a WebView, so every
+    // call to this gateway is cross-origin. Answer preflights for the two
+    // endpoints it uses; static assets are served from the bundle, not here.
+    if (req.method === 'OPTIONS' && (url.pathname === '/dl' || url.pathname.startsWith('/api'))) {
+      res.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+        'access-control-allow-headers': 'accept, content-type, range',
+        'access-control-expose-headers': 'content-disposition, content-length',
+        'access-control-max-age': '86400',
+      })
+      res.end()
+      return
+    }
+
+    /**
+     * Liveness probe for the host (Render/Fly health checks).
+     *
+     * It deliberately checks the API child too, because the container runs
+     * both processes: a gateway that answers 200 while the API is dead would
+     * keep a broken deploy marked healthy. Upstream JioSaavn is *not* probed —
+     * their outage shouldn't cause our instance to be recycled.
+     */
+    if (url.pathname === '/healthz') {
+      let api = 'down'
+      try {
+        const r = await fetch(`${API_TARGET}/api/search/songs?query=a&limit=1`, {
+          signal: AbortSignal.timeout(4000),
+        })
+        api = r.ok ? 'up' : `http ${r.status}`
+      } catch {
+        api = 'down'
+      }
+      const ok = api === 'up'
+      res.writeHead(ok ? 200 : 503, {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+      })
+      res.end(JSON.stringify({ ok, gateway: 'up', api, uptime: Math.round(process.uptime()) }))
+      return
+    }
 
     // --- Proxy API to JioSaavn backend ---
     if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
@@ -211,6 +173,7 @@ const server = http.createServer(async (req, res) => {
           'content-type': ct,
           'content-disposition': `attachment; filename="${safe}.${ext}"`,
           'access-control-allow-origin': '*',
+          'access-control-expose-headers': 'content-disposition, content-length',
           'cache-control': 'no-store',
         }
         // Buffer the file so we can write real metadata into it. Anything huge,
@@ -220,7 +183,10 @@ const server = http.createServer(async (req, res) => {
         if (wantTags && songId && (!clen || clen <= MAX_TAG_BYTES)) {
           try {
             const raw = Buffer.from(await r.arrayBuffer())
-            const out = await addTags(raw, ct, await songFromApi())
+            const out = await addTags(raw, ct, await songFromApi(), {
+              timeoutMs: LYRICS_TIMEOUT_MS,
+              maxDriftS: LYRICS_MAX_DRIFT_S,
+            })
             headers['content-length'] = String(out.length)
             res.writeHead(200, headers)
             res.end(out)

@@ -6,16 +6,65 @@
 // Both take the same plain `tags` object and an optional cover image, and both
 // return the original buffer untouched if anything looks wrong — a download that
 // loses its tags is a nuisance, a download that loses its audio is a bug.
+//
+// Everything below is plain Uint8Array rather than Buffer, so the exact same
+// module runs in the Node gateway and inside the app's WebView. Buffer is a
+// Uint8Array subclass, so Node callers can still hand us one directly.
+
+const alloc = (n) => new Uint8Array(n)
+
+const bytes = (arr) => Uint8Array.from(arr)
+
+function concat(parts) {
+  let total = 0
+  for (const p of parts) total += p.length
+  const out = new Uint8Array(total)
+  let off = 0
+  for (const p of parts) {
+    out.set(p, off)
+    off += p.length
+  }
+  return out
+}
+
+// Latin-1 is a byte-for-byte mapping, which is exactly what atom types and
+// ID3 frame IDs need — TextEncoder would mangle anything above 0x7f (e.g. the
+// '\xa9' that prefixes every iTunes text atom).
+const latin1 = (s) => Uint8Array.from(String(s), (c) => c.charCodeAt(0) & 0xff)
+
+const utf8 = (s) => new TextEncoder().encode(String(s))
+
+function utf16le(s) {
+  const str = String(s)
+  const out = new Uint8Array(str.length * 2)
+  const view = new DataView(out.buffer)
+  for (let i = 0; i < str.length; i++) view.setUint16(i * 2, str.charCodeAt(i), true)
+  return out
+}
+
+const view = (u8) => new DataView(u8.buffer, u8.byteOffset, u8.byteLength)
+
+const rdU32 = (u8, off) => view(u8).getUint32(off)
+const rdU64 = (u8, off) => view(u8).getBigUint64(off)
+const wrU32 = (u8, off, v) => view(u8).setUint32(off, v >>> 0)
+const wrU64 = (u8, off, v) => view(u8).setBigUint64(off, v)
+
+// Latin-1 decode of a byte range, used to read 4-char atom types.
+function str(u8, start, end) {
+  let out = ''
+  for (let i = start; i < end; i++) out += String.fromCharCode(u8[i])
+  return out
+}
 
 const u32 = (n) => {
-  const b = Buffer.alloc(4)
-  b.writeUInt32BE(n >>> 0)
+  const b = alloc(4)
+  wrU32(b, 0, n)
   return b
 }
 
 const box = (type, ...parts) => {
-  const body = Buffer.concat(parts)
-  return Buffer.concat([u32(body.length + 8), Buffer.from(type, 'latin1'), body])
+  const body = concat(parts)
+  return concat([u32(body.length + 8), latin1(type), body])
 }
 
 // ---------------------------------------------------------------- MP4 / M4A
@@ -27,17 +76,17 @@ function iterBoxes(buf, start, end) {
   const out = []
   let off = start
   while (off + 8 <= end) {
-    let size = buf.readUInt32BE(off)
+    let size = rdU32(buf, off)
     let hdr = 8
     if (size === 1) {
       if (off + 16 > end) break
-      size = Number(buf.readBigUInt64BE(off + 8))
+      size = Number(rdU64(buf, off + 8))
       hdr = 16
     } else if (size === 0) {
       size = end - off
     }
     if (size < hdr || off + size > end) break
-    out.push({ type: buf.toString('latin1', off + 4, off + 8), start: off, size, hdr })
+    out.push({ type: str(buf, off + 4, off + 8), start: off, size, hdr })
     off += size
   }
   return out
@@ -46,9 +95,9 @@ function iterBoxes(buf, start, end) {
 // `data` box: version(1) + flags(3) + locale(4) + payload.
 // flags 1 = UTF-8 text, 13 = JPEG, 14 = PNG.
 const dataBox = (flags, payload) =>
-  box('data', Buffer.from([0, 0, 0, flags & 0xff]), Buffer.alloc(4), payload)
+  box('data', bytes([0, 0, 0, flags & 0xff]), alloc(4), payload)
 
-const textItem = (type, value) => box(type, dataBox(1, Buffer.from(String(value), 'utf8')))
+const textItem = (type, value) => box(type, dataBox(1, utf8(value)))
 
 function buildIlst(tags, cover) {
   const items = []
@@ -78,11 +127,11 @@ function buildUdta(ilst) {
     'hdlr',
     u32(0), // version + flags
     u32(0), // pre_defined
-    Buffer.from('mdir', 'latin1'),
-    Buffer.from('appl', 'latin1'),
+    latin1('mdir'),
+    latin1('appl'),
     u32(0),
     u32(0),
-    Buffer.from([0]) // empty name
+    bytes([0]) // empty name
   )
   const meta = box('meta', u32(0), hdlr, ilst) // meta is a full box
   return box('udta', meta)
@@ -96,17 +145,17 @@ function patchChunkOffsets(moovBuf, start, end, delta, threshold) {
     const bodyEnd = b.start + b.size
     if (b.type === 'stco' || b.type === 'co64') {
       if (bodyStart + 8 > bodyEnd) continue
-      const count = moovBuf.readUInt32BE(bodyStart + 4)
+      const count = rdU32(moovBuf, bodyStart + 4)
       const wide = b.type === 'co64'
       const step = wide ? 8 : 4
       let p = bodyStart + 8
       for (let i = 0; i < count && p + step <= bodyEnd; i++, p += step) {
         if (wide) {
-          const v = moovBuf.readBigUInt64BE(p)
-          if (v > BigInt(threshold)) moovBuf.writeBigUInt64BE(v + BigInt(delta), p)
+          const v = rdU64(moovBuf, p)
+          if (v > BigInt(threshold)) wrU64(moovBuf, p, v + BigInt(delta))
         } else {
-          const v = moovBuf.readUInt32BE(p)
-          if (v > threshold) moovBuf.writeUInt32BE(v + delta, p)
+          const v = rdU32(moovBuf, p)
+          if (v > threshold) wrU32(moovBuf, p, v + delta)
         }
       }
     } else if (CONTAINERS.has(b.type)) {
@@ -136,7 +185,7 @@ export function tagM4A(buf, tags, cover) {
     const delta = newMoov.length - moov.size
     if (delta !== 0) patchChunkOffsets(newMoov, 8, newMoov.length, delta, moov.start)
 
-    return Buffer.concat([
+    return concat([
       buf.subarray(0, moov.start),
       newMoov,
       buf.subarray(moov.start + moov.size),
@@ -148,15 +197,13 @@ export function tagM4A(buf, tags, cover) {
 
 // --------------------------------------------------------------------- MP3
 
-const utf16 = (s) =>
-  Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(String(s), 'utf16le'), Buffer.from([0, 0])])
+const utf16 = (s) => concat([bytes([0xff, 0xfe]), utf16le(s), bytes([0, 0])])
 
-const id3Frame = (id, body) =>
-  Buffer.concat([Buffer.from(id, 'latin1'), u32(body.length), Buffer.from([0, 0]), body])
+const id3Frame = (id, body) => concat([latin1(id), u32(body.length), bytes([0, 0]), body])
 
 // ID3v2.3 sizes are "syncsafe": 7 bits per byte.
 function syncsafe(n) {
-  return Buffer.from([(n >> 21) & 0x7f, (n >> 14) & 0x7f, (n >> 7) & 0x7f, n & 0x7f])
+  return bytes([(n >> 21) & 0x7f, (n >> 14) & 0x7f, (n >> 7) & 0x7f, n & 0x7f])
 }
 
 export function tagMP3(buf, tags, cover) {
@@ -164,7 +211,7 @@ export function tagMP3(buf, tags, cover) {
     const frames = []
     const text = (id, value) => {
       if (value === undefined || value === null || String(value).trim() === '') return
-      frames.push(id3Frame(id, Buffer.concat([Buffer.from([1]), utf16(String(value).trim())])))
+      frames.push(id3Frame(id, concat([bytes([1]), utf16(String(value).trim())])))
     }
     text('TIT2', tags.title)
     text('TPE1', tags.artist)
@@ -177,9 +224,9 @@ export function tagMP3(buf, tags, cover) {
       frames.push(
         id3Frame(
           'COMM',
-          Buffer.concat([
-            Buffer.from([1]),
-            Buffer.from('eng', 'latin1'),
+          concat([
+            bytes([1]),
+            latin1('eng'),
             utf16(''),
             utf16(String(tags.comment).trim()),
           ])
@@ -190,9 +237,9 @@ export function tagMP3(buf, tags, cover) {
       frames.push(
         id3Frame(
           'USLT',
-          Buffer.concat([
-            Buffer.from([1]),
-            Buffer.from('eng', 'latin1'),
+          concat([
+            bytes([1]),
+            latin1('eng'),
             utf16(''),
             utf16(String(tags.lyrics).trim()),
           ])
@@ -203,12 +250,12 @@ export function tagMP3(buf, tags, cover) {
       frames.push(
         id3Frame(
           'APIC',
-          Buffer.concat([
-            Buffer.from([0]), // latin1 for mime + description
-            Buffer.from(cover.mime || 'image/jpeg', 'latin1'),
-            Buffer.from([0]),
-            Buffer.from([3]), // cover (front)
-            Buffer.from([0]), // empty description
+          concat([
+            bytes([0]), // latin1 for mime + description
+            latin1(cover.mime || 'image/jpeg'),
+            bytes([0]),
+            bytes([3]), // cover (front)
+            bytes([0]), // empty description
             cover.data,
           ])
         )
@@ -218,21 +265,21 @@ export function tagMP3(buf, tags, cover) {
 
     // Drop an existing ID3v2 tag so we don't stack two of them.
     let audio = buf
-    if (buf.length > 10 && buf.toString('latin1', 0, 3) === 'ID3') {
+    if (buf.length > 10 && str(buf, 0, 3) === 'ID3') {
       const old =
         ((buf[6] & 0x7f) << 21) | ((buf[7] & 0x7f) << 14) | ((buf[8] & 0x7f) << 7) | (buf[9] & 0x7f)
       const end = 10 + old + (buf[5] & 0x10 ? 10 : 0) // account for a footer
       if (end > 0 && end < buf.length) audio = buf.subarray(end)
     }
 
-    const body = Buffer.concat(frames)
-    const header = Buffer.concat([
-      Buffer.from('ID3', 'latin1'),
-      Buffer.from([3, 0]), // v2.3.0
-      Buffer.from([0]), // no flags
+    const body = concat(frames)
+    const header = concat([
+      latin1('ID3'),
+      bytes([3, 0]), // v2.3.0
+      bytes([0]), // no flags
       syncsafe(body.length),
     ])
-    return Buffer.concat([header, body, audio])
+    return concat([header, body, audio])
   } catch {
     return buf
   }
@@ -243,7 +290,7 @@ export function tagMP3(buf, tags, cover) {
 export function tagAudio(buf, contentType, tags, cover) {
   if (!buf || !buf.length) return buf
   const isMp4 =
-    /mp4|m4a|aac/i.test(contentType || '') || buf.toString('latin1', 4, 8) === 'ftyp'
+    /mp4|m4a|aac/i.test(contentType || '') || str(buf, 4, 8) === 'ftyp'
   return isMp4 ? tagM4A(buf, tags, cover) : tagMP3(buf, tags, cover)
 }
 
@@ -280,4 +327,88 @@ export function lyricsQueries(name, artists, limit = 3) {
   }
   if (!out.includes(clean)) out.push(clean)
   return out
+}
+
+// ------------------------------------------------- song -> tagged audio
+
+// JioSaavn double-encodes a handful of entities in its JSON.
+export const decodeEntities = (s) =>
+  String(s || '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+
+export const artistsOf = (song) => {
+  const primary = song?.artists?.primary
+  const list = Array.isArray(primary) ? primary : Array.isArray(song?.artists) ? song.artists : []
+  return list.map((a) => decodeEntities(a?.name)).filter(Boolean)
+}
+
+export function buildTags(song) {
+  return {
+    title: decodeEntities(song?.name),
+    artist: artistsOf(song).join(', '),
+    album: decodeEntities(song?.album?.name),
+    year: song?.year ? String(song.year) : '',
+    genre: song?.language ? decodeEntities(song.language) : '',
+    comment: song?.copyright ? decodeEntities(song.copyright) : '',
+  }
+}
+
+export async function fetchCover(song) {
+  try {
+    const imgs = Array.isArray(song?.image) ? song.image : []
+    const pick = imgs.find((i) => i?.quality === '500x500') || imgs[imgs.length - 1]
+    if (!pick?.url) return null
+    const r = await fetch(pick.url, { signal: AbortSignal.timeout(8000) })
+    if (!r.ok) return null
+    const data = new Uint8Array(await r.arrayBuffer())
+    if (!data.length) return null
+    return { data, mime: (r.headers.get('content-type') || 'image/jpeg').split(';')[0] }
+  } catch {
+    return null
+  }
+}
+
+// Same LRCLIB lookup the UI does: closest duration wins, synced preferred.
+export async function fetchLyricsText(song, { timeoutMs = 6000, maxDriftS = 15 } = {}) {
+  const dur = Number(song?.duration) || 0
+  const queries = lyricsQueries(decodeEntities(song?.name), artistsOf(song))
+  for (const q of queries) {
+    try {
+      const r = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, {
+        headers: { accept: 'application/json', 'user-agent': 'VIBEX' },
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+      if (!r.ok) continue
+      const arr = await r.json()
+      if (!Array.isArray(arr) || !arr.length) continue
+      // Same song, different release: pick whichever candidate runs closest to
+      // the length JioSaavn reports, so synced timestamps stay in step.
+      const scored = arr
+        .filter((x) => x && !x.instrumental && (x.syncedLyrics || x.plainLyrics))
+        .sort((a, b) => Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur))
+      const best = scored[0]
+      if (!best) continue
+      if (dur && best.duration && Math.abs(best.duration - dur) > maxDriftS) continue
+      const text = (best.syncedLyrics || '').trim() || (best.plainLyrics || '').trim()
+      if (text) return text
+    } catch {
+      // Try the next query; lyrics are optional and must never fail a download.
+    }
+  }
+  return null
+}
+
+/** Fetch cover + lyrics for a song and write everything into the audio. */
+export async function addTags(buf, contentType, song, opts) {
+  if (!song) return buf
+  const tags = buildTags(song)
+  const [cover, lyrics] = await Promise.all([fetchCover(song), fetchLyricsText(song, opts)])
+  if (lyrics) tags.lyrics = lyrics
+  const out = tagAudio(buf, contentType, tags, cover)
+  return out && out.length ? out : buf
 }

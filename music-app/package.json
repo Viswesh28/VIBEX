@@ -12,10 +12,20 @@
     "start": "npm run build && node server.mjs"
   },
   "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/filesystem": "^7.1.9",
+    "@hono/zod-openapi": "^0.19.10",
+    "hono": "^4.13.13",
+    "jiosaavn-api": "file:../jiosaavn-api",
+    "node-forge": "^1.4.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/cli": "^7.6.9",
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.11"
   }

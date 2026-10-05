@@ -3,14 +3,14 @@ import { useLibrary } from '../state/LibraryContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
-const NAV = [
+export const NAV = [
   { kind: 'feed', ico: '⌂', label: 'Home' },
   { kind: 'search', ico: '🔍', label: 'Search' },
   { kind: 'library', ico: '♥', label: 'Library' },
   { kind: 'stats', ico: '📊', label: 'Stats' },
 ]
 
-export function Sidebar({ apiOnline }) {
+export function Sidebar({ apiOnline, open = false, onClose }) {
   const { liked, playlists } = useLibrary()
   const { dataSaver } = useSettings()
   const { view, navigate, search, openNewPlaylistModal } = useUI()
@@ -19,7 +19,7 @@ export function Sidebar({ apiOnline }) {
   const activeKind = view.kind === 'artist' || view.kind === 'detail' ? 'search' : view.kind
 
   return (
-    <aside id="sidebar">
+    <aside id="sidebar" className={open ? 'open' : ''}>
       <div className="logo">
         <div className="logo-badge">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="#04140a">
@@ -36,7 +36,10 @@ export function Sidebar({ apiOnline }) {
           <div
             key={n.kind}
             className={'nav-item' + (activeKind === n.kind ? ' active' : '')}
-            onClick={() => (n.kind === 'search' ? search(null, null) : navigate({ kind: n.kind }))}
+            onClick={() => {
+              onClose?.()
+              return n.kind === 'search' ? search(null, null) : navigate({ kind: n.kind })
+            }}
           >
             <span className="nav-ico">{n.ico}</span>
             <span className="nav-label">{n.label}</span>
@@ -53,14 +56,17 @@ export function Sidebar({ apiOnline }) {
       </div>
       <div id="plNav" className="side-extra">
         {playlists.length === 0 ? (
-          <div className="nav-hint">None yet — hover a song, tap ＋.</div>
+          <div className="nav-hint">None yet — use ＋ on any song.</div>
         ) : (
           playlists.map((p) => (
             <div
               key={p.id}
               className={'nav-item' + (view.kind === 'myplaylist' && view.id === p.id ? ' active' : '')}
               title={p.name}
-              onClick={() => navigate({ kind: 'myplaylist', id: p.id })}
+              onClick={() => {
+                onClose?.()
+                navigate({ kind: 'myplaylist', id: p.id })
+              }}
             >
               <span className="nav-ico">🎵</span>
               <span className="nav-label">{decodeHtml(p.name)}</span>
@@ -81,9 +87,9 @@ export function Sidebar({ apiOnline }) {
         </span>
       </div>
       <div className="side-foot side-extra">
-        VIBEX • Desktop
+        VIBEX
         <br />
-        Space ⏯ · N/P next/prev · ←/→ seek 10s
+        <span className="kbd-hint">Space ⏯ · N/P next/prev · ←/→ seek 10s</span>
       </div>
     </aside>
   )

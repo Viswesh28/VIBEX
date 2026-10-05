@@ -2,6 +2,7 @@
 // missing fields, because search, album, playlist and artist endpoints each
 // return slightly different objects.
 import { decodeHtml } from './format.js'
+import { dlUrl } from './config.js'
 
 export function imgOf(s, dataSaver = false, pickLast = true) {
   if (!s?.image?.length) return ''
@@ -56,5 +57,5 @@ export function dlUrlFor(s, quality) {
     url: streamOf(s, quality),
     name: dlBaseName(s),
   })
-  return `/dl?${params}`
+  return dlUrl(params.toString())
 }

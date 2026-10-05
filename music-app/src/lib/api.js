@@ -1,12 +1,32 @@
-// Same-origin gateway to the local jiosaavn-api service.
-const API_BASE = '/api'
+// Talks to the JioSaavn API — over HTTP on the web, in-process on Android.
+//
+// On the web the gateway serves the app and proxies /api, so a relative fetch
+// is right. In the native app there is no gateway at all: the same API runs
+// inside the bundle (see embedded-api.js) and we call it directly. Callers
+// below this line can't tell the difference.
+import { apiUrl, isNative } from './config.js'
+
+// The embedded API is ~145 kB gzipped and useless in a browser (CORS), so it
+// is a dynamic import — web visitors never download the chunk.
+let embedded = null
+
+export async function apiFetch(path, init) {
+  if (isNative()) {
+    if (!embedded) embedded = import('./embedded-api.js')
+    const { embeddedFetch } = await embedded
+    // The embedded router mounts its controllers under /api, exactly like the
+    // hosted one — apiUrl() adds the same prefix on the web.
+    return embeddedFetch(`/api${path}`, init)
+  }
+  return fetch(apiUrl(path), init)
+}
 
 export async function api(path) {
   let response
   try {
-    response = await fetch(API_BASE + path, { headers: { accept: 'application/json' } })
+    response = await apiFetch(path, { headers: { accept: 'application/json' } })
   } catch {
-    throw new Error('Cannot reach the local API. Start both services and open the UI gateway.')
+    throw new Error('Cannot reach the music API. Check your connection and try again.')
   }
   let payload
   try {
@@ -25,7 +45,7 @@ export async function probeApi() {
   const ctl = new AbortController()
   const timer = setTimeout(() => ctl.abort(), 8000)
   try {
-    const response = await fetch(`${API_BASE}/search/songs?query=test&limit=1`, {
+    const response = await apiFetch('/search/songs?query=test&limit=1', {
       signal: ctl.signal,
       headers: { accept: 'application/json' },
     })

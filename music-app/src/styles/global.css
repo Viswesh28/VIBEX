@@ -327,7 +327,7 @@ body.light #status.error { color: #c81e3a; }
 .sleep-pills button.on { background: var(--accent); color: var(--accent-ink); }
 
 @media (max-width: 1240px) { #nowplaying { display: none; } }
-@media (max-width: 900px) {
+@media (min-width: 641px) and (max-width: 900px) {
   #sidebar { width: 78px; padding: 18px 10px; align-items: center; }
   .logo { padding: 0; } .logo-text, .nav-label, .side-extra, .api-box #apiUrl, .side-div { display: none; }
   .nav-item { justify-content: center; padding: 12px; position: relative; }
@@ -484,3 +484,163 @@ body.light #fpActions .icon-btn { color: var(--text); }
 #lyrOvContent { padding: 16px 18px 22px; overflow-y: auto; }
 #lyrOvContent .lyr-line { font-size: 17px; line-height: 1.6; padding: 8px 12px; }
 #lyrOvContent .lyr-plain { font-size: 15px; }
+
+/* Mobile-only chrome: hidden by default, switched on in the phone layer. */
+#menuBtn, #mobileNav, .drawer-scrim { display: none; }
+
+/* ======================================================================
+   PHONES  (<=640px)
+   The desktop layout is three fixed columns; a phone gets a single column,
+   a bottom tab bar within thumb reach, and the sidebar as a drawer so the
+   playlist list and API status aren't lost. Tablets keep the icon rail.
+   ====================================================================== */
+
+/* Touch devices can't hover, so anything revealed by :hover is invisible
+   and unreachable. Add-to-playlist, start-radio and remove were all
+   opacity:0 until hover — on a phone that silently removes the features. */
+@media (hover: none), (pointer: coarse) {
+  .pl-btn, .radio-btn, .rm-btn { opacity: 1; }
+}
+
+/* A landscape phone is wide but very short, so width alone would hand it the
+   desktop layout. `pointer: coarse` keeps small desktop windows out of this. */
+@media (max-width: 640px),
+       (orientation: landscape) and (max-height: 480px) and (pointer: coarse) {
+  :root {
+    --player-h: 62px;
+    --mnav-h: 58px;
+    /* Gesture bar / on-screen buttons. 0px on devices without them. */
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Nothing may exceed the viewport width: one stray wide child turns the
+     whole page into a horizontally scrolling mess. */
+  html, body { max-width: 100%; overflow-x: hidden; }
+
+  #app { display: block; min-height: auto; }
+
+  /* ---- sidebar becomes a drawer ---- */
+  #sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: min(82vw, 300px); z-index: 320;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 14px 20px;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    background: var(--bg); border-right: 1px solid var(--line);
+    height: auto; max-height: none;
+    transform: translateX(-100%);
+    transition: transform .24s ease;
+    box-shadow: none;
+  }
+  #sidebar.open { transform: none; box-shadow: var(--shadow); }
+  .drawer-scrim {
+    display: block;            /* overrides the desktop default of none */
+    position: fixed; inset: 0; z-index: 310;
+    background: rgba(0,0,0,.55);
+    animation: fadeIn .2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  #plNav { max-height: none; }
+
+  /* ---- top bar ---- */
+  #menuBtn { display: inline-flex; }
+  .kbd-hint { display: none; }   /* no keyboard on a phone */
+  #topbar {
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px;
+    gap: 8px; flex-wrap: wrap;
+  }
+  .search-wrap { order: 2; flex-basis: 100%; min-width: 0; }
+  #searchInput { font-size: 16px; } /* <16px makes the browser zoom on focus */
+  .tabs {
+    order: 3; flex-basis: 100%;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; padding-bottom: 2px;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: 0 0 auto; }
+
+  /* ---- content ---- */
+  #content {
+    padding: 14px 12px;
+    /* Clear the player bar, the tab bar and the gesture area. */
+    padding-bottom: calc(var(--player-h) + var(--mnav-h) + var(--safe-b) + 18px);
+  }
+  #resultTitle { font-size: 19px; }
+  .artist-head { gap: 12px; }
+  .artist-head img { width: 96px; height: 96px; }
+  .artist-head h3 { font-size: 19px; }
+  .stat-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+
+  /* Comfortable hit targets — 44px is the accessibility floor. */
+  .song-row { padding: 10px; gap: 10px; }
+  .nav-item { padding: 13px 12px; }
+  .pl-btn, .radio-btn, .rm-btn { padding: 10px; font-size: 18px; }
+
+  /* ---- player bar: compact, sits above the tab bar ---- */
+  #playerBar {
+    bottom: calc(var(--mnav-h) + var(--safe-b));
+    min-height: var(--player-h);
+    padding: 8px 10px; gap: 10px; flex-wrap: nowrap;
+  }
+  #pThumb { width: 44px; height: 44px; border-radius: 8px; }
+  #pInfo { width: auto; flex: 1; min-width: 0; }
+  #pTitle { font-size: 13px; }
+  #pArtist, #pTime { font-size: 11px; }
+  /* Everything hidden here lives in the full player, one tap away.
+     Shuffle and repeat are the first/last children of .controls. */
+  .p-right, #vol, #quality { display: none; }
+  .controls .cbtn:first-child, .controls .cbtn:last-child { display: none; }
+
+  /* Solid, not translucent: scrolling content was bleeding through the
+     blurred bars and making the labels unreadable. */
+  #playerBar, #mobileNav {
+    background: var(--bg);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .controls { margin: 0; gap: 4px; flex-shrink: 0; }
+  .cbtn { width: 40px; height: 40px; }
+  .cbtn.main { width: 46px; height: 46px; }
+  #progressWrap { top: -4px; height: 8px; } /* easier to hit with a thumb */
+
+  /* ---- bottom tab bar ---- */
+  #mobileNav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 110;
+    height: calc(var(--mnav-h) + var(--safe-b));
+    padding-bottom: var(--safe-b);
+    background: var(--bg); border-top: 1px solid var(--line);
+  }
+  .mnav-item {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 3px;
+    background: none; border: none; padding: 0;
+    color: var(--muted); font-size: 10.5px; font-weight: 600;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mnav-item.active { color: var(--accent); }
+  .mnav-ico { font-size: 19px; line-height: 1; }
+
+  /* ---- overlays ---- */
+  #fpInner { width: 100vw; max-height: 100vh; padding: calc(10px + env(safe-area-inset-top, 0px)) 14px calc(14px + var(--safe-b)); }
+  #fpCover { width: min(72vw, 300px); height: min(72vw, 300px); }
+  #lyrSheet { width: 96vw; max-height: 80vh; }
+  #plSheet { width: min(94vw, 380px); }
+}
+
+/* Very narrow phones (<=360px): drop the labels, keep the icons. */
+@media (max-width: 360px) {
+  .mnav-label { display: none; }
+  .mnav-ico { font-size: 21px; }
+  :root { --mnav-h: 50px; }
+}
+
+/* Landscape phones are short, not narrow — reclaim vertical space. */
+@media (orientation: landscape) and (max-height: 480px) and (pointer: coarse) {
+  :root { --mnav-h: 44px; --player-h: 56px; }
+  .mnav-label { display: none; }
+  .mnav-ico { font-size: 18px; }
+  #topbar { padding-top: 6px; padding-bottom: 6px; }
+  #content { padding-top: 10px; }
+  #fpMain { flex-direction: row; gap: 18px; }
+  #fpCover { width: min(30vw, 170px); height: min(30vw, 170px); }
+  #fpInner { max-height: 100vh; gap: 8px; }
+  #fpControls { margin-top: 2px; }
+}

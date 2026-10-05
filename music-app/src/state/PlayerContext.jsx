@@ -405,6 +405,27 @@ export function PlayerProvider({ children }) {
     }
   }, [cancelFade, ensureGraph, playTrack])
 
+  const play = useCallback(() => {
+    if (idxRef.current < 0) {
+      if (queueRef.current.length) playTrack(0)
+      return
+    }
+    const el = active()
+    ensureGraph(el)
+    el.play()?.catch(() => {})
+  }, [ensureGraph, playTrack])
+
+  const seekTo = useCallback((seconds) => {
+    cancelFade()
+    const el = active()
+    if (idxRef.current < 0) return
+    try {
+      el.currentTime = Math.max(0, seconds)
+    } catch {
+      /* ignore */
+    }
+  }, [cancelFade])
+
   const pause = useCallback(() => {
     cancelFade()
     try {
@@ -718,16 +739,16 @@ export function PlayerProvider({ children }) {
   const value = useMemo(
     () => ({
       queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
-      setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, pause,
-      seekFrac, seekBy, setVolume, reloadActive, qMove, qRemove, qClear,
+      setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
+      seekFrac, seekBy, seekTo, setVolume, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying,
       analyserRef: analyser, freqDataRef: freqData,
       audioRef: activeRef,
     }),
     [
       queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
-      setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, pause,
-      seekFrac, seekBy, setVolume, reloadActive, qMove, qRemove, qClear,
+      setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
+      seekFrac, seekBy, seekTo, setVolume, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying,
     ]
   )
