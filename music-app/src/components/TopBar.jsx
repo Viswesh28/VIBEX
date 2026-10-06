@@ -48,13 +48,20 @@ export function TopBar({ sleep, onMenu }) {
           </div>
         ))}
       </div>
-      <button className="ghost" title="Toggle dark / light" onClick={toggleTheme}>
+      <button
+        className="ghost"
+        title="Toggle dark / light"
+        aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+        onClick={toggleTheme}
+      >
         {theme === 'light' ? '☀️' : '🌙'}
       </button>
       <div id="setWrap" ref={wrapRef}>
         <button
           className="ghost"
           title="Playback settings"
+          aria-label="Playback settings"
+          aria-expanded={setOpen}
           onClick={(e) => {
             e.stopPropagation()
             setSetOpen((v) => !v)

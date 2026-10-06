@@ -181,3 +181,32 @@ exist one tap away in the full player, which is what the bar opens on tap.
 393×851, 412×915 and 851×393 landscape — covering horizontal overflow, bar
 geometry, 40 px touch targets, hover-only controls, all four tabs, drawer
 open/close, search, playback and the full player. Last run: **85/85**.
+
+### Accessibility
+
+`ux-audit.mjs` checks the things a layout assertion cannot see: WCAG AA contrast
+for every text node against its computed background (both themes), accessible
+names on interactive elements, adjacent tap-target spacing, truncation in the
+compact player bar, and 1.3x system text. Last run: **0 findings**.
+
+Fixed in that pass:
+
+* Light theme `--muted` was 4.16:1 on the page and 3.30:1 on cards — below AA.
+  One token governed eight reported elements.
+* `body.light .mode-badge` (specificity 0,0,2,1) outranked `.mode-badge.live`
+  (0,0,2,0), so the light theme painted dark-gold text onto the dark-green
+  badge at **1.9:1**. The variants now have explicit light-theme rules.
+* `--accent` as *text* is only 2.89:1 on a light background. Split into
+  `--accent-text` so the fill colour and the text colour can differ per theme.
+* Light `--accent` with white ink was 3.30:1; darkened one shade to `#15803d`
+  (5.02:1).
+* The theme and settings buttons are emoji-only and carried just a `title`,
+  which TalkBack does not reliably announce and touch users never see. They now
+  have `aria-label`s.
+* Transport buttons sat 4px apart; widened to 8px to reduce mis-taps.
+
+Not covered by the script, and still worth a pass on real hardware: TalkBack
+reading order, true notch/cutout insets, Android's own font-scale setting, and
+the hardware back button (a Capacitor plugin event that cannot be raised from a
+browser). The drawer also opens only from the hamburger — there is no
+edge-swipe gesture, which Android users may expect.
