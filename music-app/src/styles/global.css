@@ -648,3 +648,14 @@ body.light #fpActions .icon-btn { color: var(--text); }
   #fpInner { max-height: 100vh; gap: 8px; }
   #fpControls { margin-top: 2px; }
 }
+
+/* Retry on the API-offline screen — a dead end otherwise on a phone, where
+   there is no address bar to reload from. */
+.retry-btn {
+  /* .empty-lib span is inline, so the button would otherwise flow in beside
+     the wrapped sentence instead of sitting under it. */
+  display: block; margin: 16px auto 0;
+  padding: 11px 26px; border-radius: 22px;
+  font-size: 15px; font-weight: 700; min-height: 44px;
+}
+.retry-btn[disabled] { opacity: .6; }

@@ -31,6 +31,7 @@ import { useUI } from './state/UIContext.jsx'
 
 export default function App() {
   const [apiOnline, setApiOnline] = useState(null)
+  const [checking, setChecking] = useState(false)
   const [drawer, setDrawer] = useState(false)
   // Native builds with no backend address can't probe anything yet.
   const [heading, setHeading] = useState({ title: 'Home', count: '' })
@@ -53,16 +54,27 @@ export default function App() {
     }, [pause, setStatus])
   )
 
-  useEffect(() => {
-    probeApi().then((ok) => {
+  // The standalone Android build has no gateway to start, so the failure
+  // advice has to differ by platform — telling a phone user to run a server
+  // on port 3001 is nonsense.
+  const checkApi = useCallback(() => {
+    setChecking(true)
+    return probeApi().then((ok) => {
       setApiOnline(ok)
+      setChecking(false)
       if (!ok)
         setStatus(
-          'The local API is unavailable. Start jiosaavn-api on port 3001 and the UI gateway on port 8000.',
+          isNative()
+            ? 'Cannot reach JioSaavn. Check your internet connection and tap Retry.'
+            : 'The local API is unavailable. Start jiosaavn-api on port 3001 and the UI gateway on port 8000.',
           true
         )
     })
   }, [setStatus])
+
+  useEffect(() => {
+    checkApi()
+  }, [checkApi])
 
   // Escape closes the top-most layer only.
   const onEscape = useCallback(() => {
@@ -156,9 +168,12 @@ export default function App() {
           <p>{isNative() ? 'No connection' : 'API offline'}</p>
           <span>
             {isNative()
-              ? 'VIBEX needs the internet to reach JioSaavn. Reconnect and reopen the app.'
+              ? 'VIBEX needs the internet to reach JioSaavn. Reconnect, then try again.'
               : 'Start jiosaavn-api on port 3001, then reload.'}
           </span>
+          <button className="ghost retry-btn" onClick={checkApi} disabled={checking}>
+            {checking ? 'Checking…' : 'Retry'}
+          </button>
         </div>
       )
     switch (view.kind) {
