@@ -15,6 +15,13 @@
  * Hence a single permanent wrapper that delegates by hostname. Installing it
  * once (rather than swapping `globalThis.fetch` around each call) matters:
  * the home feed fires four searches in parallel, and a swap would race.
+ *
+ * For the same reason the wrapper holds no shared in-flight state. An earlier
+ * version used a single `depth` counter as a recursion guard, which meant the
+ * second of those four parallel searches saw `depth > 0` and fell through to
+ * the WebView's fetch — where jiosaavn.com has no CORS headers, so it failed.
+ * Recursion is now prevented by only installing when a native implementation
+ * is advertised; see nativeHttpAdvertised().
  */
 const NATIVE_HOSTS = /(^|\.)jiosaavn\.com$/i
 
@@ -34,8 +41,22 @@ const onDevice = () =>
   !!window.Capacitor?.isNativePlatform?.() &&
   window.Capacitor?.getPlatform?.() !== 'web'
 
+/**
+ * True only when the bridge advertises a *native* CapacitorHttp.
+ *
+ * This is what makes the patch safe to install. A native `request()` crosses
+ * the JS bridge and can never re-enter `window.fetch`, so no recursion guard
+ * is needed. If the header is missing, `registerPlugin` would silently hand
+ * back the **web** implementation — which is literally `window.fetch` — and
+ * patching would recurse until the renderer dies. In that case we patch
+ * nothing and leave the WebView's own stack alone.
+ */
+const nativeHttpAdvertised = () =>
+  Array.isArray(window.Capacitor?.PluginHeaders) &&
+  window.Capacitor.PluginHeaders.some((h) => h?.name === 'CapacitorHttp')
+
 export async function installNativeHttp() {
-  if (installed || !onDevice()) return
+  if (installed || !onDevice() || !nativeHttpAdvertised()) return
   installed = true
 
   let CapacitorHttp
@@ -47,13 +68,9 @@ export async function installNativeHttp() {
   }
 
   const original = globalThis.fetch.bind(globalThis)
-  // Defence in depth: if a future plugin version ever routes back through
-  // window.fetch, fall straight to the original instead of recursing.
-  let depth = 0
 
   globalThis.fetch = async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input?.url || String(input)
-    if (depth > 0) return original(input, init)
 
     let host = ''
     try {
@@ -71,7 +88,6 @@ export async function installNativeHttp() {
       else for (const [k, v] of Array.isArray(src) ? src : Object.entries(src)) headers[k] = v
     }
 
-    depth++
     try {
       const res = await CapacitorHttp.request({
         url,
@@ -90,8 +106,6 @@ export async function installNativeHttp() {
       // Falling back to the WebView's fetch will almost certainly hit CORS,
       // but a real network error is a better signal than a silent hang.
       return original(input, init)
-    } finally {
-      depth--
     }
   }
 }
