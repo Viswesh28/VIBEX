@@ -504,6 +504,10 @@ body.light #fpActions .icon-btn { color: var(--text); }
    opacity:0 until hover — on a phone that silently removes the features. */
 @media (hover: none), (pointer: coarse) {
   .pl-btn, .radio-btn, .rm-btn { opacity: 1; }
+  /* Like was missed by the rule above: it stayed opacity:0 on touch, so it
+     occupied width in every row while being invisible and effectively
+     unusable — you could only unlike, never like, from a list. */
+  .like-btn { opacity: 1; }
 }
 
 /* A landscape phone is wide but very short, so width alone would hand it the
@@ -573,6 +577,21 @@ body.light #fpActions .icon-btn { color: var(--text); }
   .artist-head img { width: 96px; height: 96px; }
   .artist-head h3 { font-size: 19px; }
   .stat-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+
+  /* The album column is hidden on tablets by a (min-width: 641px) range
+     query, which leaves phones out entirely. It is a rigid 190px that does
+     not shrink, so on a narrow screen it squeezed the flexible .s-info to
+     zero width and the song title and artist vanished — leaving rows that
+     showed nothing but an album name. */
+  .s-album { display: none; }
+
+  /* Every fixed-width column steals from the one flexible element in the row.
+     With album, radio and duration all present the title was squeezed to
+     ~85px, so every result read "Vaathi Co...". Radio and duration are both
+     available from the full player, so the list gives its width to the
+     title and artist instead. */
+  .radio-btn { display: none; }
+  .s-dur { display: none; }
 
   /* Comfortable hit targets — 44px is the accessibility floor. */
   .song-row { padding: 10px; gap: 10px; }

@@ -18,7 +18,7 @@ export function LibraryView({ onTitle }) {
       <EmptyState
         icon="♥"
         title="Nothing liked yet"
-        hint="Hover any song and tap the heart to save it here."
+        hint="Tap the heart on any song to save it here."
       />
     )
   return <SongList songs={liked} />

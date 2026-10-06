@@ -89,7 +89,7 @@ export function PlaylistView({ id, onTitle }) {
           }}
         />
       ) : (
-        <EmptyState icon="🎵" title="Empty playlist" hint="Hover any song and tap ＋ to add it here." />
+        <EmptyState icon="🎵" title="Empty playlist" hint="Tap ＋ on any song to add it here." />
       )}
     </>
   )
