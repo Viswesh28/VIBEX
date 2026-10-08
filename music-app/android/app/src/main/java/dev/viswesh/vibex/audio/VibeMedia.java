@@ -70,7 +70,12 @@ public final class VibeMedia {
             spec -> {
               if (!"vibex".equals(spec.uri.getScheme())) return spec;
               String id = spec.uri.getLastPathSegment();
-              return spec.withUri(Uri.parse(resolve(id, spec.uri.getQueryParameter("q"))));
+              return spec.withUri(
+                  Uri.parse(
+                      resolve(
+                          id,
+                          spec.uri.getQueryParameter("q"),
+                          "1".equals(spec.uri.getQueryParameter("dl")))));
             });
     DataSource.Factory cached =
         new CacheDataSource.Factory()
@@ -131,22 +136,54 @@ public final class VibeMedia {
     suspect.add(id);
   }
 
+  /** Last seen audio-source mode; a switch invalidates resolved URLs at once. */
+  private String lastMode = null;
+
   public void configure(JSONObject prefs) {
     manager.setRequirements(
         new Requirements(
             Requirements.NETWORK
                 | (prefs.optBoolean("wifiOnly", true) ? Requirements.NETWORK_UNMETERED : 0)));
+    String mode = prefs.optString("audioSource", "auto");
+    synchronized (this) {
+      // Flipping the source should bite on the very next resolve, not after
+      // the 2-minute URL cache drains.
+      if (lastMode != null && !lastMode.equals(mode)) urls.clear();
+      lastMode = mode;
+    }
   }
 
-  private synchronized String resolve(String id, String quality) throws IOException {
+  private synchronized String resolve(String id, String quality, boolean download)
+      throws IOException {
     String q = quality == null ? store.settings().optString("quality", "320kbps") : quality;
     if (!q.matches("(12|48|96|160|320)kbps")) q = "160kbps";
     String key = id + q;
     Resolved old = urls.get(key);
     if (old != null && System.currentTimeMillis() - old.at < 120000) return old.url;
+    // Settings → Playback → Audio source: auto (Saavn first, YouTube rescue),
+    // saavn (never consult YouTube), youtube (YouTube first, Saavn rescue).
+    String mode = store.settings().optString("audioSource", "auto");
+    YtFallback yt = YtFallback.get(context);
+
+    // YouTube-first streams. Downloads deliberately stay on the auto path:
+    // offline copies should be stable CDN files at the chosen bitrate, with
+    // YouTube only as rescue — googlevideo URLs expire and ignore bitrate
+    // preferences.
+    if ("youtube".equals(mode) && !download) {
+      String routed = yt.routed(id);
+      if (routed != null) return routed;
+      String url = yt.resolve(store.song(id), id);
+      if (url != null) return url;
+      // No confident YouTube match — JioSaavn rescues the track rather than
+      // erroring, mirroring what auto does in the other direction.
+      suspect.remove(id);
+      return resolveSaavn(id, q, key);
+    }
+
     // YouTube already took control of this track in this session? Skip the
-    // Saavn round-trip entirely (route cache — see YtFallback).
-    String routed = YtFallback.get(context).routed(id);
+    // Saavn round-trip entirely (route cache — see YtFallback). In
+    // JioSaavn-only mode the route cache is ignored: the user asked for Saavn.
+    String routed = "saavn".equals(mode) ? null : yt.routed(id);
     if (routed != null) return routed;
     boolean verify = suspect.remove(id);
     try {
@@ -157,11 +194,13 @@ public final class VibeMedia {
         urls.remove(key);
         throw new IOException("Saavn CDN URL failed liveness probe");
       }
-      YtFallback.get(context).release(id); // Saavn verified — it keeps/retakes control
+      yt.release(id); // Saavn verified — it keeps/retakes control
       return url;
     } catch (IOException primary) {
-      String yt = YtFallback.get(context).resolve(store.song(id), id);
-      if (yt != null) return yt; // takeover: same MediaItem, new URL underneath
+      // The user said JioSaavn only: fail truthfully, never switch services.
+      if ("saavn".equals(mode)) throw primary;
+      String rescue = yt.resolve(store.song(id), id);
+      if (rescue != null) return rescue; // takeover: same MediaItem, new URL underneath
       throw primary; // truthful original error when YouTube has no confident match
     }
   }

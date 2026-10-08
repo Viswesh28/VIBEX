@@ -352,9 +352,11 @@ public class VibexAudioPlugin extends Plugin {
               // Retrying keeps the original bitrate. Remove first to change an offline copy's
               // quality.
               if (existing != null) q = existing.request.uri.getQueryParameter("q");
+              // dl=1 marks a download resolve: offline copies always prefer
+              // stable Saavn CDN bytes regardless of the audio-source mode.
               DownloadRequest request =
                   new DownloadRequest.Builder(
-                          id, Uri.parse("vibex://song/" + Uri.encode(id) + "?q=" + q))
+                          id, Uri.parse("vibex://song/" + Uri.encode(id) + "?q=" + q + "&dl=1"))
                       .setCustomCacheKey(id + "|" + q)
                       .setMimeType("audio/mp4")
                       .build();

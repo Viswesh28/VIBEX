@@ -997,3 +997,22 @@ test("test4 app return preserves an unfinished playlist dialog", async ({
     page.getByRole("dialog", { name: "Now playing" }),
   ).not.toBeVisible();
 });
+
+test("test7 audio source setting offers all three services and persists", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const source = page.getByLabel("Audio source", { exact: false });
+  await expect(source).toHaveValue("auto");
+  await expect(source.locator("option")).toHaveCount(3);
+  await source.selectOption("youtube");
+  await expect
+    .poll(async () => (await readStored(page))?.settings.audioSource)
+    .toBe("youtube");
+  await page.reload();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByLabel("Audio source", { exact: false })).toHaveValue(
+    "youtube",
+  );
+});

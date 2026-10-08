@@ -18,6 +18,7 @@ export const defaults = {
   lyricsProviders: ["local", "lrclib-exact", "lrclib-search", "kugou"],
   lyricOffset: 0,
   playerStyle: "classic",
+  audioSource: "auto",
   stopOnDismiss: false,
   cacheMB: 128,
 };
@@ -162,6 +163,9 @@ export function cleanSettings(s = {}) {
     playerStyle: ["classic", "aurora"].includes(s.playerStyle)
       ? s.playerStyle
       : defaults.playerStyle,
+    audioSource: ["auto", "saavn", "youtube"].includes(s.audioSource)
+      ? s.audioSource
+      : defaults.audioSource,
   };
 }
 export function validateBackup(input) {

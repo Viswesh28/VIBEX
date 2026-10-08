@@ -9,6 +9,7 @@ import {
   Trash2,
   Upload,
   SlidersHorizontal,
+  Radio,
 } from "lucide-react";
 import { useVibe } from "./Model.jsx";
 import { Audio, native } from "./native.js";
@@ -219,6 +220,28 @@ export function SettingsView() {
               On Android, music continues when you press Home, switch apps, or
               lock the screen. Reopening Vibex or tapping its media notification
               returns to the current song. Paused songs stay paused.
+            </p>
+            <label className="setting-row">
+              <span>
+                <Radio />
+                <b>Audio source</b>
+              </span>
+              <select
+                value={settings.audioSource}
+                onChange={(e) => setSetting("audioSource", e.target.value)}
+              >
+                <option value="auto">Auto — JioSaavn, YouTube rescue</option>
+                <option value="saavn">JioSaavn only</option>
+                <option value="youtube">YouTube first</option>
+              </select>
+            </label>
+            <p className="setting-note">
+              Where the sound itself streams from, on Android. Search, library
+              and artwork always come from JioSaavn. YouTube first matches each
+              track confidently before streaming its audio — when no confident
+              match exists, JioSaavn rescues the track (and the other way
+              around on Auto). Downloads always prefer JioSaavn bytes at your
+              chosen bitrate.
             </p>
             <label className="setting-row">
               <span>
