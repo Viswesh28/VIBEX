@@ -25,6 +25,27 @@ export function decodeBase64Utf8(b64) {
   return new TextDecoder("utf-8").decode(bytes);
 }
 
+/**
+ * Who actually sings this? JioSaavn's `artists.primary` leads with the music
+ * director for most Indian releases (Mithoon before Arijit Singh on
+ * "Tum Hi Ho"), while LRCLIB and KuGou tag lyrics by the performing singer —
+ * querying by composer made every lookup miss. Prefer entries with the
+ * `singer` role, keep the primary credits as fallbacks, and let scoring try
+ * each candidate.
+ */
+export function artistCandidates(song) {
+  const names = [
+    ...(song.artists?.all || [])
+      .filter((a) => a?.role === "singer")
+      .map((a) => a.name),
+    ...(song.artists?.primary || []).map((a) => a.name),
+    decodeHtml(artistsOf(song)).split(",")[0],
+  ]
+    .map((n) => decodeHtml(String(n || "")).trim())
+    .filter(Boolean);
+  return [...new Set(names)].slice(0, 4);
+}
+
 /** 0..1 confidence that a KuGou candidate is the same recording. */
 export function kugouScore(candidate, { title, artist, duration }) {
   const norm = (s) =>
@@ -66,40 +87,89 @@ const timedFetch = async (url, signal, ms = 7000) => {
 
 /* ---------------------------------------------------------------- LRCLIB */
 
-async function lrclib(kind, { title, artist, album, duration }, signal) {
-  const url =
-    kind === "exact"
-      ? `https://lrclib.net/api/get?${new URLSearchParams({ track_name: title, artist_name: artist, album_name: album, duration: Math.round(duration || 0) })}`
-      : `https://lrclib.net/api/search?${new URLSearchParams({ track_name: title, artist_name: artist })}`;
-  const r = await timedFetch(url, signal);
-  if (r.status === 404) return null;
-  if (!r.ok) throw Error("Lyrics unavailable");
-  let hits = await r.json();
-  hits = Array.isArray(hits) ? hits : [hits];
+/** Best score across every plausible artist — composer, singer, feature. */
+const bestScore = (h, { title, artists, duration }) =>
+  Math.max(
+    ...artists.map((artist) =>
+      lyricScore(h, { name: title, artist, duration }),
+    ),
+  );
+
+function pickLrclibHit(hits, query) {
   const ranked = hits
-    .map((h) => ({ h, score: lyricScore(h, { name: title, artist, duration }) }))
+    .filter(Boolean)
+    .map((h) => ({ h, score: bestScore(h, query) }))
     .filter((x) => x.score >= 0.63)
     .sort((a, b) => b.score - a.score);
-  const hit = ranked[0]?.h;
+  // A synced hit always beats a plain or instrumental-flagged one: LRCLIB
+  // carries community-submitted junk rows (popular songs wrongly flagged
+  // instrumental), so "instrumental" is only trusted when nothing else fits.
+  return (
+    ranked.find((x) => parseLRC(x.h.syncedLyrics).length)?.h ||
+    ranked.find((x) => x.h.plainLyrics && !x.h.instrumental)?.h ||
+    ranked[0]?.h ||
+    null
+  );
+}
+
+function hitToResult(hit) {
   if (!hit) return null;
-  if (hit.instrumental) return { type: "instrumental" };
   const lines = parseLRC(hit.syncedLyrics);
   if (lines.length) return { type: "synced", lines };
+  if (hit.instrumental) return { type: "instrumental" };
   if (hit.plainLyrics) return { type: "plain", text: hit.plainLyrics };
   return null;
 }
 
+async function lrclib(kind, query, signal) {
+  const { title, artists, album, duration } = query;
+  if (kind === "exact") {
+    // /api/get is a strict lookup, so the artist must be the one LRCLIB has
+    // on file — try the likeliest two candidates (singer first).
+    const hits = [];
+    for (const artist of artists.slice(0, 2)) {
+      const r = await timedFetch(
+        `https://lrclib.net/api/get?${new URLSearchParams({ track_name: title, artist_name: artist, album_name: album, duration: Math.round(duration || 0) })}`,
+        signal,
+      );
+      if (r.status === 404) continue;
+      if (!r.ok) throw Error("Lyrics unavailable");
+      hits.push(await r.json());
+      // A singer-tagged synced hit is what we want; stop as soon as one fits.
+      if (pickLrclibHit(hits, query)) break;
+    }
+    return hitToResult(pickLrclibHit(hits, query));
+  }
+  // Search by title alone for recall — local scoring (title overlap, any
+  // credited artist, duration drift ≤ 15 s) still refuses wrong recordings.
+  const r = await timedFetch(
+    `https://lrclib.net/api/search?${new URLSearchParams({ track_name: title })}`,
+    signal,
+  );
+  if (r.status === 404) return null;
+  if (!r.ok) throw Error("Lyrics unavailable");
+  const hits = await r.json();
+  return hitToResult(pickLrclibHit(Array.isArray(hits) ? hits : [hits], query));
+}
+
 /* ----------------------------------------------------------------- KuGou */
 
-async function kugou({ title, artist, duration }, signal) {
+async function kugou({ title, artists, duration }, signal) {
   const search = await timedFetch(
-    `https://krcs.kugou.com/search?${new URLSearchParams({ ver: 1, man: "yes", client: "mobi", keyword: `${artist} - ${title}`, duration: Math.round((duration || 0) * 1000) })}`,
+    `https://krcs.kugou.com/search?${new URLSearchParams({ ver: 1, man: "yes", client: "mobi", keyword: `${artists[0]} - ${title}`, duration: Math.round((duration || 0) * 1000) })}`,
     signal,
   );
   if (!search.ok) throw Error("Lyrics unavailable");
   const data = await search.json();
   const ranked = (data.candidates || [])
-    .map((c) => ({ c, score: kugouScore(c, { title, artist, duration }) }))
+    .map((c) => ({
+      c,
+      score: Math.max(
+        ...artists.map((artist) =>
+          kugouScore(c, { title, artist, duration }),
+        ),
+      ),
+    }))
     .filter((x) => x.score >= 0.6)
     .sort((a, b) => b.score - a.score);
   const hit = ranked[0]?.c;
@@ -130,13 +200,16 @@ export const PROVIDERS = {
 export async function findLyrics(song, providers, signal, manual = null) {
   const query = {
     title: decodeHtml(song.name),
-    artist: decodeHtml(artistsOf(song)).split(",")[0],
+    artists: artistCandidates(song),
     album: decodeHtml(song.album?.name || ""),
     duration: song.duration || 0,
   };
   const online = providers.filter((p) => p in PROVIDERS);
   let failed = 0;
-  let plainFallback = null; // an unsynced hit waits while later providers race for synced
+  // Unsynced or instrumental hits wait while later providers race for a
+  // synced one; synced beats plain beats instrumental across the chain.
+  let plainFallback = null;
+  let instrumentalFallback = null;
   for (const provider of providers) {
     if (provider === "local") {
       if (manual) return manual;
@@ -147,15 +220,18 @@ export async function findLyrics(song, providers, signal, manual = null) {
     try {
       const result = await PROVIDERS[provider](query, signal);
       if (!result) continue;
-      if (result.type === "synced" || result.type === "instrumental")
-        return { ...result, provider };
-      if (!plainFallback) plainFallback = { ...result, provider };
+      if (result.type === "synced") return { ...result, provider };
+      if (result.type === "instrumental") {
+        if (!instrumentalFallback)
+          instrumentalFallback = { ...result, provider };
+      } else if (!plainFallback) plainFallback = { ...result, provider };
     } catch (e) {
       if (signal?.aborted) throw e;
       failed++;
     }
   }
   if (plainFallback) return plainFallback;
+  if (instrumentalFallback) return instrumentalFallback;
   return {
     type: failed === online.length && online.length ? "error" : "none",
   };

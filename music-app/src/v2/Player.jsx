@@ -324,12 +324,16 @@ export function Lyrics() {
           title={
             result?.type === "instrumental"
               ? "Let the music speak"
-              : "No matching lyrics yet"
+              : result?.type === "error"
+                ? "Lyrics sources unreachable"
+                : "No matching lyrics yet"
           }
           description={
             result?.type === "instrumental"
               ? "This recording is marked as instrumental."
-              : "We won’t show lyrics from a different recording. Try again or check your enabled sources."
+              : result?.type === "error"
+                ? "Every enabled source failed to respond — check your connection and retry."
+                : "We won’t show lyrics from a different recording. Try again or check your enabled sources."
           }
         >
           <button className="secondary" onClick={() => setRetry((n) => n + 1)}>
