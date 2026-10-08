@@ -1,7 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">VIBEX</string>
-    <string name="title_activity_main">VIBEX</string>
+    <string name="app_name">Vibex</string>
+    <string name="title_activity_main">Vibex</string>
     <string name="package_name">dev.viswesh.vibex</string>
     <string name="custom_url_scheme">dev.viswesh.vibex</string>
+<string name="download_channel">Offline downloads</string>
 </resources>

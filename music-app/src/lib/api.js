@@ -21,10 +21,10 @@ export async function apiFetch(path, init) {
   return fetch(apiUrl(path), init)
 }
 
-export async function api(path) {
+export async function api(path, init = {}) {
   let response
   try {
-    response = await apiFetch(path, { headers: { accept: 'application/json' } })
+    response = await apiFetch(path, { ...init, headers: { accept: 'application/json', ...init.headers } })
   } catch {
     throw new Error('Cannot reach the music API. Check your connection and try again.')
   }

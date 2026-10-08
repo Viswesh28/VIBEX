@@ -1,6 +1,6 @@
 {
   "appId": "dev.viswesh.vibex",
-  "appName": "VIBEX",
+  "appName": "Vibex",
   "webDir": "dist",
   "android": {
     "allowMixedContent": false,

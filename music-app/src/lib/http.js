@@ -89,11 +89,19 @@ export async function installNativeHttp() {
     }
 
     try {
-      const res = await CapacitorHttp.request({
+      if (init.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      const request = CapacitorHttp.request({
         url,
         method: init.method || 'GET',
         headers,
         responseType: 'json',
+        connectTimeout: 12000,
+        readTimeout: 15000,
+      })
+      const res = await new Promise((resolve, reject) => {
+        const abort = () => reject(new DOMException('Aborted', 'AbortError'))
+        init.signal?.addEventListener('abort', abort, { once: true })
+        request.then(resolve, reject).finally(() => init.signal?.removeEventListener('abort', abort))
       })
       // CapacitorHttp hands back parsed data; rebuild a real Response so the
       // caller's `.json()` / `.ok` checks behave exactly as on the web.
@@ -102,7 +110,8 @@ export async function installNativeHttp() {
         status: res.status || 200,
         headers: { 'content-type': 'application/json' },
       })
-    } catch {
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error
       // Falling back to the WebView's fetch will almost certainly hit CORS,
       // but a real network error is a better signal than a silent hang.
       return original(input, init)

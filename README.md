@@ -2,7 +2,7 @@
 
 # 🎵 VIBEX
 
-**A sleek, Spotify-style music player for the web — search millions of songs, stream in high quality, download, and vibe.**
+**A mobile-first, Echo-inspired VIBEX player with a React/Capacitor UI and native Android playback.**
 
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Stack](https://img.shields.io/badge/stack-Node%20·%20Bun%20·%20Hono-blue)
@@ -10,6 +10,16 @@
 [✨ Features](#-features) · [🚀 Quick Start](#-quick-start) · [📸 Screenshots](#-screenshots) · [⚖️ Legal](#legal)
 
 </div>
+
+> **Latest testing update:** [Vibex 2.0-test5](docs/TEST5.md) fixes the missing Android notification player by registering the directly started media session with Media3. A regression reproduces the old zero-session failure; notification/foreground/control checks pass in API 28 and 33 Robolectric simulations. Install over test4 without uninstalling. Fixed header, direct return, library, name, icon, and signing identity remain unchanged.
+>
+> **Testing APK + AI icon:** The current test build uses the same `dev.viswesh.vibex.testing` package and signing key as earlier tests. [Test4 notes](docs/TEST4.md), [test3 notes](docs/TEST3.md), [test2 notes](docs/TEST2.md), and [test1 notes](docs/TEST_APK.md) are historical references.
+>
+> **Android-first v2 implementation:** See [architecture, scope and build instructions](docs/ANDROID_V2.md), [verification results](docs/VERIFICATION.md), and the [open device acceptance checklist](docs/DEVICE_QA.md).
+> Native Media3 playback, managed downloads, SQLite/backup, local audio, EQ and a widget are implemented locally. Builds and automated checks pass; real-device acceptance is still required. The remaining README describes the original gateway/catalog/export architecture; use the v2 guide for current UI and playback boundaries.
+>
+> UI screenshots: [mobile](docs/screenshots/mobile.png) · [desktop](docs/screenshots/desktop.png).
+
 
 > ### ⚖️ Legal notice — please read
 >
