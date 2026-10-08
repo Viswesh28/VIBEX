@@ -23,7 +23,9 @@
  * Recursion is now prevented by only installing when a native implementation
  * is advertised; see nativeHttpAdvertised().
  */
-const NATIVE_HOSTS = /(^|\.)jiosaavn\.com$/i
+// jiosaavn.com: embedded API metadata. kugou.com: lyrics provider — neither
+// sends CORS headers, so both must leave the WebView through the native stack.
+const NATIVE_HOSTS = /(^|\.)(jiosaavn|kugou)\.com$/i
 
 let installed = false
 

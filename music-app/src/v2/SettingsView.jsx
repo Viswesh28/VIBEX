@@ -178,6 +178,19 @@ export function SettingsView() {
             </label>
             <label className="setting-row">
               <span>
+                <Sun />
+                <b>Player style</b>
+              </span>
+              <select
+                value={settings.playerStyle}
+                onChange={(e) => setSetting("playerStyle", e.target.value)}
+              >
+                <option value="classic">Classic</option>
+                <option value="aurora">Aurora glass</option>
+              </select>
+            </label>
+            <label className="setting-row">
+              <span>
                 <Music2 />
                 <b>Favorite genre</b>
               </span>
@@ -289,7 +302,7 @@ export function SettingsView() {
             </p>
             {[
               ...settings.lyricsProviders,
-              ...["local", "lrclib-exact", "lrclib-search"].filter(
+              ...["local", "lrclib-exact", "lrclib-search", "kugou"].filter(
                 (id) => !settings.lyricsProviders.includes(id),
               ),
             ].map((id) => (
@@ -300,14 +313,18 @@ export function SettingsView() {
                       ? "Your imported LRC / text"
                       : id === "lrclib-exact"
                         ? "LRCLIB · Exact recording"
-                        : "LRCLIB · Matched search"}
+                        : id === "lrclib-search"
+                          ? "LRCLIB · Matched search"
+                          : "KuGou · Community synced"}
                   </b>
                   <small>
                     {id === "local"
                       ? "Attached to this track; included in your library backup"
                       : id === "lrclib-exact"
                         ? "Title, album, artist and duration"
-                        : "Fallback when an exact lookup has no result"}
+                        : id === "lrclib-search"
+                          ? "Fallback when an exact lookup has no result"
+                          : "Login-free; strong for Indian and Asian catalogs"}
                   </small>
                 </span>
                 <input

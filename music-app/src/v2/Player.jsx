@@ -351,10 +351,24 @@ export function Player({ onClose, onMenu, tab, setTab }) {
     <div
       ref={dialog}
       className="player-page"
+      data-style={settings.playerStyle || "classic"}
       role="dialog"
       aria-modal="true"
       aria-label="Now playing"
     >
+      {settings.playerStyle === "aurora" && (
+        <div
+          className="aurora-bg"
+          aria-hidden="true"
+          style={
+            current?.image?.length
+              ? {
+                  backgroundImage: `url(${current.image[current.image.length - 1]?.url || ""})`,
+                }
+              : undefined
+          }
+        />
+      )}
       <div
         className="player-top"
         onTouchStart={(e) => (touch.current = e.touches[0].clientY)}
@@ -520,6 +534,14 @@ export function Player({ onClose, onMenu, tab, setTab }) {
             <span className="quality-pill">
               {current?.local ? "LOCAL" : settings.quality}
             </span>
+            {state.viaYoutube && (
+              <span
+                className="quality-pill yt-pill"
+                title="JioSaavn stream was unavailable; playing a matched YouTube audio stream"
+              >
+                via YouTube
+              </span>
+            )}
           </div>
           {state.error && (
             <p className="player-error" role="alert">

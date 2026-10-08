@@ -122,9 +122,13 @@ public final class VibeMedia {
     return streamKey(spec);
   }
 
+  /** ids whose stream died mid-playback; the next resolve probes before trusting Saavn again. */
+  private final Set<String> suspect = new HashSet<>();
+
   public synchronized void invalidate(String id) {
     for (String q : new String[] {"12kbps", "48kbps", "96kbps", "160kbps", "320kbps"})
       urls.remove(id + q);
+    suspect.add(id);
   }
 
   public void configure(JSONObject prefs) {
@@ -140,6 +144,46 @@ public final class VibeMedia {
     String key = id + q;
     Resolved old = urls.get(key);
     if (old != null && System.currentTimeMillis() - old.at < 120000) return old.url;
+    // YouTube already took control of this track in this session? Skip the
+    // Saavn round-trip entirely (route cache — see YtFallback).
+    String routed = YtFallback.get(context).routed(id);
+    if (routed != null) return routed;
+    boolean verify = suspect.remove(id);
+    try {
+      String url = resolveSaavn(id, q, key);
+      // A mid-song death put this id under suspicion: don't trust a Saavn URL
+      // again until it survives a probe. A dead probe hands control to YouTube.
+      if (verify && !alive(url)) {
+        urls.remove(key);
+        throw new IOException("Saavn CDN URL failed liveness probe");
+      }
+      YtFallback.get(context).release(id); // Saavn verified — it keeps/retakes control
+      return url;
+    } catch (IOException primary) {
+      String yt = YtFallback.get(context).resolve(store.song(id), id);
+      if (yt != null) return yt; // takeover: same MediaItem, new URL underneath
+      throw primary; // truthful original error when YouTube has no confident match
+    }
+  }
+
+  private boolean alive(String url) {
+    HttpURLConnection con = null;
+    try {
+      con = (HttpURLConnection) new URL(url).openConnection();
+      con.setRequestMethod("HEAD");
+      con.setConnectTimeout(5000);
+      con.setReadTimeout(5000);
+      con.setRequestProperty("User-Agent", "VIBEX/2");
+      int code = con.getResponseCode();
+      return code >= 200 && code < 400;
+    } catch (Exception e) {
+      return false;
+    } finally {
+      if (con != null) con.disconnect();
+    }
+  }
+
+  private String resolveSaavn(String id, String q, String key) throws IOException {
     HttpURLConnection con = null;
     try {
       URL u =

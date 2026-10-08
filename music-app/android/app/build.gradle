@@ -7,7 +7,7 @@ android {
         applicationId "dev.viswesh.vibex"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 7
+        versionCode 8
         versionName "2.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -30,7 +30,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix ".testing"
-            versionNameSuffix "-test5"
+            versionNameSuffix "-test6"
         }
         release {
             minifyEnabled false

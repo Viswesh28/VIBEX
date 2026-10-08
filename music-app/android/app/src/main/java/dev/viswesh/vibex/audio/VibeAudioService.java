@@ -752,6 +752,10 @@ public class VibeAudioService extends MediaSessionService {
       o.put("playing", player.isPlaying());
       o.put("buffering", player.getPlaybackState() == Player.STATE_BUFFERING);
       o.put("error", error);
+      o.put(
+          "viaYoutube",
+          player.getCurrentMediaItem() != null
+              && YtFallback.via(player.getCurrentMediaItem().mediaId));
       o.put("sleepUntil", sleepUntil);
       o.put("eqAvailable", eq != null);
     } catch (Exception ignored) {

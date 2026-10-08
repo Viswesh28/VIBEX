@@ -3344,3 +3344,99 @@ html[data-saver="true"] .sheet-backdrop {
 .playlist-edit {
   flex-wrap: wrap;
 }
+
+/* ===================== test6 · Liquid Glass ===================== */
+/* Glass tokens. Opaque fallbacks keep pre-blur WebViews fully usable. */
+:root {
+  --glass-surface: rgba(255, 255, 255, 0.55);
+  --glass-strong: rgba(255, 255, 255, 0.72);
+  --glass-edge: rgba(255, 255, 255, 0.65);
+  --glass-shadow: 0 18px 50px rgba(32, 20, 80, 0.16);
+}
+[data-theme="dark"] {
+  --glass-surface: rgba(22, 20, 34, 0.55);
+  --glass-strong: rgba(24, 22, 38, 0.72);
+  --glass-edge: rgba(255, 255, 255, 0.14);
+  --glass-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+/* Glass chrome: top bar gets the signature translucent blur. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .topbar {
+    background: var(--glass-surface);
+    -webkit-backdrop-filter: blur(22px) saturate(1.5);
+    backdrop-filter: blur(22px) saturate(1.5);
+    border-bottom: 1px solid var(--glass-edge);
+  }
+}
+
+/* "via YouTube" takeover badge. */
+.yt-pill {
+  background: #ff00331a;
+  color: #c4003a;
+  border: 1px solid #ff003330;
+}
+[data-theme="dark"] .yt-pill {
+  background: #ff476920;
+  color: #ff8aa1;
+  border-color: #ff476940;
+}
+
+/* ---------------- Aurora glass player (full-bleed blurred artwork) ---- */
+.aurora-bg {
+  position: absolute;
+  inset: -40px;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--accent-deep);
+  filter: blur(56px) saturate(1.7) brightness(0.92);
+  transform: scale(1.15);
+  pointer-events: none;
+}
+[data-theme="dark"] .aurora-bg {
+  filter: blur(56px) saturate(1.6) brightness(0.55);
+}
+.player-page[data-style="aurora"] {
+  background: var(--accent-deep);
+}
+.player-page[data-style="aurora"] > *:not(.aurora-bg) {
+  position: relative;
+  z-index: 1;
+}
+/* Content floats on glass cards above the artwork wash. */
+.player-page[data-style="aurora"] .player-main,
+.player-page[data-style="aurora"] .player-secondary {
+  background: var(--glass-strong);
+  border: 1px solid var(--glass-edge);
+  border-radius: 26px;
+  padding: 18px;
+  box-shadow: var(--glass-shadow);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .player-page[data-style="aurora"] .player-main,
+  .player-page[data-style="aurora"] .player-secondary {
+    background: var(--glass-surface);
+    -webkit-backdrop-filter: blur(26px) saturate(1.6);
+    backdrop-filter: blur(26px) saturate(1.6);
+  }
+}
+.player-page[data-style="aurora"] .player-top {
+  color: #fff;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.35);
+}
+.player-page[data-style="aurora"] .player-top small,
+.player-page[data-style="aurora"] .player-top strong {
+  color: #fff;
+}
+.player-page[data-style="aurora"] .player-art {
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  border-radius: 22px;
+}
+/* Specular rim on the artwork — the "physical glass" cue. (Cover renders an
+   <img>, so pseudo-elements can't be used; a real border + outline does it.) */
+.player-page[data-style="aurora"] .player-art {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  outline: 1px solid rgba(0, 0, 0, 0.12);
+  outline-offset: -2px;
+}

@@ -15,8 +15,9 @@ export const defaults = {
   crossfade: 3,
   stats: true,
   eq: "Flat",
-  lyricsProviders: ["local", "lrclib-exact", "lrclib-search"],
+  lyricsProviders: ["local", "lrclib-exact", "lrclib-search", "kugou"],
   lyricOffset: 0,
+  playerStyle: "classic",
   stopOnDismiss: false,
   cacheMB: 128,
 };
@@ -153,11 +154,14 @@ export function cleanSettings(s = {}) {
       ? [
           ...new Set(
             s.lyricsProviders.filter((p) =>
-              ["local", "lrclib-exact", "lrclib-search"].includes(p),
+              ["local", "lrclib-exact", "lrclib-search", "kugou"].includes(p),
             ),
           ),
         ]
       : defaults.lyricsProviders,
+    playerStyle: ["classic", "aurora"].includes(s.playerStyle)
+      ? s.playerStyle
+      : defaults.playerStyle,
   };
 }
 export function validateBackup(input) {
