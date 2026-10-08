@@ -27,10 +27,25 @@ android {
             systemProperty "maven.repo.local", new File(gradle.gradleUserHomeDir, "robolectric-m2").absolutePath
         }
     }
+    // One stable signing identity for every testing build, committed next to
+    // the project (android/vibex-testing.keystore). Debug builds signed with
+    // the machine's throwaway debug key forced a full uninstall before every
+    // update; with this key each new APK installs straight over the previous
+    // one, wherever it was built. Testing only — never ship a store release
+    // with a key whose password lives in the repo.
+    signingConfigs {
+        vibexTesting {
+            storeFile file('../vibex-testing.keystore')
+            storePassword 'vibex-testing'
+            keyAlias 'vibex-testing'
+            keyPassword 'vibex-testing'
+        }
+    }
     buildTypes {
         debug {
             applicationIdSuffix ".testing"
             versionNameSuffix "-test7"
+            signingConfig signingConfigs.vibexTesting
         }
         release {
             minifyEnabled false
