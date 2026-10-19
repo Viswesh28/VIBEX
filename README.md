@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Stack](https://img.shields.io/badge/stack-Node%20·%20Bun%20·%20Hono-blue)
 
-[✨ Features](#-features) · [🚀 Quick Start](#-quick-start) · [📸 Screenshots](#-screenshots) · [⚖️ Legal](#legal)
+[🌐 Open VIBEX](https://vibex-music-pi.vercel.app) · [✨ Features](#-features) · [🚀 Quick Start](#-quick-start) · [📸 Screenshots](#-screenshots) · [⚖️ Legal](#legal)
 
 </div>
 
