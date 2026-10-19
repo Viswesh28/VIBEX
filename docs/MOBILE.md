@@ -177,19 +177,55 @@ exist one tap away in the full player, which is what the bar opens on tap.
 
 ### Verification
 
-`mobile-verify.mjs` runs 17 checks on each of five viewports — 320×658, 360×640,
-393×851, 412×915 and 851×393 landscape — covering horizontal overflow, bar
-geometry, 40 px touch targets, hover-only controls, all four tabs, drawer
-open/close, search, playback and the full player. Last run: **85/85**.
+```bash
+cd music-app
+npm run build && PORT=8000 node server.mjs   # terminal 1
+npm run verify:mobile                        # terminal 2 — add --headed to watch
+```
+
+`mobile-verify.mjs` drives a real Chromium over the built bundle. It runs 17
+checks on each of five viewports — 320×658, 360×640, 393×851, 412×915 and
+851×393 landscape — covering boot, unhandled page errors, horizontal overflow
+(naming the worst offending element), phone-vs-desktop layout, tab bar and
+player bar geometry, safe-area insets, 40 px touch targets, the 16 px search
+input, all four tabs, drawer open/close, hover-gated row actions and the full
+player. It prints a per-viewport scorecard and exits non-zero on any failure.
+
+Every `/api` request is answered from `test/fixtures/api.js`, so a run does not
+depend on the live JioSaavn catalogue, on the API process, or on network egress —
+and the same run means the same thing every time.
+
+Requirements: `npm i -D playwright && npx playwright install chromium`, plus a
+running gateway. If either is missing the script exits `2` and says so; it never
+reports a pass it did not earn. It also runs on every push in CI.
 
 ### Accessibility
 
-`ux-audit.mjs` checks the things a layout assertion cannot see: WCAG AA contrast
-for every text node against its computed background (both themes), accessible
-names on interactive elements, adjacent tap-target spacing, truncation in the
-compact player bar, and 1.3x system text. Last run: **0 findings**.
+```bash
+npm run verify:ux      # same prerequisites as verify:mobile
+```
 
-Fixed in that pass:
+`ux-audit.mjs` checks the things a layout assertion cannot see, on a 393×851
+phone viewport:
+
+* **WCAG 2.1 AA contrast** for every visible text node, against the first opaque
+  background behind it, in **both themes** — 4.5:1 for body text, 3:1 for text
+  ≥ 24 px or ≥ 18.66 px bold. Alpha is composited over that background rather
+  than ignored.
+* **Accessible names** on every interactive element. A `title` attribute alone
+  counts as *unnamed*: TalkBack does not reliably announce it and touch users
+  never see it.
+* **Adjacent tap-target spacing** — flags controls closer than 8 px in the same
+  row or column.
+* **Clipping** in the compact player bar and tab bar.
+* **1.3× system text** (Android's largest non-display font scale) for horizontal
+  overflow and player-bar truncation.
+
+It exits `0` only with zero findings, exits `2` if it could not actually run, and
+runs on every push in CI.
+
+The findings below are what an earlier manual pass fixed; the script exists so
+they stay fixed:
 
 * Light theme `--muted` was 4.16:1 on the page and 3.30:1 on cards — below AA.
   One token governed eight reported elements.

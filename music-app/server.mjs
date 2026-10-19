@@ -97,7 +97,9 @@ const server = http.createServer(async (req, res) => {
         })
         res.end(buf)
       } catch (e) {
-        // Backend down -> 502 JSON (NOT 404) so the UI can cleanly fall back to cloud
+        // Backend down -> 502 JSON (NOT 404). The client's probeApi() treats any
+        // non-success as "API unavailable" and swaps in the offline screen, and a
+        // 404 here would be indistinguishable from a genuinely missing route.
         res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
         res.end(JSON.stringify({ success: false, message: 'Local JioSaavn backend unreachable at ' + API_TARGET }))
       }

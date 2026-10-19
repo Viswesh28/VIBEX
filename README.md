@@ -58,7 +58,7 @@ bash setup.sh
 cd jiosaavn-api && PORT=3001 bun run run-local.mjs
 
 # 3. build the front-end and start the VIBEX gateway (terminal 2)
-cd music-app && npm install && npm start
+cd music-app && npm start
 ```
 
 `npm start` runs the Vite build and then the gateway. During UI work,
@@ -66,6 +66,58 @@ cd music-app && npm install && npm start
 and `/dl` to the gateway, so keep that running too.
 
 Open **http://localhost:8000** and press play. 🎧
+
+<details>
+<summary><b>Install by hand (no Bun, or CI)</b></summary>
+
+The order matters. `music-app` consumes the API as a `"file:../jiosaavn-api"`
+dependency and mounts its controllers **in-process** for the Android build, so
+the API's own runtime dependencies have to be present for the front-end to
+build at all:
+
+```bash
+# 1. the vendored API's runtime deps (must come first)
+cd jiosaavn-api && npm ci --omit=dev --ignore-scripts
+
+# 2. the front-end and gateway
+cd ../music-app && npm ci && npm run build
+```
+
+`--ignore-scripts` stops the vendored fork's `postinstall: npx simple-git-hooks`
+from rewriting this repository's git hooks; that hook runs `bun run lint`, which
+is meaningless at the repo root.
+
+</details>
+
+### Tests and checks
+
+```bash
+cd music-app
+npm test              # 124 offline unit/integration tests (vitest + jsdom)
+npm run verify:mobile # phone layout, 5 viewports — needs Playwright + a running gateway
+npm run verify:ux     # contrast, accessible names, tap spacing — same prerequisites
+```
+
+`npm test` needs no network and no browser: it covers the LRC parser, the song
+helpers, the storage guard, the ID3/MP4 tag writer, the settings store, the
+`SongRow` component, the native-`fetch` patch and the in-process API router
+(upstream stubbed at `fetch`, so the real DES-ECB media-URL decryption runs).
+
+The two `verify:*` scripts drive a real Chromium and exit non-zero without
+pretending otherwise if Playwright or the gateway is missing.
+
+A ready-to-run CI workflow covering all three lives at
+[`docs/ci.yml.example`](docs/ci.yml.example). It is not active in this
+repository: adding a file under `.github/workflows/` needs the `workflows`
+permission, which the bot that opened this branch does not have. To turn it on,
+copy it into place and push it yourself:
+
+```bash
+mkdir -p .github/workflows && cp docs/ci.yml.example .github/workflows/ci.yml
+```
+
+The 21 specs vendored inside `jiosaavn-api/src` are **not** in CI: each one dials
+the live `www.jiosaavn.com`, so they need egress and are flaky by nature.
 
 ## 📸 Screenshots
 
