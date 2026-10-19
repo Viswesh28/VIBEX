@@ -3,6 +3,7 @@ import { api } from '../lib/api.js'
 import { decodeHtml, fmtNum } from '../lib/format.js'
 import { imgOf } from '../lib/song.js'
 import { CardGrid } from './CardGrid.jsx'
+import { Icon } from './Icon.jsx'
 import { SongList } from './SongList.jsx'
 import { EmptyState, SectionTitle, Spinner } from './Spinner.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
@@ -31,7 +32,7 @@ export function ArtistView({ id, onTitle }) {
           decodeHtml(d.name || 'Artist'),
           d.followerCount ? `(${fmtNum(d.followerCount)} followers)` : ''
         )
-        setStatus('Click a song to play.')
+        setStatus('')
       })
       .catch((e) => {
         if (!alive) return
@@ -43,38 +44,70 @@ export function ArtistView({ id, onTitle }) {
     }
   }, [id, setStatus, onTitle])
 
-  if (error) return <EmptyState icon="⚠️" title="Failed to load artist" hint={error} />
+  if (error) return <EmptyState icon="alert" title="Failed to load artist" hint={error} />
   if (!data) return <Spinner />
 
   const songs = (data.topSongs || []).filter((s) => s.downloadUrl?.length)
   const albums = data.topAlbums || []
+  const followers = fmtNum(data.followerCount)
 
   return (
     <>
-      <div className="artist-head">
-        <img
-          src={imgOf(data, dataSaver)}
-          alt=""
-          onError={(e) => {
-            e.currentTarget.style.opacity = 0.25
-          }}
+      <section className="hero" aria-labelledby="artistTitle">
+        <div
+          className="hero-wash"
+          aria-hidden="true"
+          style={{ backgroundImage: `url("${imgOf(data, dataSaver)}")` }}
         />
-        <div>
-          <h3>
-            {decodeHtml(data.name)} {data.isVerified && <span className="verified">✔</span>}
+        <div className="hero-scrim" aria-hidden="true" />
+        <img className="hero-cover round" src={imgOf(data, dataSaver)} alt="" />
+        <div className="hero-body">
+          <span className="eyebrow">
+            <span className="dot" aria-hidden="true" />
+            Artist
+          </span>
+          <h3 id="artistTitle">
+            {decodeHtml(data.name)}{' '}
+            {data.isVerified && (
+              <span className="verified" title="Verified artist">
+                <Icon name="verified" size={20} />
+                <span className="sr-only">Verified artist</span>
+              </span>
+            )}
           </h3>
-          <p>{[data.type, data.dominantLanguage].filter(Boolean).join(' • ')}</p>
-          <button onClick={() => songs.length && playFromList(songs, 0)}>▶ Play top songs</button>
-          <button className="ghost" onClick={() => startArtistRadio(songs)}>
-            📻 Artist radio
-          </button>
+          <div className="hero-meta">
+            {[data.dominantLanguage, data.type, followers ? `${followers} followers` : '']
+              .filter(Boolean)
+              .join(' · ')}
+          </div>
+          <div className="hero-actions">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => songs.length && playFromList(songs, 0)}
+              disabled={!songs.length}
+            >
+              <Icon name="play" size={15} />
+              Play
+            </button>
+            <button type="button" className="btn-ghost on-art" onClick={() => startArtistRadio(songs)}>
+              <Icon name="radio" size={15} />
+              Artist radio
+            </button>
+          </div>
         </div>
-      </div>
-      <SectionTitle>Top songs ({songs.length})</SectionTitle>
+      </section>
+
+      <SectionTitle>
+        Top songs <span>{songs.length}</span>
+      </SectionTitle>
       <SongList songs={songs} numbered />
+
       {albums.length > 0 && (
         <>
-          <SectionTitle>Albums ({albums.length})</SectionTitle>
+          <SectionTitle>
+            Albums <span>{albums.length}</span>
+          </SectionTitle>
           <CardGrid
             items={albums}
             kind="album"

@@ -47,16 +47,33 @@ describe('SongRow', () => {
     expect(container.querySelector('.song-row')).toHaveClass('playing')
   })
 
-  it('reflects liked state in both the class and the glyph', () => {
+  // The heart used to be a text glyph (♡/♥), which every platform renders
+  // differently and which a screen reader announces as "white heart suit".
+  // It is now VIBEX's own SVG: outline when idle, filled when liked — and the
+  // state is exposed as aria-pressed, not as a character.
+  it('reflects liked state in the class, aria-pressed and the heart icon', () => {
     const { container, rerender } = renderRow({ liked: false })
-    expect(container.querySelector('.like-btn')).not.toHaveClass('liked')
-    expect(screen.getByTitle('Like')).toHaveTextContent('♡')
+    const btn = screen.getByTitle('Like')
+    expect(btn).not.toHaveClass('liked')
+    expect(btn).toHaveAttribute('aria-pressed', 'false')
+    expect(btn).toHaveAccessibleName('Like Guzarish & Co')
+    expect(btn.querySelector('svg')).toHaveAttribute('fill', 'none')
 
     rerender(
       <SongRow song={song} liked onPlay={vi.fn()} onLike={vi.fn()} onAddToPlaylist={vi.fn()} onRadio={vi.fn()} />
     )
     expect(container.querySelector('.like-btn')).toHaveClass('liked')
-    expect(screen.getByTitle('Like')).toHaveTextContent('♥')
+    expect(screen.getByTitle('Like')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTitle('Like')).toHaveAccessibleName('Unlike Guzarish & Co')
+    expect(screen.getByTitle('Like').querySelector('svg')).toHaveAttribute('fill', 'currentColor')
+  })
+
+  it('names every icon-only action for assistive technology', () => {
+    renderRow()
+    for (const label of ['Like', 'Add to playlist', 'Start radio from here']) {
+      expect(screen.getByTitle(label)).toHaveAttribute('aria-label')
+      expect(screen.getByTitle(label).getAttribute('aria-label')).not.toBe('')
+    }
   })
 
   it('uses the smallest artwork in Data Saver mode', () => {

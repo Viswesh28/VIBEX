@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { decodeHtml } from '../lib/format.js'
 import { imgOf } from '../lib/song.js'
+import { Icon } from './Icon.jsx'
 import { SongList } from './SongList.jsx'
 import { EmptyState } from './Spinner.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
@@ -22,8 +23,8 @@ export function PlaylistView({ id, onTitle }) {
 
   useEffect(() => {
     if (!pl) return
-    onTitle?.('🎵 ' + decodeHtml(pl.name), `(${pl.songs.length} songs)`)
-    setStatus(pl.songs.length ? 'Click a song to play.' : 'Empty playlist — add songs with ＋.')
+    onTitle?.(decodeHtml(pl.name), `${pl.songs.length} songs`)
+    setStatus('')
   }, [pl, onTitle, setStatus])
 
   // Give the "are you sure" state a moment, then disarm.
@@ -33,52 +34,67 @@ export function PlaylistView({ id, onTitle }) {
     return () => clearTimeout(t)
   }, [armed])
 
-  if (!pl) return <EmptyState icon="🎵" title="Playlist not found" />
+  if (!pl) return <EmptyState icon="music" title="Playlist not found" />
+
+  const play = () => pl.songs.length && playFromList(pl.songs, 0)
+  const cover = pl.songs.length ? imgOf(pl.songs[0], dataSaver) : ''
 
   return (
     <>
-      <div className="detail-head">
-        {pl.songs.length ? (
-          <img
-            src={imgOf(pl.songs[0], dataSaver)}
-            alt=""
-            onError={(e) => {
-              e.currentTarget.style.opacity = 0.25
-            }}
-          />
+      <section className="hero" aria-labelledby="playlistTitle">
+        {cover ? (
+          <div className="hero-wash" aria-hidden="true" style={{ backgroundImage: `url("${cover}")` }} />
+        ) : null}
+        <div className="hero-scrim" aria-hidden="true" />
+        {cover ? (
+          <img className="hero-cover" src={cover} alt="" />
         ) : (
-          <div
-            style={{
-              width: 150, height: 150, borderRadius: 14, background: 'var(--card)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 56,
-            }}
-          >
-            🎵
+          <div className="hero-cover hero-placeholder" aria-hidden="true">
+            <Icon name="music" size={54} />
           </div>
         )}
-        <div>
-          <h3>{decodeHtml(pl.name)}</h3>
-          <p>Your custom playlist • saved on this device</p>
-          <button onClick={() => pl.songs.length && playFromList(pl.songs, 0)}>▶ Play all</button>{' '}
-          <button className="ghost" onClick={() => openRenameModal(pl.id, pl.name)}>
-            ✏️ Rename
-          </button>{' '}
-          <button
-            className="ghost"
-            onClick={() => {
-              if (!armed) {
-                setArmed(true)
-                return
-              }
-              deletePlaylist(pl.id)
-              navigate({ kind: 'feed' })
-              setStatus('Playlist deleted.')
-            }}
-          >
-            {armed ? '⚠️ Sure?' : '🗑 Delete'}
-          </button>
+        <div className="hero-body">
+          <span className="eyebrow">
+            <span className="dot" aria-hidden="true" />
+            Your playlist
+          </span>
+          <h3 id="playlistTitle">{decodeHtml(pl.name)}</h3>
+          <div className="hero-meta">
+            {pl.songs.length} {pl.songs.length === 1 ? 'song' : 'songs'} · saved on this device
+          </div>
+          <div className="hero-actions">
+            <button type="button" className="btn-primary" onClick={play} disabled={!pl.songs.length}>
+              <Icon name="play" size={15} />
+              Play
+            </button>
+            <button
+              type="button"
+              className="btn-ghost on-art"
+              onClick={() => openRenameModal(pl.id, pl.name)}
+            >
+              <Icon name="pencil" size={15} />
+              Rename
+            </button>
+            <button
+              type="button"
+              className={'btn-ghost on-art' + (armed ? ' on' : '')}
+              onClick={() => {
+                if (!armed) {
+                  setArmed(true)
+                  return
+                }
+                deletePlaylist(pl.id)
+                navigate({ kind: 'feed' })
+                setStatus('Playlist deleted.')
+              }}
+            >
+              <Icon name="trash" size={15} />
+              {armed ? 'Tap again to delete' : 'Delete'}
+            </button>
+          </div>
         </div>
-      </div>
+      </section>
+
       {pl.songs.length ? (
         <SongList
           songs={pl.songs}
@@ -89,7 +105,7 @@ export function PlaylistView({ id, onTitle }) {
           }}
         />
       ) : (
-        <EmptyState icon="🎵" title="Empty playlist" hint="Tap ＋ on any song to add it here." />
+        <EmptyState icon="music" title="Empty playlist" hint="Tap + on any song to add it here." />
       )}
     </>
   )

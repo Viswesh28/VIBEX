@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { SettingsPanel } from './SettingsPanel.jsx'
+import { Icon } from './Icon.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
@@ -9,67 +10,92 @@ const CHIPS = ['Anirudh hits', 'A.R. Rahman', 'Tamil 90s hits', 'Arijit Singh', 
 export function TopBar({ sleep, onMenu }) {
   const { theme, toggleTheme } = useSettings()
   const { searchQuery, setSearchQuery, searchTab, search } = useUI()
-  const [setOpen, setSetOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const wrapRef = useRef(null)
 
   useEffect(() => {
-    if (!setOpen) return undefined
+    if (!settingsOpen) return undefined
     const onDoc = (e) => {
-      if (!wrapRef.current?.contains(e.target)) setSetOpen(false)
+      if (!wrapRef.current?.contains(e.target)) setSettingsOpen(false)
+    }
+    const onKey = (e) => {
+      if (e.key === 'Escape') setSettingsOpen(false)
     }
     document.addEventListener('click', onDoc)
-    return () => document.removeEventListener('click', onDoc)
-  }, [setOpen])
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('click', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [settingsOpen])
+
+  const submit = () => search(searchQuery, searchTab)
 
   return (
     <header id="topbar">
-      <button id="menuBtn" className="ghost" aria-label="Open menu" onClick={onMenu}>
-        ☰
+      <button id="menuBtn" className="icon-btn" aria-label="Open menu" onClick={onMenu}>
+        <Icon name="menu" size={21} />
       </button>
+
       <div className="search-wrap">
+        <Icon name="search" size={17} />
         <input
           id="searchInput"
-          type="text"
-          placeholder="Search songs, albums, playlists..."
+          type="search"
+          enterKeyHint="search"
+          aria-label="Search songs, albums, playlists and artists"
+          placeholder="Search songs, albums, playlists…"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && search(e.currentTarget.value, searchTab)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+          }}
         />
-        <button onClick={() => search(searchQuery, searchTab)}>Search</button>
+        <button type="button" className="search-submit" onClick={submit}>
+          Search
+        </button>
       </div>
-      <div className="tabs">
+
+      <div className="tabs" role="tablist" aria-label="Search in">
         {TABS.map((t) => (
-          <div
+          <button
             key={t}
+            type="button"
+            role="tab"
+            aria-selected={searchTab === t}
             className={'tab' + (searchTab === t ? ' active' : '')}
             onClick={() => search(searchQuery, t)}
           >
             {t[0].toUpperCase() + t.slice(1)}
-          </div>
+          </button>
         ))}
       </div>
-      <button
-        className="ghost"
-        title="Toggle dark / light"
-        aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
-        onClick={toggleTheme}
-      >
-        {theme === 'light' ? '☀️' : '🌙'}
-      </button>
-      <div id="setWrap" ref={wrapRef}>
+
+      <div className="top-actions">
         <button
-          className="ghost"
-          title="Playback settings"
-          aria-label="Playback settings"
-          aria-expanded={setOpen}
-          onClick={(e) => {
-            e.stopPropagation()
-            setSetOpen((v) => !v)
-          }}
+          className="icon-btn"
+          title="Toggle dark / light"
+          aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+          onClick={toggleTheme}
         >
-          ⚙️
+          <Icon name={theme === 'light' ? 'moon' : 'sun'} size={19} />
         </button>
-        <SettingsPanel open={setOpen} sleep={sleep} />
+        <div id="setWrap" ref={wrapRef}>
+          <button
+            type="button"
+            className={'icon-btn' + (settingsOpen ? ' toggled' : '')}
+            title="Playback settings"
+            aria-label="Playback settings"
+            aria-expanded={settingsOpen}
+            onClick={(e) => {
+              e.stopPropagation()
+              setSettingsOpen((v) => !v)
+            }}
+          >
+            <Icon name="settings" size={19} />
+          </button>
+          <SettingsPanel open={settingsOpen} sleep={sleep} />
+        </div>
       </div>
     </header>
   )
@@ -80,9 +106,9 @@ export function Chips() {
   return (
     <div className="chips" id="chips">
       {CHIPS.map((c) => (
-        <div className="chip" key={c} onClick={() => search(c, 'songs')}>
+        <button type="button" className="chip" key={c} onClick={() => search(c, 'songs')}>
           {c}
-        </div>
+        </button>
       ))}
     </div>
   )

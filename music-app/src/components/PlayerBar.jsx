@@ -1,10 +1,12 @@
 import { decodeHtml, fmt } from '../lib/format.js'
 import { artistsOf, dlUrlFor, imgOf } from '../lib/song.js'
+import { Icon } from './Icon.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
+/** The persistent transport. Left: what is playing. Middle: controls. Right: utilities. */
 export function PlayerBar({ onDownload }) {
   const {
     current, isPlaying, clock, volume, currentQuality,
@@ -17,73 +19,108 @@ export function PlayerBar({ onDownload }) {
   const pct = clock.dur ? (clock.cur / clock.dur) * 100 : 0
   const liked = current ? likedIds.has(current.id) : false
   const openFull = () => current && setFullOpen(true)
+  const name = current ? decodeHtml(current.name) : ''
+
+  const seekFromEvent = (e) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    seekFrac((e.clientX - r.left) / r.width)
+  }
+  const seekFromKey = (e) => {
+    if (e.key === 'ArrowRight') seekFrac(Math.min(1, (clock.cur + 10) / (clock.dur || 1)))
+    else if (e.key === 'ArrowLeft') seekFrac(Math.max(0, (clock.cur - 10) / (clock.dur || 1)))
+    else return
+    e.preventDefault()
+  }
 
   return (
-    <footer id="playerBar">
+    <footer id="playerBar" className="player-bar">
       <div
         id="progressWrap"
-        onClick={(e) => {
-          const r = e.currentTarget.getBoundingClientRect()
-          seekFrac((e.clientX - r.left) / r.width)
-        }}
+        role="slider"
+        tabIndex={0}
+        aria-label="Seek"
+        aria-valuemin={0}
+        aria-valuemax={Math.max(1, Math.round(clock.dur || 0))}
+        aria-valuenow={Math.round(clock.cur || 0)}
+        aria-valuetext={`${fmt(clock.cur)} of ${fmt(clock.dur)}`}
+        onClick={seekFromEvent}
+        onKeyDown={seekFromKey}
       >
         <div id="progress" style={{ width: `${pct}%` }} />
       </div>
 
-      <img id="pThumb" alt="" src={current ? imgOf(current, s.dataSaver) : undefined} onClick={openFull} />
-      <div id="pInfo" onClick={openFull}>
-        <div id="pTitle">{current ? decodeHtml(current.name) : 'Nothing playing'}</div>
-        <div id="pArtist">{current ? decodeHtml(artistsOf(current)) : 'Search and pick a song'}</div>
-        <div id="pTime">
-          {fmt(clock.cur)} / {fmt(clock.dur)}
+      <div className="pb-left">
+        <img
+          id="pThumb"
+          alt=""
+          src={current ? imgOf(current, s.dataSaver) : undefined}
+          onClick={openFull}
+        />
+        <div id="pInfo" onClick={openFull}>
+          <div id="pTitle">{current ? name : 'Nothing playing'}</div>
+          <div id="pArtist">
+            {current ? decodeHtml(artistsOf(current)) : 'Pick a song to start listening'}
+          </div>
+          <div id="pTime">
+            {fmt(clock.cur)} / {fmt(clock.dur)}
+          </div>
         </div>
       </div>
 
       <div className="controls">
         <button
+          type="button"
           className={'cbtn' + (s.shuffle ? ' toggled' : '')}
           title={'Shuffle: ' + (s.shuffle ? 'on' : 'off')}
+          aria-label={s.shuffle ? 'Turn shuffle off' : 'Turn shuffle on'}
+          aria-pressed={s.shuffle}
           onClick={s.toggleShuffle}
         >
-          🔀
+          <Icon name="shuffle" size={18} />
         </button>
-        <button className="cbtn" title="Previous" onClick={prevTrack}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M6 6h2v12H6zM18 6l-8.5 6L18 18z" />
-          </svg>
-        </button>
-        <button className="cbtn main" title="Play/Pause" onClick={togglePlay}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-            {isPlaying ? <path d="M6 5h4v14H6zM14 5h4v14h-4z" /> : <path d="M8 5v14l11-7z" />}
-          </svg>
-        </button>
-        <button className="cbtn" title="Next" onClick={nextTrack}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M16 6h2v12h-2zM6 6l8.5 6L6 18z" />
-          </svg>
+        <button type="button" className="cbtn" title="Previous" aria-label="Previous track" onClick={prevTrack}>
+          <Icon name="prev" size={18} />
         </button>
         <button
+          type="button"
+          className="cbtn main"
+          title="Play / Pause"
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+          onClick={togglePlay}
+        >
+          <Icon name={isPlaying ? 'pause' : 'play'} size={20} />
+        </button>
+        <button type="button" className="cbtn" title="Next" aria-label="Next track" onClick={nextTrack}>
+          <Icon name="next" size={18} />
+        </button>
+        <button
+          type="button"
           className={
             'cbtn' + (s.repeat === 'off' ? ' dim' : '') + (s.repeat === 'one' ? ' toggled' : '')
           }
           title={'Repeat: ' + s.repeat}
+          aria-label={`Repeat: ${s.repeat}. Change repeat mode`}
           onClick={s.cycleRepeat}
         >
-          {s.repeat === 'one' ? '🔂' : '🔁'}
+          <Icon name={s.repeat === 'one' ? 'repeatOne' : 'repeat'} size={18} />
         </button>
       </div>
 
       <div className="p-right">
         <button
+          type="button"
           className={'icon-btn' + (liked ? ' liked' : '')}
           title="Like"
+          aria-label={liked ? 'Unlike this song' : 'Like this song'}
+          aria-pressed={liked}
           onClick={() => current && toggleLike(current)}
         >
-          {liked ? '♥' : '♡'}
+          <Icon name={liked ? 'heartFilled' : 'heart'} size={18} />
         </button>
         <select
           id="quality"
-          title={s.dataSaver ? 'Locked to lowest quality by Data Saver (Beta)' : 'Audio quality'}
+          aria-label="Audio quality"
+          title={s.dataSaver ? 'Locked to the lowest quality by Data Saver' : 'Audio quality'}
           disabled={s.dataSaver || !current}
           value={currentQuality}
           onChange={(e) => {
@@ -103,6 +140,7 @@ export function PlayerBar({ onDownload }) {
           type="range"
           min="0"
           max="100"
+          aria-label="Volume"
           title="Volume"
           value={Math.round(volume * 100)}
           onChange={(e) => setVolume(e.target.value / 100)}
@@ -110,18 +148,33 @@ export function PlayerBar({ onDownload }) {
         <a
           id="dlBtn"
           title="Download audio"
+          aria-label="Download audio"
           href={current ? dlUrlFor(current, currentQuality) : '#'}
           onClick={onDownload}
         >
-          ⬇️
+          <Icon name="download" size={19} />
         </a>
-        <button className="icon-btn" title="Full-screen player" onClick={openFull}>
-          ⛶
+        <button
+          type="button"
+          className="icon-btn"
+          title="Synced lyrics"
+          aria-label="Open synced lyrics"
+          onClick={() => current && setLyricsOpen(true)}
+        >
+          <Icon name="lyrics" size={19} />
         </button>
-        <button className="icon-btn" title="Synced lyrics" onClick={() => current && setLyricsOpen(true)}>
-          🎤
+        <button
+          type="button"
+          className="icon-btn"
+          title="Full-screen player"
+          aria-label="Open the full-screen player"
+          onClick={openFull}
+        >
+          <Icon name="expand" size={18} />
         </button>
       </div>
+
+      {!name && <span className="sr-only">No track selected</span>}
     </footer>
   )
 }

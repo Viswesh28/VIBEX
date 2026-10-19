@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { Icon } from './Icon.jsx'
 
 /** Shared lyrics renderer for the side panel and the full-screen overlay. */
 export function LyricsBody({ res, activeIdx, className = '' }) {
@@ -15,22 +16,27 @@ export function LyricsBody({ res, activeIdx, className = '' }) {
     }
   }, [activeIdx, res])
 
-  if (!res) return <div className="lyr-state">Play a song to see lyrics.</div>
+  if (!res)
+    return (
+      <div className="lyr-state">
+        <Icon name="lyrics" size={26} />
+        Play a song to see lyrics.
+      </div>
+    )
   if (res.type === 'loading') return <div className="lyr-state">Loading lyrics…</div>
   if (res.type === 'instrumental')
     return (
       <div className="lyr-state">
-        🎹
-        <br />
+        <Icon name="music" size={26} />
         Instrumental track — no lyrics.
       </div>
     )
   if (res.type === 'error')
     return (
       <div className="lyr-state">
-        Couldn&apos;t reach lyrics service.
+        Couldn&apos;t reach the lyrics service.
         <br />
-        Check connection and retry.
+        Check your connection and try again.
       </div>
     )
   if (res.type === 'plain') return <div className="lyr-plain">{res.text}</div>
@@ -49,9 +55,7 @@ export function LyricsBody({ res, activeIdx, className = '' }) {
     )
   return (
     <div className="lyr-state">
-      No lyrics found
-      <br />
-      for this song.
+      No lyrics found for this song.
     </div>
   )
 }

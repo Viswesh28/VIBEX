@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { decodeHtml } from '../lib/format.js'
+import { Icon } from './Icon.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
@@ -15,7 +16,7 @@ export function PlaylistModal() {
   const mode = plModal?.mode || 'add'
 
   useEffect(() => {
-    if (!open) return
+    if (!open) return undefined
     setName(mode === 'rename' ? plModal.name : '')
     const t = setTimeout(() => {
       inputRef.current?.focus()
@@ -32,7 +33,7 @@ export function PlaylistModal() {
       : mode === 'new'
         ? 'New playlist'
         : plModal.song
-          ? `Add "${decodeHtml(plModal.song.name)}" to…`
+          ? `Add “${decodeHtml(plModal.song.name)}” to…`
           : 'Your playlists'
 
   const submit = () => {
@@ -43,32 +44,39 @@ export function PlaylistModal() {
     }
     if (mode === 'rename') {
       renamePlaylist(plModal.id, n)
-      setStatus(`Renamed to "${n}".`)
+      setStatus(`Renamed to “${n}”.`)
     } else {
       const err = createPlaylist(n, plModal.song)
       if (err) {
         setStatus(err, true)
         return
       }
-      setStatus(plModal.song ? `Created "${n}" with 1 song.` : `Created playlist "${n}".`)
+      setStatus(plModal.song ? `Created “${n}” with 1 song.` : `Created playlist “${n}”.`)
     }
     closePlaylistModal()
   }
 
   return (
-    <div id="plModal" className="open" onClick={(e) => e.target.id === 'plModal' && closePlaylistModal()}>
+    <div
+      id="plModal"
+      className="open"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={(e) => e.target.id === 'plModal' && closePlaylistModal()}
+    >
       <div id="plSheet">
         <h3 id="plModalTitle">{title}</h3>
+
         {mode !== 'rename' && (
           <div id="plListWrap">
             <div id="plList">
               {playlists.length === 0 ? (
-                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
-                  No playlists yet — create one below.
-                </div>
+                <div className="pl-empty">No playlists yet — create one below.</div>
               ) : (
                 playlists.map((p) => (
-                  <div
+                  <button
+                    type="button"
                     className="pl-pick"
                     key={p.id}
                     onClick={() => {
@@ -79,27 +87,33 @@ export function PlaylistModal() {
                       }
                     }}
                   >
+                    <Icon name="music" size={16} />
                     {decodeHtml(p.name)}
                     <span>{p.songs.length} songs</span>
-                  </div>
+                  </button>
                 ))
               )}
             </div>
           </div>
         )}
+
         <div className="pl-newrow">
           <input
             ref={inputRef}
             id="plNewName"
             maxLength={60}
             placeholder="New playlist name…"
+            aria-label="Playlist name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submit()}
           />
-          <button onClick={submit}>{mode === 'rename' ? 'Save' : 'Create'}</button>
+          <button type="button" className="btn-primary" onClick={submit}>
+            {mode === 'rename' ? 'Save' : 'Create'}
+          </button>
         </div>
-        <button className="ghost" onClick={closePlaylistModal}>
+
+        <button type="button" className="btn-ghost" id="plCloseBtn" onClick={closePlaylistModal}>
           Cancel
         </button>
       </div>
