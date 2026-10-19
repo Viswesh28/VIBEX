@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci --prefix jiosaavn-api --omit=dev --ignore-scripts && npm ci --prefix music-app --ignore-scripts",
+  "buildCommand": "npm run build --prefix music-app",
+  "outputDirectory": "music-app/dist",
+  "functions": {
+    "api/[...path].mjs": { "maxDuration": 60 },
+    "api/dl.mjs": { "maxDuration": 60 },
+    "api/search/[path].mjs": { "maxDuration": 60 },
+    "api/artists/[path].mjs": { "maxDuration": 60 },
+    "api/songs/[path].mjs": { "maxDuration": 60 }
+  },
+  "rewrites": [
+    { "source": "/dl", "destination": "/api/dl" }
+  ]
+}
