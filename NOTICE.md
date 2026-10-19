@@ -70,7 +70,7 @@ visualizer, the LRC parser and lyrics sync, and the ID3/MP4 tag writer in
 | Service | What is fetched | Note |
 |---|---|---|
 | **JioSaavn** (`www.jiosaavn.com`) | Audio stream URLs, song/album/artist/playlist metadata, album artwork | Accessed via the unofficial wrapper above. JioSaavn is a service of Reliance Industries / JioSaavn Media Pvt. Ltd. **This project is not affiliated with, endorsed by, or sponsored by JioSaavn.** |
-| **saavn.dev** | Same, as a public fallback API | Third-party hosted instance of the same open-source wrapper. |
+| **saavn.dev** | Nothing — see note | The public hosted instance of the same wrapper. It is **not** called by VIBEX; the name appears only inside the vendored fork's own documentation strings (`jiosaavn-api/src/app.js`, `src/pages/home.js`). There is no cloud fallback: if the local API is unreachable the UI shows its offline screen. |
 | **LRCLIB** (`lrclib.net`) | Synced and plain-text song lyrics | Community-maintained, keyless lyrics database. Displayed with on-screen credit ("Lyrics by LRCLIB"). **Lyrics remain the property of their publishers and rights holders.** |
 
 ---

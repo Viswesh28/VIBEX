@@ -6,6 +6,8 @@ export const useSettings = () => useContext(Ctx)
 
 const VIZ_STYLES = ['spectrum', 'bars', 'wave', 'orbit']
 const REPEATS = ['off', 'all', 'one']
+// The download tiers JioSaavn advertises, highest first.
+const QUALITIES = ['320kbps', '160kbps', '96kbps', '48kbps', '12kbps']
 
 /**
  * Every preference is mirrored into localStorage under the same `sv*` keys the
@@ -30,7 +32,13 @@ export function SettingsProvider({ children }) {
   })
   const [theme, setTheme] = useState(() => (store.get('svTheme', 'dark') === 'light' ? 'light' : 'dark'))
   const [radio, setRadioState] = useState(() => store.get('svRadio', '0') === '1')
-  const [qualityPref, setQualityPref] = useState('320kbps')
+  // Restored like every other preference. JioSaavn's own tier labels, so an
+  // unknown stored value falls back to the best quality rather than a blank
+  // <select> that matches no <option>.
+  const [qualityPref, setQualityPrefState] = useState(() => {
+    const v = store.get('svQuality', null)
+    return QUALITIES.includes(v) ? v : '320kbps'
+  })
   const [liveOK, setLiveOK] = useState(true)
 
   // On a first-ever visit, respect the browser's own data-saving signals.
@@ -80,6 +88,11 @@ export function SettingsProvider({ children }) {
     store.set('svRadio', on ? '1' : '0')
   }, [])
 
+  const setQualityPref = useCallback((q) => {
+    setQualityPrefState(q)
+    store.set('svQuality', q)
+  }, [])
+
   const value = useMemo(
     () => ({
       dataSaver,
@@ -118,7 +131,7 @@ export function SettingsProvider({ children }) {
     }),
     [
       dataSaver, setDataSaver, saverAuto, crossfadeOn, crossfadeDur, vizOn, vizStyle,
-      shuffle, toggleShuffle, repeat, cycleRepeat, theme, radio, setRadio, qualityPref, liveOK,
+      shuffle, toggleShuffle, repeat, cycleRepeat, theme, radio, setRadio, qualityPref, setQualityPref, liveOK,
     ]
   )
 

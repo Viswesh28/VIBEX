@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# Two npm projects, and the web build depends on the second one's own
+# node_modules: `jiosaavn-api` is consumed as a `file:` dependency and the app
+# mounts its controllers in-process (music-app/src/lib/embedded-api.js), so
+# @hono/zod-openapi has to resolve to a single copy. Installing the API first is
+# what makes that true. `--ignore-scripts` keeps the vendored fork's
+# `postinstall: npx simple-git-hooks` from rewriting the checkout's git hooks.
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  web:
+    name: Build, unit tests, gateway
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: music-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install the vendored API's runtime dependencies
+        working-directory: jiosaavn-api
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Install the front-end and gateway
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit and integration tests (offline)
+        run: npm test
+
+      - name: Start the gateway
+        run: |
+          PORT=8000 node server.mjs &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/ >/dev/null && echo "gateway up" && exit 0
+            sleep 1
+          done
+          echo "gateway never came up" >&2
+          exit 1
+
+      - name: Smoke-test the gateway endpoints
+        run: |
+          set -e
+          # Static shell.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/)" = "200"
+          # SPA fallback for a deep link.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/library)" = "200"
+          # The API is not running here, so the proxy must say so as JSON.
+          test "$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8000/api/search/songs?query=a')" = "502"
+          curl -s 'http://127.0.0.1:8000/api/search/songs?query=a' | grep -q '"success":false'
+          # /healthz reports the API child honestly.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/healthz)" = "503"
+          # A download with nothing to download is a 400, not a crash.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/dl)" = "400"
+          # An encoded traversal attempt is refused.
+          test "$(curl -s -o /dev/null -w '%{http_code}' --path-as-is 'http://127.0.0.1:8000/..%2f..%2fserver.mjs')" = "403"
+          echo "gateway smoke test passed"
+
+  browser:
+    name: Phone layout and accessibility
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: music-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install the vendored API's runtime dependencies
+        working-directory: jiosaavn-api
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Install the front-end and gateway
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the gateway
+        run: |
+          PORT=8000 node server.mjs &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/ >/dev/null && echo "gateway up" && exit 0
+            sleep 1
+          done
+          echo "gateway never came up" >&2
+          exit 1
+
+      # Both scripts answer every /api request from test/fixtures/api.js, so
+      # they are deterministic and need no egress to jiosaavn.com.
+      - name: Phone layout checks (5 viewports)
+        run: npm run verify:mobile
+
+      - name: Accessibility audit (both themes, 1.3x text)
+        run: npm run verify:ux
