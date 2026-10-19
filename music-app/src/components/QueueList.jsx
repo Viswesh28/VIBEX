@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { decodeHtml, fmt } from '../lib/format.js'
 import { artistsOf, imgOf } from '../lib/song.js'
+import { Icon } from './Icon.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 
@@ -35,40 +36,59 @@ export function QueueList() {
 
   return (
     <div id="queueList">
-      {queue.map((s, i) => (
-        <div
-          key={`${s.id}-${i}`}
-          ref={i === currentIndex ? activeRef : null}
-          className={'q-row' + (i === currentIndex ? ' playing' : '')}
-          onClick={() => playTrack(i)}
-        >
-          <span className="q-num">{i + 1}</span>
-          <img
-            src={imgOf(s, dataSaver)}
-            loading="lazy"
-            alt=""
-            onError={(e) => {
-              e.currentTarget.style.opacity = 0.25
-            }}
-          />
-          <div className="q-info">
-            <div className="q-t">{decodeHtml(s.name)}</div>
-            <div className="q-a">{decodeHtml(artistsOf(s))}</div>
+      {queue.map((s, i) => {
+        const name = decodeHtml(s.name)
+        return (
+          <div
+            key={`${s.id}-${i}`}
+            ref={i === currentIndex ? activeRef : null}
+            className={'q-row' + (i === currentIndex ? ' playing' : '')}
+            onClick={() => playTrack(i)}
+          >
+            <span className="q-num">{i + 1}</span>
+            <img
+              src={imgOf(s, dataSaver)}
+              loading="lazy"
+              alt=""
+              onError={(e) => {
+                e.currentTarget.style.opacity = 0.25
+              }}
+            />
+            <div className="q-info">
+              <div className="q-t">{name}</div>
+              <div className="q-a">{decodeHtml(artistsOf(s))}</div>
+            </div>
+            <span className="q-acts">
+              <button
+                type="button"
+                title="Move up"
+                aria-label={`Move ${name} up the queue`}
+                onClick={stop(() => qMove(i, -1))}
+              >
+                <Icon name="chevronDown" size={14} style={{ transform: 'rotate(180deg)' }} />
+              </button>
+              <button
+                type="button"
+                title="Move down"
+                aria-label={`Move ${name} down the queue`}
+                onClick={stop(() => qMove(i, 1))}
+              >
+                <Icon name="chevronDown" size={14} />
+              </button>
+              <button
+                type="button"
+                data-a="rm"
+                title="Remove"
+                aria-label={`Remove ${name} from the queue`}
+                onClick={stop(() => qRemove(i))}
+              >
+                <Icon name="close" size={14} />
+              </button>
+            </span>
+            <span className="q-d">{fmt(s.duration)}</span>
           </div>
-          <span className="q-acts">
-            <button title="Move up" onClick={stop(() => qMove(i, -1))}>
-              ▲
-            </button>
-            <button title="Move down" onClick={stop(() => qMove(i, 1))}>
-              ▼
-            </button>
-            <button title="Remove" onClick={stop(() => qRemove(i))}>
-              ✕
-            </button>
-          </span>
-          <span className="q-d">{fmt(s.duration)}</span>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

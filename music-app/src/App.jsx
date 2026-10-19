@@ -8,6 +8,7 @@ import { ArtistView } from './components/ArtistView.jsx'
 import { DetailView } from './components/DetailView.jsx'
 import { FeedView } from './components/FeedView.jsx'
 import { FullPlayer } from './components/FullPlayer.jsx'
+import { Icon } from './components/Icon.jsx'
 import { LibraryView } from './components/LibraryView.jsx'
 import { LyricsOverlay } from './components/LyricsOverlay.jsx'
 import { NowPlaying } from './components/NowPlaying.jsx'
@@ -33,8 +34,7 @@ export default function App() {
   const [apiOnline, setApiOnline] = useState(null)
   const [checking, setChecking] = useState(false)
   const [drawer, setDrawer] = useState(false)
-  // Native builds with no backend address can't probe anything yet.
-  const [heading, setHeading] = useState({ title: 'Home', count: '' })
+  const [heading, setHeading] = useState({ title: 'Listen Now', count: '' })
 
   const { status, setStatus } = useStatus()
   const {
@@ -50,7 +50,7 @@ export default function App() {
   const sleep = useSleepTimer(
     useCallback(() => {
       pause()
-      setStatus('😴 Sleep timer stopped playback.')
+      setStatus('Sleep timer stopped playback.')
     }, [pause, setStatus])
   )
 
@@ -118,10 +118,10 @@ export default function App() {
   const onCount = useCallback((count) => setHeading((h) => ({ ...h, count })), [])
 
   useEffect(() => {
-    if (view.kind === 'feed') setHeading({ title: 'Home', count: '' })
+    if (view.kind === 'feed') setHeading({ title: 'Listen Now', count: '' })
     else if (view.kind === 'search')
       setHeading({
-        title: `${view.tab[0].toUpperCase() + view.tab.slice(1)} for "${view.query}"`,
+        title: `${view.tab[0].toUpperCase() + view.tab.slice(1)} for “${view.query}”`,
         count: '',
       })
   }, [view])
@@ -154,7 +154,7 @@ export default function App() {
       }
       const url = dlUrlFor(current, currentQuality)
       const w = window.open(url, 'vibex_dl')
-      if (!w) setStatus("Popup blocked — right-click the ⬇ button and choose 'Save link as…'.", true)
+      if (!w) setStatus('Popup blocked — right-click the download button and choose “Save link as…”.', true)
       else setStatus(`Downloading: ${decodeHtml(current.name)} — check your Downloads folder.`)
     },
     [current, currentQuality, setStatus]
@@ -164,14 +164,16 @@ export default function App() {
     if (apiOnline === false)
       return (
         <div className="empty-lib">
-          <b>🔌</b>
+          <span className="empty-icon" aria-hidden="true">
+            <Icon name="alert" size={28} />
+          </span>
           <p>{isNative() ? 'No connection' : 'API offline'}</p>
           <span>
             {isNative()
               ? 'VIBEX needs the internet to reach JioSaavn. Reconnect, then try again.'
               : 'Start jiosaavn-api on port 3001, then reload.'}
           </span>
-          <button className="ghost retry-btn" onClick={checkApi} disabled={checking}>
+          <button className="btn-ghost retry-btn" onClick={checkApi} disabled={checking}>
             {checking ? 'Checking…' : 'Retry'}
           </button>
         </div>
@@ -196,6 +198,7 @@ export default function App() {
   }
 
   const showChips = view.kind === 'feed' || view.kind === 'search'
+  const showHeading = view.kind === 'feed' || view.kind === 'search'
   const showBack = canGoBack() && (view.kind === 'detail' || view.kind === 'artist')
 
   return (
@@ -210,14 +213,19 @@ export default function App() {
           <main id="content">
             {showChips && <Chips />}
             {showBack && (
-              <button className="ghost" style={{ display: 'inline-block' }} onClick={back}>
-                ← Back
+              <button id="backBtn" onClick={back}>
+                <Icon name="chevronLeft" size={15} />
+                Back
               </button>
             )}
-            <h2 id="resultTitle">
-              {heading.title} <span id="resultCount">{heading.count}</span>
-            </h2>
-            <div id="status" className={status.err ? 'error' : ''}>
+            {showHeading && (
+              <div className="page-head">
+                <h2 id="resultTitle">
+                  {heading.title} <span id="resultCount">{heading.count}</span>
+                </h2>
+              </div>
+            )}
+            <div id="status" className={status.err ? 'error' : ''} role="status">
               {status.msg}
             </div>
             <div id="results">{renderView()}</div>

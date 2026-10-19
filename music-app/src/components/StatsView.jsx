@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { api } from '../lib/api.js'
 import { decodeHtml, fmt } from '../lib/format.js'
+import { Icon } from './Icon.jsx'
 import { EmptyState, SectionTitle } from './Spinner.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
@@ -21,15 +22,12 @@ export function StatsView({ onTitle }) {
 
   const topSongs = Object.entries(stats.songs).sort((a, b) => b[1].n - a[1].n).slice(0, 10)
   const topArtists = Object.entries(stats.artists).sort((a, b) => b[1].n - a[1].n).slice(0, 10)
+  const minutes = Math.round(stats.seconds / 60)
 
   useEffect(() => {
     onTitle?.('Your Stats', '')
-    setStatus(
-      topSongs.length
-        ? 'Your listening stats — click a song to play it.'
-        : 'Play something to start building stats.'
-    )
-  }, [onTitle, setStatus, topSongs.length])
+    setStatus('')
+  }, [onTitle, setStatus])
 
   const playById = async (id, name) => {
     setStatus('Loading…')
@@ -48,29 +46,55 @@ export function StatsView({ onTitle }) {
   }
 
   return (
-    <>
+    <div className="stats">
+      <header className="view-head">
+        <span className="eyebrow">
+          <span className="dot" aria-hidden="true" />
+          Listening history
+        </span>
+        <h2 className="view-title">Your listening</h2>
+        <p className="view-sub">Everything below is counted on this device — no accounts, no tracking.</p>
+      </header>
+
       <div className="stat-grid">
         <div className="stat-card">
+          <span className="stat-ico" aria-hidden="true">
+            <Icon name="play" size={15} />
+          </span>
           <b>{stats.plays}</b>
-          <span>▶ songs played</span>
+          <span>Songs played</span>
         </div>
         <div className="stat-card">
-          <b>{Math.round(stats.seconds / 60)}</b>
-          <span>⏱ minutes listened</span>
+          <span className="stat-ico" aria-hidden="true">
+            <Icon name="clock" size={15} />
+          </span>
+          <b>{minutes}</b>
+          <span>Minutes listened</span>
         </div>
         <div className="stat-card">
+          <span className="stat-ico" aria-hidden="true">
+            <Icon name="music" size={15} />
+          </span>
           <b>{Object.keys(stats.songs).length}</b>
-          <span>🎵 unique songs</span>
+          <span>Unique songs</span>
         </div>
         <div className="stat-card">
-          <b style={{ fontSize: 15 }}>{topArtists.length ? topArtists[0][0] : '—'}</b>
-          <span>👑 top artist</span>
+          <span className="stat-ico" aria-hidden="true">
+            <Icon name="sparkle" size={15} />
+          </span>
+          <b className="stat-name">{topArtists.length ? topArtists[0][0] : '—'}</b>
+          <span>Top artist</span>
         </div>
       </div>
 
-      {topSongs.length > 0 && <SectionTitle>Top songs</SectionTitle>}
-      {topSongs.map(([id, e]) => (
+      {topSongs.length > 0 && (
+        <SectionTitle>
+          Top songs <span>{topSongs.length}</span>
+        </SectionTitle>
+      )}
+      {topSongs.map(([id, e], i) => (
         <div className="stat-row" key={id} onClick={() => playById(id, e.name)}>
+          <span className="rank">{i + 1}</span>
           <img
             src={e.img || ''}
             alt=""
@@ -83,30 +107,38 @@ export function StatsView({ onTitle }) {
             <div className="s-artist">{decodeHtml(e.artist)}</div>
           </div>
           <div className="n">
-            {e.n} plays • {fmt(e.sec)} listened
+            {e.n} plays · {fmt(e.sec)}
           </div>
         </div>
       ))}
 
-      {topArtists.length > 0 && <SectionTitle>Top artists</SectionTitle>}
-      {topArtists.map(([name, e]) => (
-        <div className="stat-row" key={name} onClick={() => search(name, 'artists')}>
+      {topArtists.length > 0 && (
+        <SectionTitle>
+          Top artists <span>{topArtists.length}</span>
+        </SectionTitle>
+      )}
+      {topArtists.map(([name, e], i) => (
+        <div className="stat-row artist-stat" key={name} onClick={() => search(name, 'artists')}>
+          <span className="rank">{i + 1}</span>
+          <span className="artist-badge" aria-hidden="true">
+            {name.slice(0, 1).toUpperCase()}
+          </span>
           <div className="s-info">
             <div className="s-title">{name}</div>
           </div>
           <div className="n">
-            {e.n} plays • {fmt(e.sec)} listened
+            {e.n} plays · {fmt(e.sec)}
           </div>
         </div>
       ))}
 
       {!topSongs.length && (
         <EmptyState
-          icon="📊"
+          icon="stats"
           title="No stats yet"
-          hint="Play some music and your listening stats will appear here."
+          hint="Play some music and your listening history will appear here."
         />
       )}
-    </>
+    </div>
   )
 }

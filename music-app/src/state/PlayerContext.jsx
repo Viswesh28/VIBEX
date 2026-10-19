@@ -245,7 +245,7 @@ export function PlayerProvider({ children }) {
           }
           return next
         })
-        setStatus(`📻 Radio added ${add.length} more song${add.length > 1 ? 's' : ''}.`)
+        setStatus(`Radio added ${add.length} more song${add.length > 1 ? 's' : ''}.`)
       }
     } catch {
       /* silent */
@@ -711,7 +711,7 @@ export function PlayerProvider({ children }) {
       setQueueState([song])
       queueRef.current = [song]
       settings.setRadio(true)
-      setStatus("📻 Radio on — I'll keep similar songs coming.")
+      setStatus("Radio on — I'll keep similar songs coming.")
       playTrack(0)
     },
     [playTrack, settings, setStatus]

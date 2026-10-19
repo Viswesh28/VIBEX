@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { decodeHtml } from '../lib/format.js'
 import { artistsOf, dlUrlFor, estimate, firstArtistId, imgOf } from '../lib/song.js'
 import { store } from '../lib/storage.js'
+import { Icon } from './Icon.jsx'
 import { LyricsBody } from './LyricsBody.jsx'
 import { QueueList } from './QueueList.jsx'
 import { Visualizer } from './Visualizer.jsx'
@@ -12,6 +13,7 @@ import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
+/** The right rail: artwork, transport of the current track, lyrics and queue. */
 export function NowPlaying({ onDownload }) {
   const { current, isPlaying, clock, togglePlay, seekFrac, queue, currentQuality } = usePlayer()
   const { likedIds, toggleLike } = useLibrary()
@@ -36,41 +38,55 @@ export function NowPlaying({ onDownload }) {
   }
 
   return (
-    <aside id="nowplaying">
-      <div className="np-sec-title">NOW PLAYING</div>
+    <aside id="nowplaying" aria-label="Now playing">
+      <div className="np-head">
+        <span>Now playing</span>
+        <Icon name="queue" size={16} />
+      </div>
 
       <div id="npArtWrap">
         {!current && (
-          <div className="np-empty" id="npEmpty" style={{ display: 'flex' }}>
-            <b>🎵</b>
+          <div className="np-empty" id="npEmpty">
+            <Icon name="music" size={38} />
             <span>Pick a song to play</span>
           </div>
         )}
-        <img
-          id="npCover"
-          alt=""
-          src={current ? imgOf(current, dataSaver) : undefined}
-          style={{ opacity: current ? 1 : 0 }}
-        />
-        <button id="npPlayOverlay" title="Play/Pause" onClick={togglePlay}>
+        <img id="npCover" alt="" src={current ? imgOf(current, dataSaver) : undefined} style={{ opacity: current ? 1 : 0 }} />
+        <button
+          type="button"
+          id="npPlayOverlay"
+          title="Play/Pause"
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+          onClick={togglePlay}
+        >
           <span className="np-circle">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff">
-              {isPlaying ? <path d="M6 5h4v14H6zM14 5h4v14h-4z" /> : <path d="M8 5v14l11-7z" />}
-            </svg>
+            <Icon name={isPlaying ? 'pause' : 'play'} size={22} />
           </span>
         </button>
         <div
           id="npProg"
+          role="slider"
+          tabIndex={0}
+          aria-label="Seek"
+          aria-valuemin={0}
+          aria-valuemax={Math.max(1, Math.round(clock.dur || 0))}
+          aria-valuenow={Math.round(clock.cur || 0)}
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect()
             seekFrac((e.clientX - r.left) / r.width)
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
+            const delta = e.key === 'ArrowRight' ? 10 : -10
+            seekFrac(Math.min(1, Math.max(0, (clock.cur + delta) / (clock.dur || 1))))
+            e.preventDefault()
           }}
         >
           <div id="npProgFill" style={{ width: `${pct}%` }} />
         </div>
       </div>
 
-      <div>
+      <div className="np-meta">
         <div id="npTitle">{current ? decodeHtml(current.name) : 'Nothing playing'}</div>
         <div
           id="npArtist"
@@ -88,46 +104,60 @@ export function NowPlaying({ onDownload }) {
 
       <div className="np-actions">
         <button
+          type="button"
           className={'icon-btn' + (liked ? ' liked' : '')}
           title="Like"
+          aria-label={liked ? 'Unlike this song' : 'Like this song'}
+          aria-pressed={liked}
           onClick={() => current && toggleLike(current)}
         >
-          {liked ? '♥' : '♡'}
+          <Icon name={liked ? 'heartFilled' : 'heart'} size={19} />
         </button>
         <a
           id="npDl"
           className="icon-btn"
           title="Download audio"
+          aria-label="Download audio"
           href={current ? dlUrlFor(current, currentQuality) : '#'}
           onClick={onDownload}
         >
-          ⬇
+          <Icon name="download" size={19} />
         </a>
         <button
+          type="button"
           className={'icon-btn' + (radio ? ' toggled' : '')}
           title={'Radio: ' + (radio ? 'on — endless station' : 'off')}
+          aria-label={radio ? 'Turn radio off' : 'Turn radio on'}
+          aria-pressed={radio}
           onClick={() => {
             setRadio(!radio)
-            setStatus(radio ? '📻 Radio off.' : "📻 Radio on — I'll keep similar songs coming.")
+            setStatus(radio ? 'Radio off.' : "Radio on — I'll keep similar songs coming.")
           }}
         >
-          📻
+          <Icon name="radio" size={19} />
         </button>
-        <span id="npEst">
-          {current ? `💾 ${currentQuality} · ~${est.songMB.toFixed(1)} MB` : ''}
-        </span>
+        <span id="npEst">{current ? `${currentQuality} · ~${est.songMB.toFixed(1)} MB` : ''}</span>
       </div>
 
-      <div id="npTabs">
+      <div id="npTabs" role="tablist" aria-label="Now playing panel">
         <button
+          type="button"
+          role="tab"
+          aria-selected={effTab === 'viz'}
           className={'np-tab' + (effTab === 'viz' ? ' active' : '')}
           onClick={() => pick('viz')}
           disabled={!viz.on}
         >
-          ✨ Visuals
+          Visuals
         </button>
-        <button className={'np-tab' + (effTab === 'lyr' ? ' active' : '')} onClick={() => pick('lyr')}>
-          📜 Lyrics
+        <button
+          type="button"
+          role="tab"
+          aria-selected={effTab === 'lyr'}
+          className={'np-tab' + (effTab === 'lyr' ? ' active' : '')}
+          onClick={() => pick('lyr')}
+        >
+          Lyrics
         </button>
       </div>
 
@@ -139,8 +169,10 @@ export function NowPlaying({ onDownload }) {
         <div id="lyricsCredit">Lyrics by LRCLIB</div>
       </div>
 
-      <div className="np-sec-title">
-        QUEUE <span id="qCount">{queue.length ? `(${queue.length})` : ''}</span>
+      <div className="np-head">
+        <span>
+          Queue {queue.length ? <span id="qCount">({queue.length})</span> : ''}
+        </span>
         <QueueClear />
       </div>
       <QueueList />
@@ -151,8 +183,15 @@ export function NowPlaying({ onDownload }) {
 function QueueClear() {
   const { qClear } = usePlayer()
   return (
-    <button id="qClear" title="Clear queue (keeps current)" onClick={qClear}>
-      Clear
+    <button
+      type="button"
+      id="qClear"
+      className="icon-btn"
+      title="Clear queue (keeps current)"
+      aria-label="Clear the queue"
+      onClick={qClear}
+    >
+      <Icon name="trash" size={16} />
     </button>
   )
 }

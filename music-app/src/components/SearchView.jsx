@@ -26,7 +26,7 @@ export function SearchView({ query, tab, onCount }) {
     let alive = true
     setLoading(true)
     setError(null)
-    setStatus(`Searching ${tab} for "${query}"…`)
+    setStatus(`Searching ${tab} for “${query}”…`)
     api(ENDPOINT[tab](query))
       .then((d) => {
         if (!alive) return
@@ -36,10 +36,10 @@ export function SearchView({ query, tab, onCount }) {
         onCount?.(`(${d.total ?? list.length} found)`)
         if (tab === 'songs') {
           setQueue(list)
-          setStatus(list.length ? `Found ${list.length} songs. Click to play.` : 'No songs found.')
-        } else if (tab === 'albums') setStatus('Click an album to see its songs.')
-        else if (tab === 'artists') setStatus('Click an artist to open their page.')
-        else setStatus('Click a playlist to see its songs.')
+          setStatus(list.length ? '' : 'No songs found.')
+        } else if (tab === 'albums') setStatus('')
+        else if (tab === 'artists') setStatus('')
+        else setStatus('')
       })
       .catch((e) => {
         if (!alive) return
@@ -53,8 +53,9 @@ export function SearchView({ query, tab, onCount }) {
   }, [query, tab, setStatus, onCount, setQueue])
 
   if (loading) return <Spinner />
-  if (error) return <EmptyState icon="⚠️" title="Search failed" hint={error} />
-  if (!data?.length) return <EmptyState icon="🔍" title={`No ${tab} found`} hint="Try another search." />
+  if (error) return <EmptyState icon="alert" title="Search failed" hint={error} />
+  if (!data?.length)
+    return <EmptyState icon="search" title={`No ${tab} found`} hint="Try another search." />
 
   if (tab === 'songs') return <SongList songs={data} />
   if (tab === 'artists')

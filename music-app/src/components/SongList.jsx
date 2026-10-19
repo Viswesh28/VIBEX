@@ -17,7 +17,7 @@ export function SongList({ songs, numbered = false, onRemove = null }) {
   const isCurrentList = queue.length === songs.length && queue.every((s, i) => s.id === songs[i]?.id)
 
   return (
-    <div>
+    <div className="song-list">
       {songs.map((s, i) => (
         <SongRow
           key={`${s.id}-${i}`}

@@ -27,7 +27,11 @@ export function useVisualizer(canvasRef, enabled) {
       raf.current = null
       return undefined
     }
+    // Canvas can be unavailable (privacy-hardened browsers, jsdom). The
+    // visualiser is decoration: degrade to silence rather than throwing in a
+    // requestAnimationFrame callback where nothing can catch it.
     const ctx = canvas.getContext('2d')
+    if (!ctx) return undefined
 
     const size = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1)
@@ -39,10 +43,13 @@ export function useVisualizer(canvasRef, enabled) {
     size()
     window.addEventListener('resize', size)
 
+    // The canvas mirrors the design tokens: deep red at the baseline rising to
+    // the bright pink highlight. Drawn in JS because canvas cannot read CSS
+    // custom properties.
     const gradient = (H) => {
       const g = ctx.createLinearGradient(0, H, 0, 0)
-      g.addColorStop(0, '#1ed760')
-      g.addColorStop(1, '#4d7cff')
+      g.addColorStop(0, '#e11d3c')
+      g.addColorStop(1, '#ff6b7f')
       return g
     }
     const roundBar = (x, y, w, h) => {
@@ -78,9 +85,9 @@ export function useVisualizer(canvasRef, enabled) {
     }
     const drawWave = (W, H, sec, lvl) => {
       const layers = [
-        { f: 0.012, sp: 2.2, a: 0.3, c: 'rgba(30,215,96,0.85)' },
-        { f: 0.02, sp: -1.6, a: 0.2, c: 'rgba(77,124,255,0.7)' },
-        { f: 0.031, sp: 3.1, a: 0.12, c: 'rgba(124,255,178,0.5)' },
+        { f: 0.012, sp: 2.2, a: 0.3, c: 'rgba(255,55,82,0.9)' },
+        { f: 0.02, sp: -1.6, a: 0.2, c: 'rgba(255,107,127,0.72)' },
+        { f: 0.031, sp: 3.1, a: 0.12, c: 'rgba(225,29,60,0.5)' },
       ]
       const mid = H * 0.55
       layers.forEach((L, li) => {
@@ -100,7 +107,7 @@ export function useVisualizer(canvasRef, enabled) {
           ctx.lineTo(W, H)
           ctx.lineTo(0, H)
           ctx.closePath()
-          ctx.fillStyle = 'rgba(30,215,96,0.12)'
+          ctx.fillStyle = 'rgba(255,55,82,0.12)'
           ctx.fill()
         }
       })
@@ -111,11 +118,11 @@ export function useVisualizer(canvasRef, enabled) {
       const R = Math.min(W, H) * 0.42
       ctx.beginPath()
       ctx.arc(cx, cy, R * 0.16 * (1 + lvl * 0.35), 0, Math.PI * 2)
-      ctx.fillStyle = '#1ed760'
+      ctx.fillStyle = '#ff3752'
       ctx.fill()
       ctx.beginPath()
       ctx.arc(cx, cy, R * 0.16 * (1 + lvl * 0.35) + 6, 0, Math.PI * 2)
-      ctx.strokeStyle = 'rgba(30,215,96,0.35)'
+      ctx.strokeStyle = 'rgba(255,55,82,0.35)'
       ctx.lineWidth = 2
       ctx.stroke()
       const N = 46
@@ -127,7 +134,7 @@ export function useVisualizer(canvasRef, enabled) {
         const r = 2.5 + 2.5 * (((i * 7919) % 10) / 10) * lvl
         ctx.beginPath()
         ctx.arc(x, y, r, 0, Math.PI * 2)
-        ctx.fillStyle = i % 3 === 0 ? 'rgba(77,124,255,0.9)' : 'rgba(30,215,96,0.85)'
+        ctx.fillStyle = i % 3 === 0 ? 'rgba(255,107,127,0.9)' : 'rgba(225,29,60,0.85)'
         ctx.fill()
       }
     }

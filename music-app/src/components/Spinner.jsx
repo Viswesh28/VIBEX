@@ -1,11 +1,15 @@
+import { Icon } from './Icon.jsx'
+
 export function Spinner() {
-  return <div className="spinner" />
+  return <div className="spinner" role="status" aria-label="Loading" />
 }
 
-export function EmptyState({ icon, title, hint }) {
+export function EmptyState({ icon = 'music', title, hint }) {
   return (
     <div className="empty-lib">
-      <b>{icon}</b>
+      <span className="empty-icon" aria-hidden="true">
+        <Icon name={icon} size={28} />
+      </span>
       <p>{title}</p>
       {hint && <span>{hint}</span>}
     </div>
