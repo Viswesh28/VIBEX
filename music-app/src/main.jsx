@@ -8,6 +8,23 @@ import { StatusProvider } from './state/StatusContext.jsx'
 import { UIProvider } from './state/UIContext.jsx'
 import './styles/global.css'
 import { installNativeHttp } from './lib/http.js'
+import { store } from './lib/storage.js'
+import { initInstallPrompt } from './lib/install.js'
+import { registerServiceWorker } from './lib/pwa.js'
+import { applyPlatformClasses, preparePlaybackAudioSession, setThemeColor } from './lib/platform.js'
+
+// Before the first paint: mark the platform so standalone-only CSS can apply,
+// restore the saved theme (no dark→light flash), and hand Safari the media
+// audio session. All three are synchronous and cheap.
+applyPlatformClasses()
+const bootTheme = store.get('svTheme', 'dark') === 'light' ? 'light' : 'dark'
+document.documentElement.classList.toggle('light', bootTheme === 'light')
+document.body.classList.toggle('light', bootTheme === 'light')
+document.documentElement.style.removeProperty('--vibex-boot-bg')
+setThemeColor(bootTheme === 'light' ? '#f7f7f9' : '#09090b')
+preparePlaybackAudioSession()
+initInstallPrompt()
+registerServiceWorker()
 
 // Provider order matters: Player reads Settings, Library and Status.
 const tree = (

@@ -45,6 +45,7 @@
 | 🎵 **Custom playlists** | Create, rename, reorder — saved on your device |
 | 📊 **Listening stats** | Plays, minutes, top songs & artists |
 | 🌗 **Dark / light** | Premium glass UI with a Data Saver mode for slow networks |
+| 📲 **Installable** | Home-screen web app on iPhone and Android — full screen, own icon, launch screen, offline shell, and lock-screen / Dynamic Island **Now Playing** controls |
 
 ## 🚀 Quick Start
 
@@ -93,7 +94,7 @@ is meaningless at the repo root.
 
 ```bash
 cd music-app
-npm test              # 124 offline unit/integration tests (vitest + jsdom)
+npm test              # 169 offline unit/integration tests (vitest + jsdom)
 npm run verify:mobile # phone layout, 5 viewports — needs Playwright + a running gateway
 npm run verify:ux     # contrast, accessible names, tap spacing — same prerequisites
 ```
@@ -189,7 +190,8 @@ VIBEX/
 - **Gateway:** Node.js (static + `/api` proxy + `/dl` download server)
 - **Music API:** Bun + Hono + JavaScript (JioSaavn wrapper)
 - **Lyrics:** [LRCLIB](https://lrclib.net) (synced, keyless)
-- **Runtime:** local Node.js gateway + Bun API (no deployment configuration included)
+- **Runtime:** local Node.js gateway + Bun API, or a single Vercel project
+  (`vercel.json` + `api/`) — see [`docs/DEPLOY.md`](docs/DEPLOY.md)
 
 <a id="legal"></a>
 

@@ -3,6 +3,7 @@ import { probeApi } from './lib/api.js'
 import { dlUrlFor } from './lib/song.js'
 import { isNative } from './lib/config.js'
 import { decodeHtml } from './lib/format.js'
+import { isLocalOrigin } from './lib/platform.js'
 
 import { ArtistView } from './components/ArtistView.jsx'
 import { DetailView } from './components/DetailView.jsx'
@@ -39,11 +40,11 @@ export default function App() {
   const { status, setStatus } = useStatus()
   const {
     current, currentQuality, isPlaying, clock,
-    togglePlay, nextTrack, prevTrack, seekBy, seekTo, play, pause,
+    togglePlay, nextTrack, prevTrack, seekBy, seekTo, play, pause, resumeFromSystem,
   } = usePlayer()
   const { dataSaver } = useSettings()
   const {
-    view, back, canGoBack, searchQuery, searchTab,
+    view, back, canGoBack, navigate, searchQuery, searchTab,
     plModal, fullOpen, setFullOpen, lyricsOpen, setLyricsOpen, closePlaylistModal,
   } = useUI()
 
@@ -54,27 +55,43 @@ export default function App() {
     }, [pause, setStatus])
   )
 
-  // The standalone Android build has no gateway to start, so the failure
-  // advice has to differ by platform — telling a phone user to run a server
-  // on port 3001 is nonsense.
+  // The failure advice has to match where the app is actually running: the
+  // native shell and the deployed site have no local server to start, and a
+  // phone that is offline needs a different sentence from a dev machine whose
+  // gateway is down.
   const checkApi = useCallback(() => {
     setChecking(true)
     return probeApi().then((ok) => {
       setApiOnline(ok)
       setChecking(false)
-      if (!ok)
+      if (ok) return
+      if (isNative())
+        setStatus('Cannot reach JioSaavn. Check your internet connection and tap Retry.', true)
+      else if (typeof navigator !== 'undefined' && navigator.onLine === false)
+        setStatus('You are offline. Your saved library still works; reconnect to stream.', true)
+      else if (isLocalOrigin())
         setStatus(
-          isNative()
-            ? 'Cannot reach JioSaavn. Check your internet connection and tap Retry.'
-            : 'The local API is unavailable. Start jiosaavn-api on port 3001 and the UI gateway on port 8000.',
+          'The local API is unavailable. Start jiosaavn-api on port 3001 and the UI gateway on port 8000.',
           true
         )
+      else
+        setStatus('The music service is not responding. Check your connection and tap Retry.', true)
     })
   }, [setStatus])
 
   useEffect(() => {
     checkApi()
   }, [checkApi])
+
+  // An installed app can sit backgrounded for hours. When the connection comes
+  // back, retry the probe instead of leaving the user on the offline screen.
+  useEffect(() => {
+    const onOnline = () => {
+      if (apiOnline === false) checkApi()
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [apiOnline, checkApi])
 
   // Escape closes the top-most layer only.
   const onEscape = useCallback(() => {
@@ -86,8 +103,17 @@ export default function App() {
   // Lockscreen / notification controls. Essential once this runs on a phone,
   // and a genuine upgrade for desktop media keys too.
   const mediaActions = useMemo(
-    () => ({ play, pause, next: nextTrack, prev: prevTrack, seekBy, seekTo }),
-    [play, pause, nextTrack, prevTrack, seekBy, seekTo]
+    () => ({
+      // The system play button must recover a torn-down iOS audio session, not
+      // just call play() on a dead element.
+      play: () => resumeFromSystem(),
+      pause,
+      next: nextTrack,
+      prev: prevTrack,
+      seekBy,
+      seekTo,
+    }),
+    [resumeFromSystem, pause, nextTrack, prevTrack, seekBy, seekTo]
   )
   useMediaSession({ current, isPlaying, clock, dataSaver, actions: mediaActions })
 
@@ -160,21 +186,31 @@ export default function App() {
     [current, currentQuality, setStatus]
   )
 
+  // Library, playlists and stats live entirely on this device, so an installed
+  // app is still useful with no connection. Only catalogue views need the API.
+  const offlineSafe =
+    view.kind === 'library' || view.kind === 'myplaylist' || view.kind === 'stats'
+
   const renderView = () => {
-    if (apiOnline === false)
+    if (apiOnline === false && !offlineSafe)
       return (
         <div className="empty-lib">
           <span className="empty-icon" aria-hidden="true">
             <Icon name="alert" size={28} />
           </span>
-          <p>{isNative() ? 'No connection' : 'API offline'}</p>
+          <p>{isNative() || !isLocalOrigin() ? 'No connection' : 'API offline'}</p>
           <span>
             {isNative()
               ? 'VIBEX needs the internet to reach JioSaavn. Reconnect, then try again.'
-              : 'Start jiosaavn-api on port 3001, then reload.'}
+              : isLocalOrigin()
+                ? 'Start jiosaavn-api on port 3001, then reload.'
+                : 'VIBEX could not reach the music service. Check your connection, then try again.'}
           </span>
           <button className="btn-ghost retry-btn" onClick={checkApi} disabled={checking}>
             {checking ? 'Checking…' : 'Retry'}
+          </button>
+          <button className="btn-ghost retry-btn" onClick={() => navigate({ kind: 'library' })}>
+            Open your library
           </button>
         </div>
       )

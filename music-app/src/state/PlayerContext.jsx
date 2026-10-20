@@ -10,6 +10,8 @@ import {
 import { api } from '../lib/api.js'
 import { decodeHtml } from '../lib/format.js'
 import { artistsOf, effQ, streamOf } from '../lib/song.js'
+import { isIOS, preparePlaybackAudioSession } from '../lib/platform.js'
+import { store } from '../lib/storage.js'
 import { useSettings } from './SettingsContext.jsx'
 import { useLibrary } from './LibraryContext.jsx'
 import { useStatus } from './StatusContext.jsx'
@@ -22,6 +24,26 @@ const RADIO_LOOKAHEAD = 4
 const RADIO_BATCH = 5
 const QUEUE_CAP = 120
 
+// iOS reclaims backgrounded web apps aggressively. Persisting the queue means a
+// relaunch from the home screen still shows what you were listening to — ready
+// to resume with one tap — instead of an empty player.
+const SESSION_KEY = 'svSession'
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+function readSavedSession() {
+  const empty = { queue: [], index: -1 }
+  const saved = store.getJSON(SESSION_KEY, null)
+  if (!saved || !Array.isArray(saved.queue) || !saved.queue.length) return empty
+  if (!saved.at || Date.now() - saved.at > SESSION_TTL_MS) return empty
+  const queue = saved.queue.filter((song) => song && song.id)
+  if (!queue.length) return empty
+  const index =
+    Number.isInteger(saved.index) && saved.index >= 0 && saved.index < queue.length
+      ? saved.index
+      : 0
+  return { queue, index }
+}
+
 /**
  * Owns playback. Two <audio> decks are held in refs and driven imperatively so
  * that a crossfade — which runs on a 50ms interval and touches both elements —
@@ -33,8 +55,13 @@ export function PlayerProvider({ children }) {
   const { statsOnPlay, flushStats } = useLibrary()
   const { setStatus } = useStatus()
 
-  const [queue, setQueueState] = useState([])
-  const [currentIndex, setCurrentIndex] = useState(-1)
+  // Read once, before the first paint, so the restored track is in the very
+  // first render rather than flashing "Nothing playing".
+  const bootRef = useRef(null)
+  if (bootRef.current === null) bootRef.current = readSavedSession()
+
+  const [queue, setQueueState] = useState(() => bootRef.current.queue)
+  const [currentIndex, setCurrentIndex] = useState(() => bootRef.current.index)
   const [isPlaying, setIsPlaying] = useState(false)
   const [clock, setClock] = useState({ cur: 0, dur: 0 })
   const [volume, setVolumeState] = useState(0.85)
@@ -52,6 +79,11 @@ export function PlayerProvider({ children }) {
   const analyser = useRef(null)
   const freqData = useRef(null)
 
+  // Declared before the callbacks that read them (see the media-session work
+  // below); `playingRef` is the authority on intent when iOS pauses us.
+  const playingRef = useRef(false)
+  const reloadRef = useRef(() => {})
+
   // Mirrors so the imperative engine never reads a stale closure.
   const queueRef = useRef(queue)
   const idxRef = useRef(currentIndex)
@@ -59,6 +91,20 @@ export function PlayerProvider({ children }) {
   queueRef.current = queue
   idxRef.current = currentIndex
   setRef.current = settings
+
+  // Persist the queue (capped) and the current index. A relaunch restores the
+  // track paused; nothing autoplays, which iOS would block anyway.
+  useEffect(() => {
+    if (!queue.length) {
+      store.remove(SESSION_KEY)
+      return
+    }
+    store.setJSON(SESSION_KEY, {
+      queue: queue.slice(0, QUEUE_CAP),
+      index: currentIndex,
+      at: Date.now(),
+    })
+  }, [queue, currentIndex])
 
   // The decks are rendered below rather than built with `new Audio()`, so they
   // are inspectable in devtools and visible to the browser's media handling.
@@ -320,6 +366,7 @@ export function PlayerProvider({ children }) {
   )
 
   const stopPlayback = useCallback(() => {
+    playingRef.current = false
     cancelFade()
     try {
       active().pause()
@@ -397,8 +444,14 @@ export function PlayerProvider({ children }) {
     }
     const el = active()
     if (el.paused) {
+      // Restored from the last session: the deck has no source yet, so load
+      // the restored track instead of calling play() on an empty element.
+      if (!el.src) {
+        playTrack(idxRef.current)
+        return
+      }
       ensureGraph(el)
-      el.play()?.catch(() => {})
+      el.play()?.catch(() => reloadRef.current())
     } else {
       cancelFade()
       el.pause()
@@ -411,8 +464,12 @@ export function PlayerProvider({ children }) {
       return
     }
     const el = active()
+    if (!el.src) {
+      playTrack(idxRef.current)
+      return
+    }
     ensureGraph(el)
-    el.play()?.catch(() => {})
+    el.play()?.catch(() => reloadRef.current())
   }, [ensureGraph, playTrack])
 
   const seekTo = useCallback((seconds) => {
@@ -459,6 +516,47 @@ export function PlayerProvider({ children }) {
     }
   }, [])
 
+  /**
+   * Resume from the Lock Screen / Control Center / Dynamic Island.
+   *
+   * iOS can tear the audio session down while a home-screen app sits paused or
+   * backgrounded, in which case `play()` rejects against the existing source.
+   * Re-opening the stream at the same playhead is what actually restarts
+   * sound, so the system button keeps working instead of silently dying.
+   */
+  const resumeFromSystem = useCallback(async () => {
+    const el = active()
+    if (idxRef.current < 0) return
+    if (!el.src) {
+      playTrack(idxRef.current)
+      return
+    }
+    try {
+      await el.play()
+    } catch {
+      reloadRef.current()
+    }
+  }, [playTrack])
+
+  /**
+   * Returning to the app: iOS resets `navigator.audioSession.type` when the
+   * page has been suspended, and a stream interrupted by a call or another
+   * app can be left paused even though the UI still says playing. Re-assert
+   * the playback session and, only if the user's intent was playing, resume.
+   */
+  useEffect(() => {
+    preparePlaybackAudioSession()
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      preparePlaybackAudioSession()
+      const el = active()
+      if (!playingRef.current || idxRef.current < 0 || !el.src || !el.paused) return
+      el.play()?.catch(() => reloadRef.current())
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+
   const setVolume = useCallback((v) => {
     baseVol.current = v
     setVolumeState(v)
@@ -471,13 +569,27 @@ export function PlayerProvider({ children }) {
     }
   }, [])
 
+  // Keep the recovery path pointing at the newest callback without making
+  // every media-session effect depend on it.
+  useEffect(() => {
+    reloadRef.current = reloadActive
+  }, [reloadActive])
+
   // --- deck event wiring ---
   useEffect(() => {
     const decks = [deckA.current, deckB.current].filter(Boolean)
     if (!decks.length) return
 
-    const onPlay = (e) => e.target === active() && setIsPlaying(true)
-    const onPause = (e) => e.target === active() && setIsPlaying(false)
+    const onPlay = (e) => {
+      if (e.target !== active()) return
+      playingRef.current = true
+      setIsPlaying(true)
+    }
+    const onPause = (e) => {
+      if (e.target !== active()) return
+      playingRef.current = false
+      setIsPlaying(false)
+    }
 
     const onTime = (e) => {
       if (e.target !== active()) return
@@ -626,6 +738,7 @@ export function PlayerProvider({ children }) {
   )
 
   const resetNowPlaying = useCallback(() => {
+    playingRef.current = false
     cancelFade()
     try {
       const el = active()
@@ -741,15 +854,18 @@ export function PlayerProvider({ children }) {
       queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
       setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, reloadActive, qMove, qRemove, qClear,
-      startRadioFrom, startArtistRadio, resetNowPlaying,
+      startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       analyserRef: analyser, freqDataRef: freqData,
       audioRef: activeRef,
+      // Exposed so the UI can explain iOS-specific behaviour without probing
+      // the user agent on every render.
+      ios: isIOS(),
     }),
     [
       queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
       setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, reloadActive, qMove, qRemove, qClear,
-      startRadioFrom, startArtistRadio, resetNowPlaying,
+      startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
     ]
   )
 

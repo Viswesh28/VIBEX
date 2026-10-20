@@ -28,4 +28,12 @@ export const store = {
   setJSON(k, v) {
     return store.set(k, JSON.stringify(v))
   },
+  remove(k) {
+    try {
+      localStorage.removeItem(k)
+      return true
+    } catch {
+      return false
+    }
+  },
 }

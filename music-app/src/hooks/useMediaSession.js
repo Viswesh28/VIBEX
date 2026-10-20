@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { decodeHtml } from '../lib/format.js'
 import { artistsOf } from '../lib/song.js'
+import { isIOS, preparePlaybackAudioSession } from '../lib/platform.js'
 
 /**
  * Publishes the current track to the OS media session, which is what draws the
@@ -16,10 +17,17 @@ export function useMediaSession({ current, isPlaying, clock, dataSaver, actions 
     if (!('mediaSession' in navigator)) return
     if (!current) {
       navigator.mediaSession.metadata = null
+      try {
+        navigator.mediaSession.playbackState = 'none'
+      } catch {
+        /* ignore */
+      }
       return
     }
     try {
-      // Offer several sizes; the OS picks what fits its layout.
+      // Offer several sizes; the OS picks what fits its layout (the lock
+      // screen, Control Center, and the Dynamic Island's Now Playing view all
+      // ask for different ones).
       const artwork = (current.image || []).map((img) => {
         const m = /(\d+)x(\d+)/.exec(img.quality || img.url || '')
         return {
@@ -32,7 +40,13 @@ export function useMediaSession({ current, isPlaying, clock, dataSaver, actions 
         title: decodeHtml(current.name),
         artist: decodeHtml(artistsOf(current)),
         album: decodeHtml(current.album?.name || ''),
-        artwork: dataSaver ? artwork.slice(0, 1) : artwork,
+        // A track with no artwork must still show something: iOS draws an
+        // empty grey square otherwise.
+        artwork: artwork.length
+          ? dataSaver
+            ? artwork.slice(0, 1)
+            : artwork
+          : [{ src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
       })
     } catch {
       /* MediaMetadata unsupported — controls simply won't appear */
@@ -47,6 +61,9 @@ export function useMediaSession({ current, isPlaying, clock, dataSaver, actions 
     } catch {
       /* ignore */
     }
+    // Safari only keeps the playback audio session (silent switch ignored,
+    // background playback, Now Playing on the island) while media is live.
+    if (isPlaying) preparePlaybackAudioSession()
   }, [isPlaying])
 
   // --- scrubber position on the lockscreen ---
@@ -69,10 +86,15 @@ export function useMediaSession({ current, isPlaying, clock, dataSaver, actions 
       pause: actions.pause,
       previoustrack: actions.prev,
       nexttrack: actions.next,
-      seekbackward: (d) => actions.seekBy(-(d?.seekOffset || 10)),
-      seekforward: (d) => actions.seekBy(d?.seekOffset || 10),
       seekto: (d) => d?.seekTime != null && actions.seekTo(d.seekTime),
       stop: actions.pause,
+    }
+    // iOS only keeps previous/next on the lock screen while those are the
+    // scrubber actions. Registering ±10s replaces them, which is a worse
+    // trade on a music player — so the skip buttons are omitted there.
+    if (!isIOS()) {
+      handlers.seekbackward = (d) => actions.seekBy(-(d?.seekOffset || 10))
+      handlers.seekforward = (d) => actions.seekBy(d?.seekOffset || 10)
     }
     const attached = []
     for (const [name, fn] of Object.entries(handlers)) {

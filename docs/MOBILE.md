@@ -246,3 +246,112 @@ reading order, true notch/cutout insets, Android's own font-scale setting, and
 the hardware back button (a Capacitor plugin event that cannot be raised from a
 browser). The drawer also opens only from the hamburger — there is no
 edge-swipe gesture, which Android users may expect.
+
+
+---
+
+# VIBEX on iPhone (home-screen web app)
+
+VIBEX does not need an App Store build on iOS. The same deployment that runs at
+<https://vibex-music-pi.vercel.app> installs to the Home Screen as a full-screen
+web app, with its own icon, launch screen, lock-screen controls and background
+audio.
+
+## Install
+
+1. Open the site in **Safari** (not Chrome, Firefox or an in-app browser —
+   only Safari can add a real home-screen web app on iOS).
+2. Tap **Share** → **Add to Home Screen**.
+3. Leave **Open as Web App** switched on (iOS 26 defaults to it) and tap **Add**.
+
+Inside the app, **Settings → Install VIBEX** shows the same steps. On Android
+and desktop Chrome the sheet offers a real **Install app** button instead.
+
+## What works once installed
+
+| Surface | Behaviour |
+| --- | --- |
+| Home screen | VIBEX icon (180 px Apple touch icon, 512 px manifest icons) and a name under it |
+| Launch | Near-black iOS launch screen with the VIBEX mark — no white flash |
+| Window | Full screen, no Safari bars; `viewport-fit=cover` layout with safe-area insets |
+| Status bar / Dynamic Island | Opaque dark strip with white glyphs (see below) |
+| Lock screen, Control Center | Track, artist, album, artwork, play/pause, next/previous, scrubbing |
+| Dynamic Island | The system **Now Playing** presentation (artwork + waveform) while audio plays |
+| Background audio | Continues with the screen locked and while using other apps |
+| Offline | The shell opens from cache; liked songs, playlists and stats are local |
+
+### About the Dynamic Island
+
+Apple only allows **native** apps to draw custom content into the Dynamic Island
+(Live Activities and, from iOS 26, the Now Playing framework). A website — even
+an installed one — cannot add its own island UI. What a web app *can* do, and
+what VIBEX does, is two things:
+
+1. **Lay out around it.** `viewport-fit=cover` plus `env(safe-area-inset-*)`
+   keeps the top bar, sheets and player clear of the island/notch, in portrait
+   and in landscape (where the notch is on the side).
+2. **Drive the system media session.** `useMediaSession` publishes title,
+   artist, album, artwork and transport actions through the Media Session API,
+   which is what iOS surfaces on the Lock Screen, in Control Center, and in the
+   Dynamic Island's Now Playing view while audio plays.
+
+A true Live Activity — a persistent island widget with VIBEX-drawn content —
+would require an Xcode target with a WidgetKit extension and an Apple Developer
+account. That cannot be deployed through Vercel.
+
+### Why the status bar is `black`, not `black-translucent`
+
+`black-translucent` is the only value that lets the page render *under* the
+status bar. It also forces **white** glyphs, which are unreadable in the light
+theme, and on recent iOS releases it adds a frosted blur over the top edge.
+VIBEX therefore uses `black`: a stable dark strip that matches the app in both
+themes, with the document starting below it, so no control can hide behind the
+Dynamic Island. The `theme-color` meta is kept in step with the in-app theme for
+Android Chrome and for iOS 26's background sampling.
+
+### Why the live spectrum is off on iPhone
+
+Attaching a Web Audio `MediaElementSource` moves `<audio>` onto WebKit's Web
+Audio path. In an installed web app that path is suspended when the screen
+locks, and the music pauses with it — the most common way a web music player
+breaks on iOS. On iPhone VIBEX therefore skips the analyser (`liveOK` starts
+`false`) and draws the simulated bars/waves/orbit visualiser instead. Playback
+stays a plain media element, which is exactly what iOS keeps alive in the
+background. Other platforms keep the real spectrum.
+
+A second iOS quirk: when a stream stops naturally, or the app sits paused for a
+while, iOS can tear down the audio session and `play()` then rejects. The
+Lock Screen play button calls a recovery path that re-opens the stream at the
+same playhead, and returning to the app re-asserts
+`navigator.audioSession.type = 'playback'` and resumes only when the user's
+intent was still "playing".
+
+### Offline behaviour
+
+`public/sw.js` caches the app shell only:
+
+* Navigation is **network-first** with a 4.5 s timeout, falling back to the
+  cached `index.html`. A new deploy is picked up on the next launch.
+* `/assets/*` (Vite's content-hashed files) are cache-first.
+* `/api/*`, `/dl` and any range request are **never** intercepted: cached
+  catalogue responses would be stale, and proxying audio would break seeking.
+
+Starting in **Library** or **Stats** while offline works from localStorage; the
+feed and search show a retry screen with an "Open your library" shortcut.
+
+### Debugging on a device
+
+1. On the iPhone: **Settings → Safari → Advanced → Web Inspector**.
+2. Connect it to a Mac and open **Safari → Develop → [iPhone] → VIBEX**.
+3. In the console, verify the install state:
+
+```js
+document.documentElement.dataset.platform   // "ios-standalone"
+navigator.standalone                        // true
+matchMedia('(display-mode: standalone)').matches
+navigator.mediaSession.metadata             // title/artist/artwork
+navigator.audioSession?.type                // "playback" while a track is live
+```
+
+Remember that iOS freezes the manifest, icons and launch screens **at install
+time**: after changing them, delete the home-screen app and add it again.
