@@ -33,6 +33,12 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.mjs': 'text/javascript',
+  // Chrome refuses a manifest served as octet-stream; iOS needs the launch
+  // images and touch icons served as images for the home-screen install.
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
 }
 
 const server = http.createServer(async (req, res) => {
@@ -257,8 +263,12 @@ const server = http.createServer(async (req, res) => {
     // Vite fingerprints everything under /assets/, so those can be cached hard
     // and never revalidated; the HTML shell that references them must not be.
     const hashed = url.pathname.startsWith('/assets/')
+    // The worker itself must never be cached, or a deploy can be invisible for
+    // an hour. It is tiny and fetched rarely.
     const cacheControl =
-      ext === '.html' || ext === ''
+      url.pathname === '/sw.js'
+        ? 'no-cache'
+        : ext === '.html' || ext === ''
         ? 'no-cache'
         : hashed
           ? 'public, max-age=31536000, immutable'

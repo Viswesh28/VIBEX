@@ -1,5 +1,6 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react'
 import { store } from '../lib/storage.js'
+import { isIOS, setThemeColor } from '../lib/platform.js'
 
 const Ctx = createContext(null)
 export const useSettings = () => useContext(Ctx)
@@ -14,6 +15,11 @@ const QUALITIES = ['320kbps', '160kbps', '96kbps', '48kbps', '12kbps']
  * pre-React build used, so an existing user's settings survive the upgrade.
  */
 export function SettingsProvider({ children }) {
+  // iOS routes <audio> through Web Audio as soon as the live analyser is
+  // attached, and a suspended AudioContext takes the music with it when the
+  // screen locks. Keep the visualiser simulated there so media playback stays
+  // a plain <audio> stream — which is what iOS keeps alive in the background.
+  const ios = useMemo(() => isIOS(), [])
   const [dataSaver, setDataSaverState] = useState(() => store.get('svSaver', null) === '1')
   const [saverAuto, setSaverAuto] = useState(false)
   const [crossfadeOn, setCrossfadeOn] = useState(() => store.get('svCf', '1') === '1')
@@ -39,7 +45,7 @@ export function SettingsProvider({ children }) {
     const v = store.get('svQuality', null)
     return QUALITIES.includes(v) ? v : '320kbps'
   })
-  const [liveOK, setLiveOK] = useState(true)
+  const [liveOK, setLiveOK] = useState(() => !ios)
 
   // On a first-ever visit, respect the browser's own data-saving signals.
   useEffect(() => {
@@ -57,7 +63,11 @@ export function SettingsProvider({ children }) {
   }, [])
 
   useEffect(() => {
+    // Both roots: tokens hang off body.light, while html.light paints the
+    // canvas behind the page (visible when the installed app rubber-bands).
+    document.documentElement.classList.toggle('light', theme === 'light')
     document.body.classList.toggle('light', theme === 'light')
+    setThemeColor(theme === 'light' ? '#f7f7f9' : '#09090b')
     store.set('svTheme', theme)
   }, [theme])
 
@@ -128,10 +138,12 @@ export function SettingsProvider({ children }) {
       setQualityPref,
       liveOK,
       setLiveOK,
+      ios,
     }),
     [
       dataSaver, setDataSaver, saverAuto, crossfadeOn, crossfadeDur, vizOn, vizStyle,
-      shuffle, toggleShuffle, repeat, cycleRepeat, theme, radio, setRadio, qualityPref, setQualityPref, liveOK,
+      shuffle, toggleShuffle, repeat, cycleRepeat, theme, radio, setRadio, qualityPref, setQualityPref,
+      liveOK, ios,
     ]
   )
 

@@ -1,10 +1,85 @@
+import { useEffect, useState } from 'react'
 import { fmt } from '../lib/format.js'
 import { estimate } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
+import { needsIOSInstallHint, isStandalone } from '../lib/platform.js'
+import { promptInstall, subscribeInstall } from '../lib/install.js'
 
 const SLEEP_OPTIONS = [0, 15, 30, 60]
+const IOS_STEPS = 'Tap the Share button in Safari, scroll down, then choose “Add to Home Screen”.'
+
+/**
+ * Installed web apps get the whole iPhone treatment: no Safari bars, a real
+ * home-screen icon, a launch screen, and audio that can keep playing with the
+ * screen off. Safari has no one-tap install API, so on iOS this explains the
+ * share-sheet flow instead of showing a button that does nothing.
+ */
+function InstallSection() {
+  const [canPrompt, setCanPrompt] = useState(false)
+  const [installed, setInstalled] = useState(false)
+  const [note, setNote] = useState('')
+  const standalone = isStandalone()
+  const iosHint = needsIOSInstallHint()
+
+  useEffect(
+    () =>
+      subscribeInstall((next) => {
+        setCanPrompt(next.canPrompt)
+        setInstalled(next.installed)
+      }),
+    []
+  )
+
+  const install = async () => {
+    const result = await promptInstall()
+    if (result === 'accepted') setNote('Installing VIBEX…')
+    else if (result === 'dismissed') setNote('Install dismissed — you can try again from the browser menu.')
+    else setNote('Open your browser menu and choose “Install app”.')
+  }
+
+  return (
+    <div className="set-sec">
+      <div className="set-head">
+        <Icon name="download" size={16} />
+        <span>Install VIBEX</span>
+      </div>
+      {standalone || installed ? (
+        <p className="set-note">
+          Installed. VIBEX opens full screen and keeps playing with the screen locked.
+        </p>
+      ) : (
+        <>
+          {canPrompt && (
+            <button type="button" className="set-install-btn" onClick={install}>
+              <Icon name="download" size={15} />
+              Install app
+            </button>
+          )}
+          {iosHint && (
+            <button
+              type="button"
+              className="set-install-btn"
+              aria-expanded={!!note}
+              onClick={() => setNote(note ? '' : IOS_STEPS)}
+            >
+              <Icon name="share" size={15} />
+              How to install on iPhone
+            </button>
+          )}
+          {!canPrompt && !iosHint && (
+            <p className="set-note">Open this page in Safari, then Share → Add to Home Screen.</p>
+          )}
+          {note && <p className="set-note">{note}</p>}
+          <p className="set-note">
+            Full screen, a home-screen icon, launch screen and lock-screen controls.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
 
 /** Playback preferences. Everything here persists across reloads. */
 export function SettingsPanel({ open, sleep }) {
@@ -134,12 +209,16 @@ export function SettingsPanel({ open, sleep }) {
         </div>
         <p className="set-note">
           {!s.liveOK
-            ? 'Live spectrum blocked by the stream’s CORS headers — using simulated visuals.'
+            ? s.ios
+              ? 'On iPhone the spectrum is simulated: routing audio through Web Audio stops playback when the screen locks.'
+              : 'Live spectrum blocked by the stream’s CORS headers — using simulated visuals.'
             : s.viz.style === 'spectrum'
               ? 'Real-time frequency data from the audio stream.'
               : 'Simulated animation (no audio analysis).'}
         </p>
       </div>
+
+      <InstallSection />
     </div>
   )
 }

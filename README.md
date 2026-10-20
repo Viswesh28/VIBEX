@@ -45,6 +45,7 @@
 | 🎵 **Custom playlists** | Create, rename, reorder — saved on your device |
 | 📊 **Listening stats** | Plays, minutes, top songs & artists |
 | 🌗 **Dark / light** | Premium glass UI with a Data Saver mode for slow networks |
+| 📲 **Installable** | Home-screen web app on iPhone and Android — full screen, own icon, launch screen, offline shell, and lock-screen / Dynamic Island **Now Playing** controls |
 
 ## 🚀 Quick Start
 
@@ -93,7 +94,7 @@ is meaningless at the repo root.
 
 ```bash
 cd music-app
-npm test              # 124 offline unit/integration tests (vitest + jsdom)
+npm test              # 163 offline unit/integration tests (vitest + jsdom)
 npm run verify:mobile # phone layout, 5 viewports — needs Playwright + a running gateway
 npm run verify:ux     # contrast, accessible names, tap spacing — same prerequisites
 ```
