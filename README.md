@@ -94,7 +94,7 @@ is meaningless at the repo root.
 
 ```bash
 cd music-app
-npm test              # 163 offline unit/integration tests (vitest + jsdom)
+npm test              # 169 offline unit/integration tests (vitest + jsdom)
 npm run verify:mobile # phone layout, 5 viewports — needs Playwright + a running gateway
 npm run verify:ux     # contrast, accessible names, tap spacing — same prerequisites
 ```
@@ -190,7 +190,8 @@ VIBEX/
 - **Gateway:** Node.js (static + `/api` proxy + `/dl` download server)
 - **Music API:** Bun + Hono + JavaScript (JioSaavn wrapper)
 - **Lyrics:** [LRCLIB](https://lrclib.net) (synced, keyless)
-- **Runtime:** local Node.js gateway + Bun API (no deployment configuration included)
+- **Runtime:** local Node.js gateway + Bun API, or a single Vercel project
+  (`vercel.json` + `api/`) — see [`docs/DEPLOY.md`](docs/DEPLOY.md)
 
 <a id="legal"></a>
 
