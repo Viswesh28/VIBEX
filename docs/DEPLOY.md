@@ -34,7 +34,7 @@ bundle itself contains no app code, so it never goes stale.
 ```json
 {
   "installCommand": "true",
-  "buildCommand": "git clone --depth 1 --branch main https://github.com/Viswesh28/VIBEX.git src && cd src/jiosaavn-api && npm ci --omit=dev --ignore-scripts && cd ../music-app && npm ci --ignore-scripts && npm run build",
+  "buildCommand": "rm -rf src && git clone --depth 1 --branch main https://github.com/Viswesh28/VIBEX.git src && cd src/jiosaavn-api && npm ci --omit=dev --ignore-scripts && cd ../music-app && npm ci --ignore-scripts && npm run build",
   "outputDirectory": "src/music-app/dist",
   "functions": {
     "api/[...path].mjs": { "maxDuration": 60 },
@@ -104,6 +104,10 @@ Two pitfalls that cost real time:
 - Git deployments need `git_source: {type: "github", repoId: 1380882457, ref:
   "main"}`, which fails with `git_info_fail` while the GitHub connection is
   broken. Do not use it as a retry strategy.
+- Vercel restores the previous build's cache, which already contains
+  `src/`. A bare `git clone src` then dies with `fatal: destination path
+  'src' already exists` → `BUILD_UTILS_SPAWN_128`. Always lead with
+  `rm -rf src`.
 
 ## Verifying a deploy
 
