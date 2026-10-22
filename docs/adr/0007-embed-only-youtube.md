@@ -59,3 +59,29 @@ resolve, no proxy, no accounts and no cookies.
 JioSaavn playback is untouched: catalogue, signed CDN URLs, two decks,
 crossfade, MediaSession, the tagger at `/api/dl`. The canvas lookup in the
 full-screen player is untouched and remains `deployment_blocked` (0001).
+
+## Amendment — a YouTube item is a queue item (after the first report that it "does not play")
+
+The first version of this decision treated the embed as a surface you open: it
+paused the decks, showed the iframe, and left the queue where it was. Pressing a
+YouTube result therefore looked broken — the now-playing bar still named the
+previous track, nothing advanced when the video ended, and there was no
+transport in the overlay. The complaint was accurate, and about us, not YouTube.
+
+The embed is driven as a player now:
+
+* `openEmbed(song, index)` moves the queue onto the item, so the bar, the queue
+  highlight and MediaSession describe what is actually making sound.
+* YouTube's `onStateChange` is the source of truth for playing/paused, and
+  `ended` advances the queue through the same `advance()` an `<audio>` deck
+  uses — including repeat-one, which is answered with a `seekTo` + `playVideo`
+  rather than a reload.
+* The overlay carries previous/next, closing itself first so the next item owns
+  the screen whether it is an embed or a stream.
+* A refused video surfaces its reason (101/150 and friends) with a link out.
+
+What it still is not: an `<audio>` element. YouTube audio cannot be extracted in
+a browser — the player endpoint refuses a foreign origin and the CDN URLs are
+bound to the address that requested them — so there is no version of this where
+the embed is not YouTube's player. Everything around it now behaves like a
+track.

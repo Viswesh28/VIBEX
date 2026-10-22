@@ -727,7 +727,7 @@ export function PlayerProvider({ children }) {
    * players making sound at once is never what anyone meant.
    */
   const openEmbed = useCallback(
-    (song) => {
+    (song, idx) => {
       const videoId = videoIdOf(song)
       if (!videoId) {
         setStatus(unplayableCopy(song), true)
@@ -742,12 +742,51 @@ export function PlayerProvider({ children }) {
           /* ignore */
         }
       }
-      setIsPlaying(false)
+      // The embed is a queue item like any other: its index moves, so the bar,
+      // the queue highlight and MediaSession all describe what is actually
+      // playing. Without this the queue stayed on the previous track and the
+      // app looked idle while YouTube was making sound.
+      if (typeof idx === 'number' && idx >= 0) {
+        setCurrentIndex(idx)
+        idxRef.current = idx
+        streamAttempts.current = 0
+        afterStart(song)
+      }
+      setIsPlaying(true)
       setLongForm({ id: song.id, name: song.name, subtitle: song.subtitle || '', videoId })
       setStatus(EMBED_NOTE)
     },
-    [cancelFade, setStatus, unplayableCopy]
+    [afterStart, cancelFade, setStatus, unplayableCopy]
   )
+
+  /**
+   * What YouTube's player reports, in this app's terms.
+   *
+   * `onStateChange` is the only honest source for an embed: it is the player
+   * that knows whether it is playing, and the one that knows the video ended.
+   * Ending advances the queue exactly like an `<audio>` deck does — including
+   * repeat-one, which is answered with a command rather than a new open, so the
+   * same video restarts instead of reloading.
+   */
+  const reportEmbed = useCallback((state) => {
+    if (state === 'playing') {
+      setIsPlaying(true)
+      return ''
+    }
+    if (state === 'paused') {
+      setIsPlaying(false)
+      return ''
+    }
+    if (state === 'ended') {
+      setIsPlaying(false)
+      if (setRef.current.repeat === 'one') return 'replay'
+      // The next track owns the screen, whichever kind it is; if it is another
+      // embed, `openEmbed` immediately puts it back.
+      setLongForm(null)
+      advanceRef.current?.({ manual: false })
+    }
+    return ''
+  }, [])
 
   const closeEmbed = useCallback(() => {
     setLongForm(null)
@@ -801,7 +840,7 @@ export function PlayerProvider({ children }) {
       // better than a spinner.
       const plan = playbackPlan(s, { embed: true })
       if (plan.mode === 'embed') {
-        openEmbed(s)
+        openEmbed(s, idx)
         return
       }
       setStatus(unplayableCopy(s), true)
@@ -844,7 +883,7 @@ export function PlayerProvider({ children }) {
       }
       const plan = playbackPlan(s, { embed: true })
       if (plan.mode === 'embed') {
-        openEmbed(s)
+        openEmbed(s, idx)
         return
       }
       setStatus(unplayableCopy(s), true)
@@ -1585,7 +1624,7 @@ export function PlayerProvider({ children }) {
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       // The long-form embed: open, and this is what is open. Null otherwise.
-      embedTrack, closeEmbed,
+      embedTrack, closeEmbed, reportEmbed,
       // Transition truth for the "Mixing" badge, plus typed stop reasons so the
       // UI can offer the right recovery instead of one generic error.
       transition,
@@ -1604,7 +1643,7 @@ export function PlayerProvider({ children }) {
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       transition, stopReason, dismissRecommendation, clearForcedQuality,
-      embedTrack, closeEmbed,
+      embedTrack, closeEmbed, reportEmbed,
     ]
   )
 
