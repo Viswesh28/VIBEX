@@ -81,7 +81,7 @@ export const STREAM_STATE = {
 
 export const STREAM_COPY = {
   [STREAM_STATE.noBridge]:
-    'YouTube tracks play in the Android app only — YouTube will not serve audio to this server. Choose JioSaavn to play here.',
+    'This browser cannot reach YouTube audio on its own: YouTube refuses the request and only grants media access to its own pages. Install the VIBEX helper extension, or choose JioSaavn to play.',
   [STREAM_STATE.blocked]:
     'YouTube asked this device to sign in before it would serve the track. Open YouTube Music once in a browser on this device, then try again.',
   [STREAM_STATE.noDirectAudio]:
@@ -103,15 +103,35 @@ export const STREAM_COPY = {
 
 const failure = (reason, detail) => ({ ok: false, url: null, reason, detail: detail || null })
 
-/** The native mint, if this build has one. */
+/**
+ * The mint this build can reach, if any.
+ *
+ * Two shapes, one contract (`mintStream({videoId}) → payload`):
+ *
+ * * **Android** — the WebView plugin. A real page on the listener's connection,
+ *   which is the only thing YouTube will answer.
+ * * **A browser extension** — the same idea, but the page is a background tab
+ *   and the extension supplies the privilege a web page cannot have. It
+ *   installs `__VIBEX_STREAM_MINTER` on our origin; see `extension/`.
+ *
+ * A plain browser tab gets `null`, and that is not a limitation we can code
+ * around: the player endpoint 403s a foreign `Origin` — preflight included —
+ * and `googlevideo` only grants CORS to YouTube's own origins. A page cannot
+ * read either. So the seam exists, and the extension is what fills it.
+ */
 export function streamMintBridge(win) {
   const w = win || (typeof window !== 'undefined' ? window : null)
-  if (!w?.Capacitor?.isNativePlatform?.()) return null
-  // Android only: WKWebView suspends offscreen media, so an iOS mint would fail
-  // invisibly instead of returning a reason.
-  if (w.Capacitor.getPlatform?.() !== 'android') return null
-  const plugin = w.Capacitor.Plugins?.CanvasMint
-  return plugin && typeof plugin.mintStream === 'function' ? plugin : null
+
+  if (w?.Capacitor?.isNativePlatform?.()) {
+    // Android only: WKWebView suspends offscreen media, so an iOS mint would
+    // fail invisibly instead of returning a reason.
+    if (w.Capacitor.getPlatform?.() !== 'android') return null
+    const plugin = w.Capacitor.Plugins?.CanvasMint
+    return plugin && typeof plugin.mintStream === 'function' ? plugin : null
+  }
+
+  const hook = w?.__VIBEX_STREAM_MINTER
+  return hook && typeof hook.mintStream === 'function' ? hook : null
 }
 
 // --- reading what the page offered ----------------------------------------

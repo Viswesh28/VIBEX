@@ -401,6 +401,38 @@ describe('the bridge', () => {
     const bridge = { mintStream: async () => ({ ok: false }) }
     expect(streamMintBridge(cap('android', bridge))).toBe(bridge)
   })
+
+  it('is the extension hook when a browser has one installed', () => {
+    // A plain tab has no `Capacitor`; the extension installs this seam.
+    const hook = { mintStream: async () => ({ ok: false }) }
+    expect(streamMintBridge({ __VIBEX_STREAM_MINTER: hook })).toBe(hook)
+  })
+
+  it('ignores a hook that is not the contract', () => {
+    expect(streamMintBridge({ __VIBEX_STREAM_MINTER: {} })).toBeNull()
+    expect(streamMintBridge({ __VIBEX_STREAM_MINTER: 'yes' })).toBeNull()
+  })
+
+  it('mints through the extension seam exactly like the plugin', async () => {
+    // The point of the single contract: the app's gate runs unchanged.
+    const hook = {
+      mintStream: async () => ({ ...goodMint(), headStatus: 206, contentRange: `bytes 0-0/${WHOLE.served}`, tailStatus: 206 }),
+    }
+    const bridge = streamMintBridge({ __VIBEX_STREAM_MINTER: hook })
+    const res = await mintYtStream({ videoId: 'J7p4bzqLvCw', bridge, now: 1000 })
+    expect(res.ok).toBe(true)
+    expect(res.url).not.toMatch(/range=/)
+  })
+
+  it('turns an extension timeout into a typed failure, not a hang', async () => {
+    const hook = { mintStream: async () => ({ ok: false, why: 'extension_timeout' }) }
+    const res = await mintYtStream({
+      videoId: 'J7p4bzqLvCw',
+      bridge: streamMintBridge({ __VIBEX_STREAM_MINTER: hook }),
+    })
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe(STREAM_STATE.failed)
+  })
 })
 
 describe('copy', () => {

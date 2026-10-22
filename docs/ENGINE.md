@@ -352,8 +352,17 @@ Three rules hold that together, all in `src/lib/ytStream.js`:
   terminal — a fallback to JioSaavn is the success case, and repeat mints are
   what get an address flagged.
 
-On the web nothing changes: a browser tab has no page to mint from, so YouTube
-Music stays browse-only there and the picker says so.
+On the web the mint needs the **helper extension** (`extension/`), because a
+page cannot reach either endpoint: the player API 403s a foreign `Origin`
+including the preflight, and `googlevideo` grants CORS only to YouTube's own
+origins — so a page can *play* a minted URL but cannot *probe* it, which would
+ship exactly the truncation bug the gate exists to catch. The extension runs the
+same harvest in a hidden tab at `document_start` (real injection, which Android
+could not do) and probes from its service worker, where host permissions bypass
+CORS. The app's logic is unchanged: one seam, one gate. See ADR 0005.
+
+Without the extension, web stays browse-only — and the picker says which of the
+three situations applies rather than a blanket refusal.
 
 The choice itself lives in the **sticky top bar**, not in the song results: with
 it beside the results, a listener only discovered the app had two catalogues

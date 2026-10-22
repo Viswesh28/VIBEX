@@ -120,6 +120,17 @@ describe('playbackPlan', () => {
     })
   })
 
+  it('will attempt a mint in a browser that has the extension', () => {
+    const t = mapYtResult(ytResult)
+    // A plain tab: final refusal.
+    expect(playbackPlan(t, { canMint: false }).willMint).toBeUndefined()
+    // Extension installed: attempt, with the mint's own failure summary.
+    expect(playbackPlan(t, { canMint: true })).toMatchObject({
+      willMint: true,
+      reason: PLAYBACK_REASON.mintFailed,
+    })
+  })
+
   it('refuses anything else with no stream, without pretending it is YouTube', () => {
     expect(playbackPlan({ id: 'x', downloadUrl: [] }).reason).toBe(PLAYBACK_REASON.noStream)
     expect(playbackPlan(null).playable).toBe(false)

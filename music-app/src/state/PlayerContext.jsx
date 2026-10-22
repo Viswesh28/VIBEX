@@ -717,7 +717,7 @@ export function PlayerProvider({ children }) {
    * instead of the old catch-all "No stream URL for this song."
    */
   const unplayableCopy = useCallback((song) => {
-    const plan = playbackPlan(song, { native: isNative() })
+    const plan = playbackPlan(song, { native: isNative(), canMint: Boolean(streamMintBridge()) })
     return playbackCopy(plan.reason) || 'This track has no stream to play.'
   }, [])
 
@@ -768,7 +768,7 @@ export function PlayerProvider({ children }) {
       const url = streamOf(song, resolveQuality(song))
       if (url) return url
       if (!isYtTrack(song)) return null
-      const plan = playbackPlan(song, { native: isNative() })
+      const plan = playbackPlan(song, { native: isNative(), canMint: Boolean(streamMintBridge()) })
       if (!plan.willMint) return null
       return mintUrl(song)
     },
@@ -805,7 +805,7 @@ export function PlayerProvider({ children }) {
         finishSwap(direct)
         return
       }
-      const plan = playbackPlan(s, { native: isNative() })
+      const plan = playbackPlan(s, { native: isNative(), canMint: Boolean(streamMintBridge()) })
       if (!plan.willMint) {
         setStatus(unplayableCopy(s), true)
         return
@@ -851,7 +851,7 @@ export function PlayerProvider({ children }) {
         start(direct)
         return
       }
-      const plan = playbackPlan(s, { native: isNative() })
+      const plan = playbackPlan(s, { native: isNative(), canMint: Boolean(streamMintBridge()) })
       if (!plan.willMint) {
         setStatus(unplayableCopy(s), true)
         return

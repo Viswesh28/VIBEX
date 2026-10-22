@@ -104,7 +104,7 @@ export const PLAYBACK_COPY = {
   [PLAYBACK_REASON.needsSession]:
     'YouTube Music audio needs a signed-in session, which this server does not have — choose JioSaavn to play.',
   [PLAYBACK_REASON.needsApp]:
-    'YouTube Music tracks play in the Android app only — choose JioSaavn here.',
+    'YouTube Music audio needs the Android app or the VIBEX browser extension — choose JioSaavn to play.',
   [PLAYBACK_REASON.mintFailed]:
     'YouTube Music audio could not be resolved on this device — choose JioSaavn to play.',
 }
@@ -128,13 +128,15 @@ export function isYtTrack(track) {
  * says so. `playable` stays false either way, because playing it is not a fact
  * until a URL lands.
  */
-export function playbackPlan(track, { native = false } = {}) {
+export function playbackPlan(track, { native = false, canMint = false } = {}) {
   if (!track) return { playable: false, reason: PLAYBACK_REASON.noStream }
   if (isYtTrack(track)) {
+    // `canMint` is the browser extension. Native always can; a plain tab never.
+    const mint = native || canMint
     return {
       playable: false,
-      ...(native ? { willMint: true } : {}),
-      reason: native ? PLAYBACK_REASON.mintFailed : PLAYBACK_REASON.needsApp,
+      ...(mint ? { willMint: true } : {}),
+      reason: mint ? PLAYBACK_REASON.mintFailed : PLAYBACK_REASON.needsApp,
     }
   }
   if (!track?.downloadUrl?.length) {
