@@ -83,8 +83,10 @@ describe('the capability matrix', () => {
     // The catalogue is real; the audio is not, and the row has to say both.
     const f = feature('sources')
     expect(f.status).toBe(STATUS.blocked)
-    expect(f.claim).toMatch(/browse only/i)
-    expect(f.detail).toMatch(/cannot play/i)
+    expect(f.claim).toMatch(/browse only on the web/i)
+    // The distinction that matters: the device can mint, a server cannot.
+    expect(f.detail).toMatch(/minted on the device/i)
+    expect(f.detail).toMatch(/browse-only/i)
   })
 
   it('counts only what actually ships', () => {

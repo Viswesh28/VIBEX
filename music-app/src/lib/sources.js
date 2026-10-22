@@ -28,6 +28,17 @@
 export const BROWSE_ONLY_NOTE =
   'YouTube Music is browse-only here: YouTube will not serve audio to this server, so these tracks cannot play. Switch to JioSaavn to listen.'
 
+/**
+ * The same limit on Android, where the app *can* resolve the audio itself.
+ *
+ * Said carefully on purpose: the mint is real, but it is also the newest and
+ * least exercised path in the app, and a listener should hear "it may be
+ * refused" before it is, not after. JioSaavn is still the answer that always
+ * plays, so that stays the last clause on both platforms.
+ */
+export const DEVICE_SOURCE_NOTE =
+  'YouTube Music audio is resolved on this device, from a page in the app: it takes a few seconds and YouTube may still refuse it. JioSaavn is the source that always plays.'
+
 export const SOURCE_ID = {
   jiosaavn: 'jiosaavn',
   ytmusic: 'ytmusic',
@@ -80,6 +91,12 @@ export const PLAYBACK_REASON = {
   needsSession: 'needs_youtube_session',
   /** YouTube Music audio in a build that cannot ask a page for it. */
   needsApp: 'needs_app',
+  /**
+   * The device-side mint is the only path to YouTube audio, and it did not
+   * produce a URL. The specific reason lives in `ytStream.js`; this is the
+   * picker-level summary, and it still names the source that will work.
+   */
+  mintFailed: 'mint_failed',
 }
 
 export const PLAYBACK_COPY = {
@@ -87,7 +104,9 @@ export const PLAYBACK_COPY = {
   [PLAYBACK_REASON.needsSession]:
     'YouTube Music audio needs a signed-in session, which this server does not have — choose JioSaavn to play.',
   [PLAYBACK_REASON.needsApp]:
-    'YouTube Music tracks play in the Android app only — choose JioSaavn here.',
+    'YouTube Music audio needs the Android app or the VIBEX browser extension — choose JioSaavn to play.',
+  [PLAYBACK_REASON.mintFailed]:
+    'YouTube Music audio could not be resolved on this device — choose JioSaavn to play.',
 }
 
 /** True when a track came from the YouTube Music catalogue. */
@@ -102,16 +121,22 @@ export function isYtTrack(track) {
 /**
  * Can this track play, here?
  *
- * `native` is only true in the Capacitor shell, and even there YouTube audio is
- * not wired yet — the canvas mint exists, an audio mint does not. Saying so is
- * the point: a plan that guessed "probably" would surface as a broken player.
+ * A YouTube track carries no URL, so this can never answer "yes" for one —
+ * what it answers is *how it will be attempted*. On Android the app mints a URL
+ * from a real page on the device (see `ytStream.js`), so `willMint` is true and
+ * the caller owns the async attempt; anywhere else the refusal is final and
+ * says so. `playable` stays false either way, because playing it is not a fact
+ * until a URL lands.
  */
-export function playbackPlan(track, { native = false } = {}) {
+export function playbackPlan(track, { native = false, canMint = false } = {}) {
   if (!track) return { playable: false, reason: PLAYBACK_REASON.noStream }
   if (isYtTrack(track)) {
+    // `canMint` is the browser extension. Native always can; a plain tab never.
+    const mint = native || canMint
     return {
       playable: false,
-      reason: native ? PLAYBACK_REASON.needsSession : PLAYBACK_REASON.needsApp,
+      ...(mint ? { willMint: true } : {}),
+      reason: mint ? PLAYBACK_REASON.mintFailed : PLAYBACK_REASON.needsApp,
     }
   }
   if (!track?.downloadUrl?.length) {

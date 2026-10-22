@@ -108,8 +108,27 @@ describe('playbackPlan', () => {
 
   it('refuses a YouTube track and says why, per platform', () => {
     const t = mapYtResult(ytResult)
+    // In a browser there is nothing that can mint, so the refusal is final.
     expect(playbackPlan(t).reason).toBe(PLAYBACK_REASON.needsApp)
-    expect(playbackPlan(t, { native: true }).reason).toBe(PLAYBACK_REASON.needsSession)
+    expect(playbackPlan(t).willMint).toBeUndefined()
+    // On the device the app will *attempt* a mint, so the reason is a failure
+    // summary rather than a claim about the server.
+    expect(playbackPlan(t, { native: true })).toMatchObject({
+      playable: false,
+      willMint: true,
+      reason: PLAYBACK_REASON.mintFailed,
+    })
+  })
+
+  it('will attempt a mint in a browser that has the extension', () => {
+    const t = mapYtResult(ytResult)
+    // A plain tab: final refusal.
+    expect(playbackPlan(t, { canMint: false }).willMint).toBeUndefined()
+    // Extension installed: attempt, with the mint's own failure summary.
+    expect(playbackPlan(t, { canMint: true })).toMatchObject({
+      willMint: true,
+      reason: PLAYBACK_REASON.mintFailed,
+    })
   })
 
   it('refuses anything else with no stream, without pretending it is YouTube', () => {
