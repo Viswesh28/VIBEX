@@ -29,6 +29,14 @@ export const CANVAS_REASON = {
    * apart from `not_found` instead of pretending the track has no clip.
    */
   deploymentBlocked: 'deployment_blocked',
+  /**
+   * The on-device mint asked the page for a canvas and the page did not have
+   * one. Distinct from `not_found`: the track may well have a canvas, this
+   * build just could not see it from the page it was given.
+   */
+  noCanvasOnPage: 'no_canvas_on_page',
+  /** The on-device WebView hit a bot check or a consent wall. */
+  mintBlocked: 'mint_blocked',
 }
 
 export const CANVAS_COPY = {
@@ -39,6 +47,10 @@ export const CANVAS_COPY = {
   [CANVAS_REASON.failed]: 'Couldn\'t reach YouTube Music — artwork instead.',
   [CANVAS_REASON.deploymentBlocked]:
     'YouTube needs a signed-in session for music tracks — artwork instead.',
+  [CANVAS_REASON.noCanvasOnPage]:
+    'This track has no canvas, or the page did not expose one — artwork instead.',
+  [CANVAS_REASON.mintBlocked]:
+    'YouTube asked for a sign-in on this device — artwork instead.',
 }
 
 /**

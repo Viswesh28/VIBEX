@@ -284,6 +284,25 @@ delivering something the deployment cannot. Unblocking it would mean holding a
 YouTube session on the server, which is precisely the provider impersonation
 this project has refused from the start.
 
+#### A second route, on the device
+
+The server verdict above is final for the web build. The Android shell is not
+gated the same way, because a WebView is a real client on the listener's own
+connection running YouTube's own script — so it is asked directly.
+
+`CanvasMintPlugin.java` keeps one offscreen WebView for the session, navigates
+the search page to resolve a `videoId`, loads the watch page, and returns
+`ytInitialPlayerResponse` as JSON. It never plays anything. The ranking is
+`pickCanvasUrl` again, and a URL is accepted only when it sits under a canvas
+key: a music video is not a canvas, and substituting one would be the fake this
+project refuses. See `docs/adr/0002-canvas-mint-on-device.md`.
+
+`canvasMint.js` owns that policy and is fully tested without a device; the
+plugin is selected only on Android native, and the whole route collapses to
+artwork if it is missing. **The Java has not been compiled** — this repository's
+build environment has no Android SDK — so the native half is unreviewed until it
+runs on a handset.
+
 The local visualiser is unaffected by any of this, and it is what Data Saver
 still leaves alone: the rule there is **gate the fetch, not the display**, and
 a canvas drawn on-device has no fetch. A local canvas costs no bytes, so hiding it under Data Saver would

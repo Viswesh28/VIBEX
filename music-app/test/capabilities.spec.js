@@ -73,8 +73,10 @@ describe('the capability matrix', () => {
     expect(f.claim).toMatch(/session/i)
     expect(f.detail).toMatch(/signed-in|sign in/i)
     expect(f.detail).toMatch(/artwork/i)
-    // And it says how it comes back: the health check, not a user setting.
-    expect(f.detail).toMatch(/health/i)
+    // The device route exists, and the matrix is careful not to claim it
+    // works: it is built, not confirmed.
+    expect(f.detail).toMatch(/Android/i)
+    expect(f.detail).toMatch(/not yet confirmed|unconfirmed/i)
   })
 
   it('counts only what actually ships', () => {
