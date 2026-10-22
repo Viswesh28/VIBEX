@@ -329,15 +329,24 @@ this deployment) while its **audio** is refused (ADR 0001). `src/lib/sources.js`
 holds the whole policy — `cataloguePath`, `mapYtResult`, `playbackPlan` — and the
 player prints the reason it refuses rather than a generic failure. See ADR 0003.
 
+The choice itself lives in the **sticky top bar**, not in the song results: with
+it beside the results, a listener only discovered the app had two catalogues
+after searching, and a listener on the home feed never discovered it at all.
+While YouTube Music is selected a slim banner states the limit in the same
+sentence the capability matrix and Settings use (`BROWSE_ONLY_NOTE`) and offers
+the one-tap way back to JioSaavn, so the warning carries its own fix.
+
 ## 9. What this build deliberately does not do
 
 * **No BPM/key analysis.** The planner supports it, the app does not ship a
   time-stretch/DSP stage, and pretending to beat-match without an analyser is
   worse than a clean crossfade.
-* **No second music provider.** `sourcing.pdf` describes multi-provider
+* **No second *playable* provider.** `sourcing.pdf` describes multi-provider
   resolution (JioSaavn DES media URLs, YouTube InnerTube impersonation and
-  signature deciphering). VIBEX stays JioSaavn-only; its sourcing layer is a
-  legal and operational liability this project does not want, and the value
-  it offers the listener here is the *recovery* ladder, not the extra source.
+  signature deciphering). VIBEX offers a second *catalogue* (YouTube Music) and
+  refuses its audio, because minting it needs a session from a residential
+  origin — a legal and operational liability this project does not want. The
+  value on offer is the *recovery* ladder plus a way to find a track, not a
+  second stream.
 * **No server-side ranker.** Candidate retrieval is the artist's top songs and
   a title search; ranking is local and explainable.

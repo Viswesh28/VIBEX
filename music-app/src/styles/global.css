@@ -290,6 +290,10 @@ input, select { font: inherit; }
     calc(28px + var(--safe-r)) 12px calc(28px + var(--safe-l));
   background: var(--bar);
   border-bottom: 1px solid var(--line);
+  /* The source banner is a full-basis row inside the bar; wrapping is what
+     lets it take its own line at every width rather than squeezing the
+     search field. */
+  flex-wrap: wrap;
 }
 
 #menuBtn { display: none; }
@@ -1043,8 +1047,12 @@ h2#resultTitle {
 }
 .switch-row input:checked + .switch { background: var(--accent); }
 .switch-row input:checked + .switch::after { left: 20px; }
-/* Source picker — a choice between catalogues, with the honest limit beside it. */
+/* Source picker — a choice between catalogues, with the honest limit beside it.
+   The control sits in the top bar, so the active catalogue is visible from
+   every screen instead of only after a search. */
 .src-switch { display: flex; gap: 8px; margin: 0 0 6px; }
+.topbar-src { margin: 0; }
+.topbar-src .src-chip { padding: 6px 11px; }
 .src-chip {
   padding: 7px 14px; border-radius: 999px; cursor: pointer;
   background: var(--surface-2, rgba(255,255,255,0.06));
@@ -1054,6 +1062,25 @@ h2#resultTitle {
 .src-chip.on { color: var(--fg, #fff); border-color: var(--accent); }
 .src-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .src-note { margin: 0 0 12px; }
+/* The limit, stated where the choice was made. It rides in the sticky bar so
+   it cannot be scrolled away from while YouTube Music is the active source. */
+.src-banner {
+  flex: 1 0 100%; order: 4;
+  display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap;
+  margin-top: 2px; padding: 7px 11px;
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 9px; background: var(--card);
+  font-size: 11.5px; line-height: 1.45; color: var(--muted);
+}
+.src-banner-text { flex: 1 1 260px; min-width: 0; }
+.src-banner-btn {
+  flex: 0 0 auto; padding: 5px 11px; border-radius: 7px;
+  background: var(--card-hover); color: var(--text-2);
+  font-size: 11.5px; font-weight: 700; white-space: nowrap;
+}
+.src-banner-btn:hover { background: var(--card-strong); color: var(--text); }
+.src-banner-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* Marks a row that came from the other catalogue. */
 .src-badge {
   display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 5px;
@@ -1431,6 +1458,9 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
     gap: 8px;
   }
   .search-wrap { order: 2; flex: 1 1 100%; min-width: 0; }
+  .topbar-src { order: 1; }
+  .topbar-src .src-chip { padding: 6px 10px; font-size: 11.5px; }
+  .src-banner { font-size: 11px; padding: 6px 9px; }
   #searchInput { font-size: 16px; } /* <16px triggers focus-zoom on iOS */
   .search-submit { display: none; }
   .tabs { order: 3; flex-basis: 100%; }

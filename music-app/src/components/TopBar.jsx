@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { SettingsPanel } from './SettingsPanel.jsx'
+import { SourceBanner, SourceSwitch } from './SourceSwitch.jsx'
 import { Icon } from './Icon.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
@@ -71,6 +72,8 @@ export function TopBar({ sleep, onMenu }) {
         ))}
       </div>
 
+      <SourceSwitch />
+
       <div className="top-actions">
         <button
           className="icon-btn"
@@ -97,6 +100,8 @@ export function TopBar({ sleep, onMenu }) {
           <SettingsPanel open={settingsOpen} sleep={sleep} />
         </div>
       </div>
+
+      <SourceBanner />
     </header>
   )
 }

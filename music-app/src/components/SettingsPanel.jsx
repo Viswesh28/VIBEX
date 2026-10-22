@@ -429,9 +429,7 @@ export function SettingsPanel({ open, sleep }) {
           </select>
         </div>
         <p className="set-note">
-          {sourceOf(s.source).plays === 'catalogue-only'
-            ? 'YouTube Music is browse-and-search only: YouTube will not serve audio to this server, so these tracks cannot play here. Switch back to JioSaavn to listen.'
-            : 'JioSaavn provides both the catalogue and the audio, on every device.'}
+          {sourceOf(s.source).note}
         </p>
       </div>
 
