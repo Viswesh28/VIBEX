@@ -84,7 +84,7 @@ export const FEATURES = [
     status: STATUS.blocked,
     claim: 'Needs a YouTube session',
     detail:
-      'A cross-source extra: audio stays on JioSaavn and only the looping clip would come from YouTube. YouTube will not describe a music track to a client without a signed-in session, and this server has none, so no clip can be fetched. The player shows artwork instead, and a health check re-enables the lookup by itself if that changes.',
+      'A cross-source extra: audio stays on JioSaavn and only the looping clip would come from YouTube. YouTube will not describe a music track to a client without a signed-in session, and this server has none, so the web player shows artwork. The Android app has a second route — it asks the track\'s own page on your device — which is built but not yet confirmed on a handset.',
   },
   {
     id: 'beatMatch',

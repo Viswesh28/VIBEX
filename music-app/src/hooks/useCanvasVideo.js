@@ -8,6 +8,7 @@ import {
   readCanvasHealth,
   readCanvasResponse,
 } from '../lib/canvas.js'
+import { canvasMintBridge, mintCanvas, mintReason } from '../lib/canvasMint.js'
 
 /**
  * Looks up the canvas clip for the current track.
@@ -20,12 +21,18 @@ import {
  * re-render, the second survives a reload within the same tab without
  * hammering an undocumented endpoint.
  *
- * One gate sits in front of all of that: `is this deployment allowed to ask?`
- * YouTube answers server-side lookups from datacenter IPs with "sign in to
- * confirm you're not a bot", which is a property of the deployment, not of the
- * song. Asking per track would spend a request to learn the same answer every
- * time, so the health answer is shared and short-lived; when it says the
- * deployment is challenged, the player shows artwork and nothing is sent.
+ * Two transports, and the device decides which one it gets:
+ *
+ * * **native shell** — the track's page is opened offscreen on this device and
+ *   asked what it already resolved (`canvasMint.js`). A real page is not gated
+ *   the way a serverless client is, so this is the path that can actually
+ *   produce a canvas.
+ * * **web** — the server route, gated behind a health probe: YouTube will not
+ *   describe a music track to this deployment, so asking per track would only
+ *   spend a request to learn the same answer each time.
+ *
+ * Either way a miss degrades to artwork, and nothing is fetched while the
+ * player is closed or Data Saver is on.
  */
 
 const MEM = new Map()
@@ -139,6 +146,30 @@ export function useCanvasVideo({ track, open, dataSaver, enabled }) {
     abortRef.current = ctrl
     let cancelled = false
     setState({ url: null, reason: CANVAS_REASON.ready, loading: true })
+
+    // Native shell: mint from the device's own page instead of asking a server
+    // that YouTube refuses. The health probe is about the server, so it does
+    // not apply here and is skipped.
+    const bridge = canvasMintBridge()
+    if (bridge) {
+      mintCanvas({ query, bridge })
+        .then((result) => {
+          if (cancelled) return
+          const reason = result.url ? CANVAS_REASON.ready : mintReason(result.state)
+          const entry = { videoUrl: result.url, reason }
+          MEM.set(id, entry)
+          if (result.url) writeStore(id, entry)
+          setState({ url: result.url, reason, loading: false })
+        })
+        .catch((e) => {
+          if (cancelled) return
+          setState({ url: null, reason: CANVAS_REASON.failed, loading: false })
+          void e
+        })
+      return () => {
+        cancelled = true
+      }
+    }
 
     const params = new URLSearchParams({
       title: String(track.name || ''),
