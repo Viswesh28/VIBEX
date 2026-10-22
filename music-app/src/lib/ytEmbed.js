@@ -70,3 +70,59 @@ export function embedUrl(track, { origin = '', autoplay = true } = {}) {
 /** The line the status bar shows while the embed is open. */
 export const EMBED_NOTE =
   'Playing in YouTube’s own player — YouTube’s video and ads, not our audio stream.'
+
+/**
+ * What YouTube's own player says when it refuses to play.
+ *
+ * The frame is cross-origin, so its words are unreadable from here. What *is*
+ * readable is the error code it posts to the parent once the JS API handshake
+ * is up (`enablejsapi=1` plus a matching `origin`). The codes are YouTube's:
+ *
+ *   2          the id is not a video
+ *   5          the HTML5 player could not start this one
+ *   100        private, removed, or not available in this country
+ *   101 / 150  the rights holder forbids playback outside youtube.com
+ *
+ * 101/150 is the one that matters in practice: a catalogue item can exist, be
+ * searchable and still be unplayable in an embed, and until this was surfaced
+ * the app showed a black rectangle and blamed nothing.
+ */
+export const EMBED_ERROR = {
+  invalid: 'invalid_id',
+  failed: 'player_failed',
+  gone: 'not_available',
+  blocked: 'embedding_disabled',
+}
+
+/** The reason for a code YouTube posted, or '' when it is not one we know. */
+export function embedErrorReason(code) {
+  switch (Number(code)) {
+    case 2:
+      return EMBED_ERROR.invalid
+    case 5:
+      return EMBED_ERROR.failed
+    case 100:
+      return EMBED_ERROR.gone
+    case 101:
+    case 150:
+      return EMBED_ERROR.blocked
+    default:
+      return ''
+  }
+}
+
+/** The sentence for that reason, including the way out. '' when unknown. */
+export function embedErrorCopy(code) {
+  switch (embedErrorReason(code)) {
+    case EMBED_ERROR.invalid:
+      return 'YouTube does not recognise this video id — pick another result.'
+    case EMBED_ERROR.failed:
+      return 'YouTube’s player could not start this video. Open it on YouTube to listen there.'
+    case EMBED_ERROR.gone:
+      return 'This video is private, removed, or not available in your country.'
+    case EMBED_ERROR.blocked:
+      return 'The rights holder has disabled playback outside YouTube. Open it on YouTube to listen there.'
+    default:
+      return ''
+  }
+}
