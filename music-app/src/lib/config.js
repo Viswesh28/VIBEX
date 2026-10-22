@@ -1,9 +1,9 @@
 /**
  * Where the backend lives — on the web only.
  *
- * The web build is served by the gateway, which also proxies /api and /dl, so
- * this stays empty and relative URLs do the right thing. Override it at build
- * time if you ever serve the UI from somewhere other than the gateway:
+ * The web build is served by the gateway, which also proxies /api, so this
+ * stays empty and relative URLs do the right thing. Override it at build time
+ * if you ever serve the UI from somewhere other than the gateway:
  *
  *   VITE_API_ORIGIN=https://api.example.com npm run build
  *
@@ -13,7 +13,10 @@
 export const API_ORIGIN = (import.meta.env?.VITE_API_ORIGIN || '').replace(/\/+$/, '')
 
 export const apiUrl = (path) => `${API_ORIGIN}/api${path}`
-export const dlUrl = (query) => `${API_ORIGIN}/dl?${query}`
+// Downloads hit the tagger function directly. It used to be reachable as /dl
+// through a hosting rewrite, but a deployment that carries only the app build
+// has no rewrite table, so the path the function actually owns is the safe one.
+export const dlUrl = (query) => `${API_ORIGIN}/api/dl?${query}`
 
 /**
  * True when running inside the native shell rather than a browser tab.
