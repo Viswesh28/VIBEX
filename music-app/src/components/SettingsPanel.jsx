@@ -3,6 +3,14 @@ import { LAW_HINTS, LAW_LABELS, MAX_CROSSFADE_SEC, describePlan, planTransition 
 import { DEFAULT_REC, REC_REASON_SENTENCE } from '../lib/recommend.js'
 import { estimate } from '../lib/song.js'
 import { describeSleep } from '../lib/sleep.js'
+import {
+  FEATURES,
+  SOURCE,
+  STATUS,
+  describeVisual,
+  mediaPlan,
+  summary,
+} from '../lib/capabilities.js'
 import { Icon } from './Icon.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
@@ -11,6 +19,14 @@ import { needsIOSInstallHint, isStandalone } from '../lib/platform.js'
 import { promptInstall, subscribeInstall } from '../lib/install.js'
 
 const SLEEP_OPTIONS = [0, 15, 30, 60]
+// Icons for the capability matrix. `unavailable` is a plain cross on purpose:
+// it is a fact about the source, not an error the user caused.
+const CAP_ICONS = {
+  [STATUS.available]: 'check',
+  [STATUS.strength]: 'sparkle',
+  [STATUS.local]: 'clock',
+  [STATUS.unavailable]: 'close',
+}
 const IOS_STEPS = 'Tap the Share button in Safari, scroll down, then choose “Add to Home Screen”.'
 
 /**
@@ -90,6 +106,9 @@ export function SettingsPanel({ open, sleep }) {
   const { resetHistory } = useLibrary()
   const { current, currentQuality } = usePlayer()
   const est = estimate(currentQuality, current?.duration)
+  const plan = mediaPlan({ dataSaver: s.dataSaver, qualityPref: s.qualityPref })
+  const visual = describeVisual({ enabled: s.viz.on, style: s.viz.style, liveOK: s.liveOK })
+  const caps = summary()
   // Two-step reset: a history wipe is irreversible, so the first tap only arms
   // the button and tells the listener exactly what will survive.
   const [resetArmed, setResetArmed] = useState(false)
@@ -129,7 +148,8 @@ export function SettingsPanel({ open, sleep }) {
         </p>
         <p className="set-note">
           {(s.dataSaver ? 'Saver on: ' : 'Now: ') +
-            `${currentQuality} ≈ ${est.perMin.toFixed(1)} MB/min ≈ ${est.songMB.toFixed(1)} MB/song`}
+            `${currentQuality} ≈ ${est.perMin.toFixed(1)} MB/min ≈ ${est.songMB.toFixed(1)} MB/song` +
+            (plan.artwork === 'small' ? ' · small artwork' : '')}
         </p>
       </div>
 
@@ -286,13 +306,13 @@ export function SettingsPanel({ open, sleep }) {
           </select>
         </div>
         <p className="set-note">
-          {!s.liveOK
+          {visual.reason === 'live_audio_unavailable'
             ? s.ios
               ? 'On iPhone the spectrum is simulated: routing audio through Web Audio stops playback when the screen locks.'
               : 'Live spectrum blocked by the stream’s CORS headers — using simulated visuals.'
-            : s.viz.style === 'spectrum'
-              ? 'Real-time frequency data from the audio stream.'
-              : 'Simulated animation (no audio analysis).'}
+            : visual.note}{' '}
+          It is drawn on this device from audio that is already playing, so Data Saver leaves it
+          alone — hiding it would save no data.
         </p>
       </div>
 
@@ -366,6 +386,42 @@ export function SettingsPanel({ open, sleep }) {
           {resetArmed
             ? 'This erases plays, minutes and the taste profile. Likes and playlists stay.'
             : 'Reset erases plays, minutes and the taste profile — likes and playlists stay.'}
+        </p>
+      </div>
+
+      <div className="set-sec">
+        <div className="set-head">
+          <Icon name="info" size={16} />
+          <span>What VIBEX can and can’t do</span>
+        </div>
+        <p className="set-note">
+          One source, {SOURCE.label} — up to {SOURCE.maxKbps} kbps {SOURCE.format}.{' '}
+          {caps.available} of {caps.total} capabilities below work; the rest are listed because no
+          setting, and no second source, would produce them.
+        </p>
+        <ul className="cap-list">
+          {FEATURES.map((f) => (
+            <li key={f.id} className={'cap-row ' + f.status}>
+              <span className="cap-ico" aria-hidden="true">
+                <Icon name={CAP_ICONS[f.status]} size={13} />
+              </span>
+              <span className="cap-text">
+                <span className="cap-line">
+                  <span className="cap-label">{f.label}</span>
+                  <span className="cap-claim">{f.claim}</span>
+                </span>
+                {/* Detail only where it has to justify an absence — a full
+                    detail column would be the wall of text this avoids. */}
+                {f.status !== STATUS.available && f.status !== STATUS.strength && (
+                  <span className="cap-detail">{f.detail}</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="set-note">
+          Nothing above changes by switching quality or toggling anything else — there is no
+          higher tier to unlock here.
         </p>
       </div>
 

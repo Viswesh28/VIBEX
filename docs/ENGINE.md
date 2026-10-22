@@ -192,7 +192,44 @@ Restoring still leaves playback paused: a reload must not start making noise.
   keys and survive; the destructive action is two-step in the UI because it
   cannot be undone.
 
-## 8. What this build deliberately does not do
+## 8. Capability honesty
+
+`src/lib/capabilities.js` is the single place that answers "can VIBEX do this?".
+It exists because the honest answer changed shape: the app has **one source**
+(JioSaavn), so a capability list is a statement about that source, not a
+picker that swaps providers.
+
+The matrix has four states — `available` (the catalogue serves it), `strength`
+(better here than in a cross-source player), `local` (needs work that has not
+shipped), `unavailable` (no setting and no second source would produce it).
+Rendered in Settings as a scannable list: a claim on each row, and the
+justification only on rows where it explains an absence.
+
+Three entries are `unavailable` and are asserted as such by
+`test/capabilities.spec.js`:
+
+* **Lossless** — Saavn caps at 320 kbps AAC. A `Lossless` preference would be
+  a label with nothing behind it.
+* **Skip silence** — the catalogue publishes no segment data, and the app does
+  not analyse audio to find gaps.
+* **Canvas video** — there is no video behind the catalogue. The visualiser is
+  a local 2D canvas drawn from the analyser, so it is *not* the feature the
+  "canvas" toggle in other players refers to.
+
+That last point also settles Data Saver: the rule is **gate the fetch, not the
+display**. A local canvas costs no bytes, so hiding it under Data Saver would
+remove a feature and save nothing. `describeVisual()` returns the reason a
+visual is in its current state (`user_disabled`, `live_audio`, `live_audio_
+unavailable`, `style_simulated`) plus `dataSaverApplies: false`, so the panel
+can explain the decision instead of leaving a mystery gap.
+
+The spec also carries a copy test over `src/components`: every mention of
+lossless, skip-silence or canvas video in a rendered string must be a denial
+(`no`, `not`, `n't`, `never`, `unavailable`). Prose and engine internals are
+exempt — `transition.js` legitimately holds a `lossless` flag, used to *refuse*
+auto-mixing on that path rather than to claim a mix.
+
+## 9. What this build deliberately does not do
 
 * **No BPM/key analysis.** The planner supports it, the app does not ship a
   time-stretch/DSP stage, and pretending to beat-match without an analyser is
