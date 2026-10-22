@@ -78,7 +78,7 @@ export const PLAYBACK_REASON = {
   ok: 'ok',
   /** The track carries no stream at all. */
   noStream: 'no_stream',
-  /** YouTube Music audio, and YouTube refuses to mint it for this deployment. */
+  /** YouTube Music audio, and YouTube will not describe it to a server. */
   needsSession: 'needs_youtube_session',
   /**
    * Too long to be a stream. Played by YouTube's own embed instead, which is a
