@@ -388,6 +388,26 @@ h2#resultTitle {
 .taste-seeds { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 18px; }
 .exclude-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .set-row .set-label { flex: 1; text-align: left; min-width: 0; }
+
+/* The capability matrix in Settings. Facts, not marketing: an unavailable row
+   is visually quieter than an available one, and the reason sits underneath
+   rather than behind a tooltip nobody opens on a phone. */
+.cap-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 2px; }
+.cap-row { display: flex; gap: 9px; align-items: flex-start; padding: 7px 0; }
+.cap-row + .cap-row { border-top: 1px solid var(--line); }
+.cap-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 19px; height: 19px; flex-shrink: 0; margin-top: 1px;
+  border-radius: 999px; background: var(--card-strong); color: var(--muted);
+}
+.cap-row.available .cap-ico, .cap-row.strength .cap-ico { color: var(--accent-text); }
+.cap-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cap-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cap-label { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.cap-claim { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.cap-row.unavailable .cap-label { color: var(--text-2); }
+.cap-row.unavailable .cap-claim { color: var(--muted); }
+.cap-detail { font-size: 11px; line-height: 1.5; color: var(--muted); }
 .set-row .set-count { min-width: 24px; }
 .btn-ghost.danger { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent-line); }
 
