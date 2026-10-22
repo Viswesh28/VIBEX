@@ -136,18 +136,42 @@ async function search(youtubeHost, query) {
 }
 
 async function canvasFor(youtubeHost, videoId) {
+  const diag = []
   for (const client of [ANDROID_MUSIC, WEB_REMIX]) {
+    const name = client.client.clientName
     const r = await postJson(
       `https://${youtubeHost}/youtubei/v1/player?prettyPrint=false`,
       { context: client, videoId, contentCheckOk: true, racyCheckOk: true },
       PLAYER_TIMEOUT,
       client === ANDROID_MUSIC ? { 'user-agent': 'com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 13)' } : {}
     )
-    if (!r.ok) continue
+    if (!r.ok) {
+      diag.push({ client: name, ok: false, status: r.status, error: r.error || r.body || null })
+      continue
+    }
     const hits = collectUrls(r.json)
-    if (hits.length) return { url: hits[0].url, path: hits[0].path, client: client.client.clientName }
+    let blob = ''
+    try {
+      blob = JSON.stringify(r.json)
+    } catch {
+      blob = ''
+    }
+    // Shape, not payload: how big is the response, which top-level sections did
+    // it return, and does the word "canvas" appear anywhere at all?
+    diag.push({
+      client: name,
+      ok: true,
+      bytes: blob.length,
+      keys: Object.keys(r.json || {}).slice(0, 24),
+      hasCanvas: /canvas/i.test(blob),
+      hits: hits.length,
+      paths: hits.slice(0, 3).map((h) => h.path),
+    })
+    if (hits.length) {
+      return { found: { url: hits[0].url, path: hits[0].path, client: name }, diag }
+    }
   }
-  return null
+  return { found: null, diag }
 }
 
 /**
@@ -209,16 +233,22 @@ export default async function handler(req, res) {
     let found = null
     let lastStatus = 0
     let lastError = null
+    let stage = 'search'
+    const steps = []
     for (const host of ['music.youtube.com', 'www.youtube.com']) {
       const s = await search(host, query)
       if (!s.ok) {
         lastStatus = s.status
         lastError = s.error || s.body || null
+        steps.push({ host, stage: 'search', status: s.status, error: s.error || s.body || null })
         continue
       }
+      steps.push({ host, stage: 'search', status: 'ok', videoId: s.videoId })
+      stage = 'player'
       const c = await canvasFor(host, s.videoId)
-      if (c) {
-        found = { ...c, videoId: s.videoId, host }
+      steps.push(...c.diag.map((d) => ({ host, stage: 'player', ...d })))
+      if (c.found) {
+        found = { ...c.found, videoId: s.videoId, host }
         break
       }
     }
@@ -229,7 +259,7 @@ export default async function handler(req, res) {
         success: false,
         code: lastStatus === 429 ? 'blocked' : 'not_found',
         message: 'No canvas clip was found for this track.',
-        ...(debug ? { debug: { query, lastStatus, lastError, egress: await egressCheck(), hosts: {
+        ...(debug ? { debug: { query, stage, lastStatus, lastError, steps, egress: await egressCheck(), hosts: {
             music: await hostCheck('music.youtube.com'),
             www: await hostCheck('www.youtube.com'),
             lh3: await hostCheck('lh3.googleusercontent.com'),
