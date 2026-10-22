@@ -199,9 +199,11 @@ It exists because the honest answer changed shape: the app has **one source**
 (JioSaavn), so a capability list is a statement about that source, not a
 picker that swaps providers.
 
-The matrix has four states — `available` (the catalogue serves it), `strength`
+The matrix has five states — `available` (the catalogue serves it), `strength`
 (better here than in a cross-source player), `local` (needs work that has not
-shipped), `unavailable` (no setting and no second source would produce it).
+shipped), `unavailable` (no setting and no second source would produce it), and
+`blocked` (the code ships and would work, but this deployment is refused by the
+provider — see the canvas section below).
 Rendered in Settings as a scannable list: a claim on each row, and the
 justification only on rows where it explains an absence.
 
@@ -229,14 +231,47 @@ spends a second provider's bandwidth:
   so the UI never blames the wrong cause;
 * results cached per song in memory and `sessionStorage`; **negative** results
   are not persisted, since a block may be transient;
-* every failure is typed (`not_found`, `blocked_by_upstream`, `lookup_failed`)
-  and degrades to artwork. A broken clip is cosmetic; a hanging request is a
-  broken song.
+* every failure is typed (`not_found`, `blocked_by_upstream`,
+  `deployment_blocked`, `lookup_failed`) and degrades to artwork. A broken clip
+  is cosmetic; a hanging request is a broken song.
 
 The canvas field in InnerTube is undocumented and has moved between client
 versions, so `pickCanvasUrl` walks the whole response and ranks candidates
 instead of hard-coding a path, and refuses any URL that is not https on a
 Google media host, or that looks like a thumbnail.
+
+#### The lookup is blocked from this deployment
+
+Measured on the live production function on 2026-10-22: search works (it
+resolves a `videoId`), but every player call — `ANDROID_MUSIC` and `WEB_REMIX`,
+on both `music.youtube.com` and `www.youtube.com` — comes back
+`LOGIN_REQUIRED` with *"Sign in to confirm you're not a bot"*. The watch page
+loads (1.2 MB) and contains the same gate, so it yields no media URLs either.
+YouTube is challenging the request because it originates from a datacenter IP
+range; no query shape or client version changes that. Canvas URLs only appear
+in the player response, so **the clip cannot be fetched from Vercel at all**.
+
+The feature is therefore reported as `blocked`, not `available`, and not
+silently deleted:
+
+* `api/canvas.mjs` distinguishes the challenge (`deployment_blocked`) from a
+  track that simply has no clip (`not_found`), because they are different facts
+  and only one of them is about the song;
+* `GET /api/canvas?health=1` asks one cheap question — is this deployment
+  allowed to look? — and caches the answer for a minute when blocked, an hour
+  when healthy;
+* `useCanvasVideo` consults that answer before any per-track request, so a
+  challenged deployment costs **zero** lookup requests per track instead of one
+  wasted request each; the answer is shared per tab and re-checked every 30
+  minutes, which is what lets the feature switch itself back on;
+* the matrix row and the Settings note say blocked, in those words, and the
+  full player shows artwork.
+
+This is the honest shape of the trade: the matcher, ranking, caching, gating
+and fallback are all correct and tested, and none of them are advertised as
+delivering something the deployment cannot. If the challenge disappears, the
+probe notices and the feature returns without a code change.
+
 
 The local visualiser is unaffected by any of this, and it is what Data Saver
 still leaves alone: the rule there is **gate the fetch, not the display**, and

@@ -1,10 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import {
+  CANVAS_HEALTH,
   CANVAS_REASON,
   canvasDecision,
+  canvasHealthGate,
   canvasQuery,
   pickCanvasUrl,
+  readCanvasHealth,
   readCanvasResponse,
 } from '../src/lib/canvas.js'
 
@@ -135,9 +138,53 @@ describe('readCanvasResponse', () => {
     )
   })
 
+  it('separates a deployment challenge from a track that has no clip', () => {
+    // "Sign in to confirm you're not a bot" is about this server, not the song.
+    // Reporting it as not_found would quietly blame the catalogue.
+    const body = { success: false, code: 'deployment_blocked' }
+    expect(readCanvasResponse(body).reason).toBe(CANVAS_REASON.deploymentBlocked)
+    expect(readCanvasResponse(body).reason).not.toBe(CANVAS_REASON.notFound)
+  })
+
   it('degrades to artwork on a malformed or hostile body', () => {
     expect(readCanvasResponse(null)).toEqual({ url: null, reason: CANVAS_REASON.failed })
     expect(readCanvasResponse({ data: { videoUrl: 'javascript:alert(1)' } }).url).toBeNull()
     expect(readCanvasResponse({ data: { videoUrl: 'https://evil.example.com/x.mp4' } }).url).toBeNull()
+  })
+})
+
+describe('readCanvasHealth', () => {
+  it('passes an available deployment through', () => {
+    expect(readCanvasHealth({ data: { canvas: 'available' } })).toMatchObject({
+      state: CANVAS_HEALTH.available,
+    })
+  })
+
+  it('reports a challenged deployment as blocked, with the reason', () => {
+    expect(
+      readCanvasHealth({ data: { canvas: 'deployment_blocked', reason: 'Please sign in' } })
+    ).toMatchObject({ state: CANVAS_HEALTH.blocked, reason: 'Please sign in' })
+  })
+
+  it('treats a failed probe as unknown, not as either verdict', () => {
+    // Reading a broken probe as "available" would spend a request per track;
+    // reading it as "blocked" would hide clips that do exist.
+    expect(readCanvasHealth(null).state).toBe(CANVAS_HEALTH.unknown)
+    expect(readCanvasHealth({ success: true }).state).toBe(CANVAS_HEALTH.unknown)
+    expect(readCanvasHealth({ data: { canvas: 'nonsense' } }).state).toBe(CANVAS_HEALTH.unknown)
+  })
+})
+
+describe('canvasHealthGate', () => {
+  it('does not ask per track when the deployment is challenged', () => {
+    expect(canvasHealthGate(CANVAS_HEALTH.blocked)).toEqual({
+      ask: false,
+      reason: CANVAS_REASON.deploymentBlocked,
+    })
+  })
+
+  it('still asks when the probe was healthy or inconclusive', () => {
+    expect(canvasHealthGate(CANVAS_HEALTH.available).ask).toBe(true)
+    expect(canvasHealthGate(CANVAS_HEALTH.unknown).ask).toBe(true)
   })
 })

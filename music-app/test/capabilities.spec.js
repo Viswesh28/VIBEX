@@ -60,12 +60,21 @@ describe('the capability matrix', () => {
   })
 
   it('declares canvas video as cross-source, not as catalogue data', () => {
-    // The audio is JioSaavn; the clip is YouTube. Saying "available" without
-    // that qualifier would misrepresent where the bytes come from.
+    // The audio is JioSaavn; the clip is YouTube. The qualifier is not optional.
     expect(CROSS_SOURCE).toContain('canvasVideo')
-    expect(feature('canvasVideo').status).toBe(STATUS.available)
     expect(feature('canvasVideo').detail).toMatch(/YouTube/i)
-    expect(feature('canvasVideo').detail).toMatch(/best effort|fall/i)
+  })
+
+  it('reports the canvas as blocked rather than selling it as available', () => {
+    // The lookup exists, but YouTube challenges this deployment, so a listener
+    // cannot get a single clip today. "Available" would be a claim, not a fact.
+    const f = feature('canvasVideo')
+    expect(f.status).toBe(STATUS.blocked)
+    expect(f.claim).toMatch(/blocked/i)
+    expect(f.detail).toMatch(/sign in|not a bot/i)
+    expect(f.detail).toMatch(/artwork/i)
+    // And it says how it comes back: the health check, not a user setting.
+    expect(f.detail).toMatch(/health/i)
   })
 
   it('counts only what actually ships', () => {

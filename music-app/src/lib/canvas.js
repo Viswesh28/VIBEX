@@ -22,6 +22,13 @@ export const CANVAS_REASON = {
   notFound: 'not_found',
   blocked: 'blocked_by_upstream',
   failed: 'lookup_failed',
+  /**
+   * YouTube answered this server with "sign in to confirm you're not a bot".
+   * Nothing about the song, nothing about the query — the deployment itself is
+   * refused, so it is reported apart from `not_found` instead of pretending
+   * the track simply has no clip.
+   */
+  deploymentBlocked: 'deployment_blocked',
 }
 
 export const CANVAS_COPY = {
@@ -30,6 +37,46 @@ export const CANVAS_COPY = {
   [CANVAS_REASON.notFound]: 'No canvas clip found for this track.',
   [CANVAS_REASON.blocked]: 'YouTube Music did not return a canvas for this track.',
   [CANVAS_REASON.failed]: 'Couldn\'t reach YouTube Music — artwork instead.',
+  [CANVAS_REASON.deploymentBlocked]:
+    'YouTube blocks this lookup from the server — artwork instead.',
+}
+
+/**
+ * Health states for the deployment, from `api/canvas?health=1`.
+ *
+ * `unknown` is deliberately not `available`: a probe that failed for its own
+ * reasons must not be read as permission (that would spend a request per
+ * track), nor as a block (that would hide a clip that does exist).
+ */
+export const CANVAS_HEALTH = {
+  available: 'available',
+  blocked: 'deployment_blocked',
+  unknown: 'unknown',
+}
+
+/** Read the health probe. Tolerant, like every other response reader here. */
+export function readCanvasHealth(body) {
+  const state = body?.data?.canvas
+  if (state === CANVAS_HEALTH.available) return { state: CANVAS_HEALTH.available, reason: null }
+  if (state === CANVAS_HEALTH.blocked) {
+    return { state: CANVAS_HEALTH.blocked, reason: body?.data?.reason || null }
+  }
+  return { state: CANVAS_HEALTH.unknown, reason: body?.data?.reason || null }
+}
+
+/**
+ * Does a health answer allow a per-track lookup?
+ *
+ * Only an explicitly healthy deployment is asked: if the probe says the server
+ * is challenged, every song would spend a request to learn the same thing.
+ * An `unknown` probe still asks once per track, because the alternative is a
+ * feature that silently never works after one flaky check.
+ */
+export function canvasHealthGate(health) {
+  if (health === CANVAS_HEALTH.blocked) {
+    return { ask: false, reason: CANVAS_REASON.deploymentBlocked }
+  }
+  return { ask: true, reason: CANVAS_REASON.ready }
 }
 
 /**
@@ -125,8 +172,10 @@ export function readCanvasResponse(body) {
   const reason =
     code === 'not_found'
       ? CANVAS_REASON.notFound
-      : code === 'blocked' || code === 'upstream_error'
-        ? CANVAS_REASON.blocked
-        : CANVAS_REASON.failed
+      : code === 'deployment_blocked'
+        ? CANVAS_REASON.deploymentBlocked
+        : code === 'blocked' || code === 'upstream_error'
+          ? CANVAS_REASON.blocked
+          : CANVAS_REASON.failed
   return { url: null, reason }
 }

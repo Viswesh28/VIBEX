@@ -15,6 +15,8 @@
 
 const SEARCH_TIMEOUT = 6000
 const PLAYER_TIMEOUT = 6000
+/** A single, long-lived video, used only to ask "is this deployment gated?" */
+const HEALTH_VIDEO_ID = 'dQw4w9WgXcQ'
 
 const WEB_REMIX = {
   client: { clientName: 'WEB_REMIX', clientVersion: '1.20240701.00.00', hl: 'en', gl: 'US' },
@@ -137,6 +139,7 @@ async function search(youtubeHost, query) {
 
 async function canvasFor(youtubeHost, videoId) {
   const diag = []
+  let gate = null
   for (const client of [ANDROID_MUSIC, WEB_REMIX]) {
     const name = client.client.clientName
     const r = await postJson(
@@ -148,6 +151,10 @@ async function canvasFor(youtubeHost, videoId) {
     if (!r.ok) {
       diag.push({ client: name, ok: false, status: r.status, error: r.error || r.body || null })
       continue
+    }
+    const play = r.json?.playabilityStatus
+    if (play && /LOGIN_REQUIRED|AGE_CHECK_REQUIRED|ERROR/i.test(String(play.status))) {
+      gate = { status: play.status, reason: play.reason || null }
     }
     const hits = collectUrls(r.json)
     let blob = ''
@@ -171,13 +178,13 @@ async function canvasFor(youtubeHost, videoId) {
       paths: hits.slice(0, 3).map((h) => h.path),
     })
     if (hits.length) {
-      return { found: { url: hits[0].url, path: hits[0].path, client: name }, diag }
+      return { found: { url: hits[0].url, path: hits[0].path, client: name }, diag, gate }
     }
   }
   const page = await watchPage(youtubeHost, videoId)
   diag.push({ client: 'watch_page', host: youtubeHost, ...page.summary })
-  if (page.found) return { found: page.found, diag }
-  return { found: null, diag }
+  if (page.found) return { found: page.found, diag, gate }
+  return { found: null, diag, gate }
 }
 
 async function watchPage(youtubeHost, videoId) {
@@ -243,8 +250,54 @@ async function egressCheck() {
   }
 }
 
+/**
+ * Is this deployment allowed to look at YouTube at all?
+ *
+ * The lookup can fail for a dull reason: from a datacenter IP, YouTube answers
+ * the player call with `LOGIN_REQUIRED` / "confirm you're not a bot". That is
+ * not a property of the song, and it is not something a different query fixes.
+ * One cheap player call, on a single fixed video, tells the app whether asking
+ * per-track is worth anything — and because it is cheap it can be re-run, so
+ * the feature turns itself back on if the deployment stops being challenged.
+ */
+async function health() {
+  const r = await postJson(
+    'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+    { context: WEB_REMIX, videoId: HEALTH_VIDEO_ID, contentCheckOk: true, racyCheckOk: true },
+    PLAYER_TIMEOUT
+  )
+  if (!r.ok) return { canvas: 'unknown', reason: r.error || `http_${r.status}` }
+  const play = r.json?.playabilityStatus
+  let blob = ''
+  try {
+    blob = JSON.stringify(r.json)
+  } catch {
+    blob = ''
+  }
+  if (play && /LOGIN_REQUIRED|AGE_CHECK_REQUIRED|ERROR/i.test(String(play.status))) {
+    return { canvas: 'deployment_blocked', reason: play.reason || null }
+  }
+  if (/streamingData|videoDetails/.test(blob)) return { canvas: 'available' }
+  return { canvas: 'unknown', reason: play?.status || null }
+}
+
 export default async function handler(req, res) {
   const q = req.query || {}
+
+  // `?health=1` answers only "may this deployment ask?", never about a song.
+  // Short-cached when blocked, so a promotion or an unblock is noticed quickly.
+  if (q.health === '1') {
+    const h = await health()
+    res.setHeader(
+      'Cache-Control',
+      h.canvas === 'available'
+        ? 'public, s-maxage=3600, stale-while-revalidate=600'
+        : 'public, s-maxage=60, stale-while-revalidate=120'
+    )
+    res.status(200).json({ success: true, data: h })
+    return
+  }
+
   const title = String(q.title || '').slice(0, 160)
   const artist = String(q.artist || '').slice(0, 80)
   const query = `${title} ${artist}`.trim()
@@ -263,6 +316,7 @@ export default async function handler(req, res) {
     let lastStatus = 0
     let lastError = null
     let stage = 'search'
+    let gate = null
     const steps = []
     for (const host of ['music.youtube.com', 'www.youtube.com']) {
       const s = await search(host, query)
@@ -276,6 +330,7 @@ export default async function handler(req, res) {
       stage = 'player'
       const c = await canvasFor(host, s.videoId)
       steps.push(...c.diag.map((d) => ({ host, stage: 'player', ...d })))
+      if (c.gate) gate = c.gate
       if (c.found) {
         found = { ...c.found, videoId: s.videoId, host }
         break
@@ -283,12 +338,19 @@ export default async function handler(req, res) {
     }
 
     if (!found) {
-      res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600')
+      // A challenge is not a property of the song: it is this deployment being
+      // asked to sign in. Say so, cache it briefly, and let the probe re-check.
+      res.setHeader(
+        'Cache-Control',
+        gate ? 'public, s-maxage=60, stale-while-revalidate=120' : 'public, s-maxage=300, stale-while-revalidate=600'
+      )
       res.status(200).json({
         success: false,
-        code: lastStatus === 429 ? 'blocked' : 'not_found',
-        message: 'No canvas clip was found for this track.',
-        ...(debug ? { debug: { query, stage, lastStatus, lastError, steps, egress: await egressCheck(), hosts: {
+        code: gate ? 'deployment_blocked' : lastStatus === 429 ? 'blocked' : 'not_found',
+        message: gate
+          ? 'YouTube asked this server to sign in, so no clip can be fetched here.'
+          : 'No canvas clip was found for this track.',
+        ...(debug ? { debug: { query, stage, gate, lastStatus, lastError, steps, egress: await egressCheck(), hosts: {
             music: await hostCheck('music.youtube.com'),
             www: await hostCheck('www.youtube.com'),
             lh3: await hostCheck('lh3.googleusercontent.com'),

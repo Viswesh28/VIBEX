@@ -34,6 +34,14 @@ export const STATUS = {
   local: 'local',
   /** No source in this app can supply it, now or later. */
   unavailable: 'unavailable',
+  /**
+   * Shipped, but this deployment cannot reach it. Distinct from `unavailable`
+   * because the code is real and self-healing: the only thing standing between
+   * the listener and the feature is a challenge from the provider, not a
+   * missing capability. Reported rather than hidden — a silent failure here
+   * would be a claim by omission.
+   */
+  blocked: 'blocked',
 }
 
 /**
@@ -73,10 +81,10 @@ export const FEATURES = [
   {
     id: 'canvasVideo',
     label: 'Canvas video',
-    status: STATUS.available,
-    claim: 'From YouTube Music',
+    status: STATUS.blocked,
+    claim: 'Blocked from this server',
     detail:
-      'A cross-source extra: audio stays on JioSaavn and only the looping clip comes from YouTube. Best effort — it is fetched when the full player opens, never under Data Saver, and falls back to artwork.',
+      'A cross-source extra: audio stays on JioSaavn and only the looping clip would come from YouTube. YouTube answers the lookup from this deployment with "sign in to confirm you\'re not a bot", so no clip can be fetched. The player shows artwork instead, and a health check re-enables the lookup by itself if that changes.',
   },
   {
     id: 'beatMatch',
