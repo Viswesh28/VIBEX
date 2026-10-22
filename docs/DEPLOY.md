@@ -109,6 +109,38 @@ Two pitfalls that cost real time:
   'src' already exists` → `BUILD_UTILS_SPAWN_128`. Always lead with
   `rm -rf src`.
 
+### Base64 every file, or the JSON ones will be rejected
+
+`create_deployment` fails with
+
+```
+400 Invalid request: `files[0].data` should be string
+```
+
+for `vercel.json` and `package.json` — the files whose contents are
+themselves JSON. The connector parses a `data` value that looks like JSON
+into an object before sending it, so the request never contains a string.
+Sending each entry as a JSON *string* does not help; the same coercion
+happens one level deeper.
+
+Send every file base64-encoded instead. `vercel.json` then arrives as
+opaque text, survives the transport, and Vercel decodes it:
+
+```jsonc
+// each entry is a JSON string, with data = base64 of the real file
+{"file": "vercel.json", "encoding": "base64", "data": "eyJpbnN0YWxs…"}
+```
+
+Generate it with `base64 -w0 <file>`, applied to all seven files. Do not try
+to work around this with a JSON5 comment in `vercel.json` to defeat the
+parser — Vercel validates it with strict `JSON.parse` and the deployment
+dies at `build-container-init` with `invalid_vercel_json`.
+
+A note on verifying the build: the vite output lists `dist/assets/index-*.js`
+in the build log, and the hash is content-derived, so fetching
+`$BASE/assets/index-<hash>.js` and getting 200 proves the deployed bundle is
+byte-identical to a local build of the same commit.
+
 ## Verifying a deploy
 
 Deployment URLs (`vibex-music-<hash>-<team>.vercel.app`) sit behind Vercel

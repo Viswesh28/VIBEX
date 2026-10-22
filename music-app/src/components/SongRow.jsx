@@ -22,6 +22,7 @@ export const SongRow = memo(function SongRow({
   onAddToPlaylist,
   onRemove,
   onRadio,
+  onExclude,
 }) {
   const stop = (fn) => (e) => {
     e.stopPropagation()
@@ -32,7 +33,9 @@ export const SongRow = memo(function SongRow({
 
   return (
     <div
-      className={'song-row' + (playing ? ' playing' : '')}
+      className={
+        'song-row' + (playing ? ' playing' : '') + (onExclude ? ' with-exclude' : '')
+      }
       onClick={onPlay}
       aria-current={playing ? 'true' : undefined}
     >
@@ -112,6 +115,18 @@ export const SongRow = memo(function SongRow({
       >
         <Icon name="radio" size={17} />
       </button>
+
+      {onExclude && (
+        <button
+          type="button"
+          className="excl-btn"
+          title="Don't suggest this artist"
+          aria-label={`Don't suggest ${artist}`}
+          onClick={stop(onExclude)}
+        >
+          <Icon name="ban" size={16} />
+        </button>
+      )}
 
       <div className="s-dur">{fmt(song.duration)}</div>
     </div>

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { store } from '../lib/storage.js'
 import { decodeHtml } from '../lib/format.js'
 import { artistsOf } from '../lib/song.js'
+import { useSettings } from './SettingsContext.jsx'
 
 const Ctx = createContext(null)
 export const useLibrary = () => useContext(Ctx)
@@ -15,6 +16,12 @@ function emptyStats() {
 }
 
 export function LibraryProvider({ children }) {
+  // Private session suppresses history, not playback. The taste model in
+  // lib/taste.js reads this same store, so one flag covers both.
+  const { privateSession } = useSettings()
+  const privateRef = useRef(false)
+  privateRef.current = privateSession
+
   const [liked, setLiked] = useState(() => {
     const v = store.getJSON('svLiked', [])
     return Array.isArray(v) ? v : []
@@ -115,11 +122,22 @@ export function LibraryProvider({ children }) {
     const sec = Math.min(3600, Math.round((Date.now() - statT0.current) / 1000))
     statT0.current = Date.now()
     if (sec <= 0) return
+    // A private session still advances the internal clock so a later public
+    // session does not inherit a huge, unattributed chunk of time.
+    if (privateRef.current) return
     const st = loadStats()
     st.seconds += sec
-    if (st.songs[statCur.current.id]) st.songs[statCur.current.id].sec += sec
+    const entry = st.songs[statCur.current.id]
+    if (entry) {
+      entry.sec += sec
+      // Recency is what makes "recent" mean something to the taste model.
+      entry.last = Date.now()
+    }
     const an = (statCur.current.artist.split(',')[0] || 'Unknown').trim() || 'Unknown'
-    if (st.artists[an]) st.artists[an].sec += sec
+    if (st.artists[an]) {
+      st.artists[an].sec += sec
+      st.artists[an].last = Date.now()
+    }
     saveStats(st)
   }, [loadStats, saveStats])
 
@@ -132,15 +150,23 @@ export function LibraryProvider({ children }) {
         name: decodeHtml(song.name),
         artist: artistsOf(song),
         img: song.image?.length ? song.image[0].url : '',
+        artistId: song.artists?.primary?.[0]?.id || null,
       }
       statT0.current = Date.now()
+      if (privateRef.current) return
       const st = loadStats()
       st.plays++
+      // `dur` turns raw seconds into a completion ratio, and `last` is what
+      // lib/taste.js decays against. Both are needed to weight a skip below a
+      // full listen; without them every play looks identical.
       const e = st.songs[song.id] || (st.songs[song.id] = { n: 0, sec: 0 })
       e.n++
       e.name = statCur.current.name
       e.artist = statCur.current.artist
       e.img = statCur.current.img
+      e.dur = Number(song.duration) || e.dur || 0
+      e.last = Date.now()
+      e.artistId = statCur.current.artistId || e.artistId || null
       const an = (statCur.current.artist.split(',')[0] || 'Unknown').trim() || 'Unknown'
       const ae = st.artists[an] || (st.artists[an] = { n: 0, sec: 0 })
       ae.n++
@@ -153,6 +179,16 @@ export function LibraryProvider({ children }) {
     window.addEventListener('beforeunload', flushStats)
     return () => window.removeEventListener('beforeunload', flushStats)
   }, [flushStats])
+
+  /**
+   * Wipe the listening history. Deliberately narrow: likes and playlists are
+   * the user's library, not a behavioural profile, and are left alone.
+   */
+  const resetHistory = useCallback(() => {
+    statCur.current = null
+    statT0.current = 0
+    store.remove('svStats')
+  }, [])
 
   /** Find a song object by id anywhere we already hold one. */
   const resolveSong = useCallback(
@@ -172,11 +208,12 @@ export function LibraryProvider({ children }) {
     () => ({
       liked, likedIds, toggleLike,
       playlists, createPlaylist, renamePlaylist, deletePlaylist, addToPlaylist, removeFromPlaylist,
-      loadStats, statsOnPlay, flushStats, resolveSong,
+      loadStats, statsOnPlay, flushStats, resolveSong, resetHistory,
     }),
     [
       liked, likedIds, toggleLike, playlists, createPlaylist, renamePlaylist, deletePlaylist,
       addToPlaylist, removeFromPlaylist, loadStats, statsOnPlay, flushStats, resolveSong,
+      resetHistory,
     ]
   )
 

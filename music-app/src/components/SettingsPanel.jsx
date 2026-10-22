@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { fmt } from '../lib/format.js'
 import { LAW_HINTS, LAW_LABELS, MAX_CROSSFADE_SEC, describePlan, planTransition } from '../lib/transition.js'
 import { DEFAULT_REC, REC_REASON_SENTENCE } from '../lib/recommend.js'
 import { estimate } from '../lib/song.js'
+import { describeSleep } from '../lib/sleep.js'
 import { Icon } from './Icon.jsx'
+import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { needsIOSInstallHint, isStandalone } from '../lib/platform.js'
@@ -86,8 +87,12 @@ function InstallSection() {
 /** Playback preferences. Everything here persists across reloads. */
 export function SettingsPanel({ open, sleep }) {
   const s = useSettings()
+  const { resetHistory } = useLibrary()
   const { current, currentQuality } = usePlayer()
   const est = estimate(currentQuality, current?.duration)
+  // Two-step reset: a history wipe is irreversible, so the first tap only arms
+  // the button and tells the listener exactly what will survive.
+  const [resetArmed, setResetArmed] = useState(false)
 
   return (
     <div
@@ -249,7 +254,9 @@ export function SettingsPanel({ open, sleep }) {
           ))}
         </div>
         <p className="set-note">
-          {sleep.minutes > 0 ? `Stops playback in ${fmt(sleep.left / 1000)}.` : 'Playback continues.'}
+          {sleep.minutes > 0
+            ? describeSleep(sleep.left, sleep.minutes * 60)
+            : 'Playback continues.'}
         </p>
       </div>
 
@@ -286,6 +293,79 @@ export function SettingsPanel({ open, sleep }) {
             : s.viz.style === 'spectrum'
               ? 'Real-time frequency data from the audio stream.'
               : 'Simulated animation (no audio analysis).'}
+        </p>
+      </div>
+
+      <div className="set-sec">
+        <div className="set-head">
+          <Icon name="alert" size={16} />
+          <span>Privacy &amp; history</span>
+        </div>
+        <label className="switch-row">
+          <span>Private session</span>
+          <span>
+            <input
+              type="checkbox"
+              aria-label="Private session — stop recording listening history"
+              checked={s.privateSession}
+              onChange={(e) => s.setPrivateSession(e.target.checked)}
+            />
+            <span className="switch" />
+          </span>
+        </label>
+        <p className="set-note">
+          {s.privateSession
+            ? 'Private: nothing played from now on is added to your history, your taste mix or your stats. Likes and playlists are unaffected.'
+            : 'Playback is counted on this device only. Turn this on for a session nothing is recorded from.'}
+        </p>
+
+        <div className="set-row">
+          <span className="set-label">Excluded artists</span>
+          <span className="set-count">{s.excludedArtists.length}</span>
+        </div>
+        {s.excludedArtists.length === 0 ? (
+          <p className="set-note">
+            None. Use “Don’t suggest this artist” on any row in your mix, or on an artist page.
+          </p>
+        ) : (
+          <div className="exclude-list" aria-label="Artists excluded from suggestions">
+            {s.excludedArtists.map((name) => (
+              <button
+                type="button"
+                key={name}
+                className="chip"
+                title={`Suggest ${name} again`}
+                onClick={() => s.unexcludeArtist(name)}
+              >
+                {name}
+                <Icon name="close" size={12} />
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="set-row">
+          <span className="set-label">Listening history</span>
+          <button
+            type="button"
+            className={'btn-ghost' + (resetArmed ? ' danger' : '')}
+            onClick={() => {
+              if (!resetArmed) {
+                setResetArmed(true)
+                return
+              }
+              resetHistory()
+              setResetArmed(false)
+            }}
+            onBlur={() => setResetArmed(false)}
+          >
+            {resetArmed ? 'Tap again to erase' : 'Reset history'}
+          </button>
+        </div>
+        <p className="set-note">
+          {resetArmed
+            ? 'This erases plays, minutes and the taste profile. Likes and playlists stay.'
+            : 'Reset erases plays, minutes and the taste profile — likes and playlists stay.'}
         </p>
       </div>
 

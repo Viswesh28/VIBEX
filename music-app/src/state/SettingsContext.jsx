@@ -78,6 +78,13 @@ export function SettingsProvider({ children }) {
     return QUALITIES.includes(v) ? v : '320kbps'
   })
   const [liveOK, setLiveOK] = useState(() => !ios)
+  // Private session: playback works exactly as always, nothing is written to
+  // the listening history that drives the personalised feed.
+  const [privateSession, setPrivateSessionState] = useState(() => store.get('svPrivate', '0') === '1')
+  const [excludedArtists, setExcludedArtists] = useState(() => {
+    const v = store.getJSON('svExcluded', [])
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()) : []
+  })
 
   // On a first-ever visit, respect the browser's own data-saving signals.
   useEffect(() => {
@@ -148,6 +155,40 @@ export function SettingsProvider({ children }) {
     store.set('svAuto', on ? '1' : '0')
   }, [])
 
+  const setPrivateSession = useCallback((on) => {
+    setPrivateSessionState(on)
+    store.set('svPrivate', on ? '1' : '0')
+  }, [])
+
+  const isExcluded = useCallback(
+    (name) => {
+      const key = String(name || '').trim().toLowerCase()
+      if (!key) return false
+      return excludedArtists.some((x) => x.trim().toLowerCase() === key)
+    },
+    [excludedArtists]
+  )
+
+  const excludeArtist = useCallback((name) => {
+    const label = String(name || '').trim()
+    if (!label) return
+    setExcludedArtists((prev) => {
+      if (prev.some((x) => x.trim().toLowerCase() === label.toLowerCase())) return prev
+      const next = [...prev, label]
+      store.setJSON('svExcluded', next)
+      return next
+    })
+  }, [])
+
+  const unexcludeArtist = useCallback((name) => {
+    const key = String(name || '').trim().toLowerCase()
+    setExcludedArtists((prev) => {
+      const next = prev.filter((x) => x.trim().toLowerCase() !== key)
+      store.setJSON('svExcluded', next)
+      return next
+    })
+  }, [])
+
   const setCrossfadeLaw = useCallback((law) => {
     const next = normaliseLaw(law)
     setCrossfadeLawState(next)
@@ -204,11 +245,18 @@ export function SettingsProvider({ children }) {
       liveOK,
       setLiveOK,
       ios,
+      privateSession,
+      setPrivateSession,
+      excludedArtists,
+      excludeArtist,
+      unexcludeArtist,
+      isExcluded,
     }),
     [
       dataSaver, setDataSaver, saverAuto, crossfadeOn, crossfadeDur, crossfadeLaw, setCrossfadeLaw,
       vizOn, vizStyle, shuffleMode, cycleShuffle, chooseShuffleMode, repeat, cycleRepeat, theme, radio, setRadio,
-      autoplay, setAutoplay, qualityPref, setQualityPref, liveOK, ios,
+      autoplay, setAutoplay, qualityPref, setQualityPref, liveOK, ios, privateSession,
+      excludedArtists, excludeArtist, unexcludeArtist, isExcluded,
     ]
   )
 

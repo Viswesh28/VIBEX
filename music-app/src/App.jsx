@@ -20,6 +20,7 @@ import { SearchView } from './components/SearchView.jsx'
 import { Sidebar } from './components/Sidebar.jsx'
 import { MobileNav } from './components/MobileNav.jsx'
 import { StatsView } from './components/StatsView.jsx'
+import { TasteView } from './components/TasteView.jsx'
 import { Chips, TopBar } from './components/TopBar.jsx'
 
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts.js'
@@ -41,6 +42,7 @@ export default function App() {
   const {
     current, currentQuality, isPlaying, clock,
     togglePlay, nextTrack, prevTrack, seekBy, seekTo, play, pause, resumeFromSystem,
+    setSleepGain,
   } = usePlayer()
   const { dataSaver } = useSettings()
   const {
@@ -48,11 +50,13 @@ export default function App() {
     plModal, fullOpen, setFullOpen, lyricsOpen, setLyricsOpen, closePlaylistModal,
   } = useUI()
 
+  // The timer fades over the last 20s rather than cutting: see lib/sleep.js.
   const sleep = useSleepTimer(
     useCallback(() => {
       pause()
       setStatus('Sleep timer stopped playback.')
-    }, [pause, setStatus])
+    }, [pause, setStatus]),
+    setSleepGain
   )
 
   // The failure advice has to match where the app is actually running: the
@@ -225,6 +229,8 @@ export default function App() {
         return <LibraryView onTitle={onTitle} />
       case 'myplaylist':
         return <PlaylistView id={view.id} onTitle={onTitle} />
+      case 'taste':
+        return <TasteView onTitle={onTitle} />
       case 'stats':
         return <StatsView onTitle={onTitle} />
       case 'feed':

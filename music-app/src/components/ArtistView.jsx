@@ -16,7 +16,7 @@ export function ArtistView({ id, onTitle }) {
   const [error, setError] = useState(null)
   const { setStatus } = useStatus()
   const { playFromList, startArtistRadio } = usePlayer()
-  const { dataSaver } = useSettings()
+  const { dataSaver, isExcluded, excludeArtist, unexcludeArtist } = useSettings()
   const { navigate } = useUI()
 
   useEffect(() => {
@@ -50,6 +50,7 @@ export function ArtistView({ id, onTitle }) {
   const songs = (data.topSongs || []).filter((s) => s.downloadUrl?.length)
   const albums = data.topAlbums || []
   const followers = fmtNum(data.followerCount)
+  const excluded = isExcluded(data.name)
 
   return (
     <>
@@ -93,6 +94,22 @@ export function ArtistView({ id, onTitle }) {
             <button type="button" className="btn-ghost on-art" onClick={() => startArtistRadio(songs)}>
               <Icon name="radio" size={15} />
               Artist radio
+            </button>
+            <button
+              type="button"
+              className={'btn-ghost on-art' + (excluded ? ' on' : '')}
+              aria-pressed={excluded}
+              title={
+                excluded
+                  ? `Stop excluding ${decodeHtml(data.name)} from suggestions`
+                  : `Hide ${decodeHtml(data.name)} from suggestions`
+              }
+              onClick={() =>
+                excluded ? unexcludeArtist(data.name) : excludeArtist(data.name)
+              }
+            >
+              <Icon name={excluded ? 'check' : 'ban'} size={15} />
+              {excluded ? 'Excluded' : 'Don’t suggest'}
             </button>
           </div>
         </div>
