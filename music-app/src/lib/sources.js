@@ -28,7 +28,7 @@ import { isLongForm, videoIdOf } from './ytEmbed.js'
  * promise someone reads as "it will probably play".
  */
 export const BROWSE_ONLY_NOTE =
-  'YouTube Music tracks open in YouTube’s own player, with YouTube’s video and ads. JioSaavn plays as audio, right here in this app.'
+  'YouTube Music tracks open in YouTube’s own player — YouTube’s video and ads, and some rights holders block embedding. JioSaavn plays as audio, right here.'
 
 export const SOURCE_ID = {
   jiosaavn: 'jiosaavn',

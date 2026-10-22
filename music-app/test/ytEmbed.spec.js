@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import {
+  EMBED_ERROR,
   EMBED_NOTE,
+  embedErrorCopy,
+  embedErrorReason,
   LONG_FORM_SEC,
   embedUrl,
   isLongForm,
@@ -73,5 +76,34 @@ describe('embedUrl', () => {
 describe('the copy', () => {
   it('says where the sound is coming from', () => {
     expect(EMBED_NOTE).toMatch(/YouTube/i)
+  })
+})
+
+describe('embed error codes', () => {
+  it('maps the codes YouTube posts to a reason', () => {
+    expect(embedErrorReason(101)).toBe(EMBED_ERROR.blocked)
+    expect(embedErrorReason(150)).toBe(EMBED_ERROR.blocked)
+    expect(embedErrorReason(100)).toBe(EMBED_ERROR.gone)
+    expect(embedErrorReason(2)).toBe(EMBED_ERROR.invalid)
+    expect(embedErrorReason(5)).toBe(EMBED_ERROR.failed)
+    expect(embedErrorReason('100')).toBe(EMBED_ERROR.gone)
+  })
+
+  it('says nothing rather than inventing a reason for an unknown code', () => {
+    expect(embedErrorReason(999)).toBe('')
+    expect(embedErrorReason(undefined)).toBe('')
+    expect(embedErrorCopy(undefined)).toBe('')
+  })
+
+  it('names the owner block, which is the one that shows up on catalogue items', () => {
+    const copy = embedErrorCopy(150)
+    expect(copy).toMatch(/disabled playback outside YouTube/i)
+    expect(copy).toMatch(/Open it on YouTube/i)
+  })
+
+  it('points at YouTube for the other failures too', () => {
+    expect(embedErrorCopy(100)).toMatch(/not available in your country/i)
+    expect(embedErrorCopy(2)).toMatch(/does not recognise this video id/i)
+    expect(embedErrorCopy(5)).toMatch(/Open it on YouTube/i)
   })
 })
