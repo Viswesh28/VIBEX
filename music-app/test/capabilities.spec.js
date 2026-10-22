@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
+  CROSS_SOURCE,
   FEATURES,
   NEVER_CLAIM,
   SOURCE,
@@ -56,6 +57,15 @@ describe('the capability matrix', () => {
 
   it('marks beat-matched transitions as unfinished rather than shipping a fake', () => {
     expect(feature('beatMatch').status).toBe(STATUS.local)
+  })
+
+  it('declares canvas video as cross-source, not as catalogue data', () => {
+    // The audio is JioSaavn; the clip is YouTube. Saying "available" without
+    // that qualifier would misrepresent where the bytes come from.
+    expect(CROSS_SOURCE).toContain('canvasVideo')
+    expect(feature('canvasVideo').status).toBe(STATUS.available)
+    expect(feature('canvasVideo').detail).toMatch(/YouTube/i)
+    expect(feature('canvasVideo').detail).toMatch(/best effort|fall/i)
   })
 
   it('counts only what actually ships', () => {
@@ -137,7 +147,7 @@ describe('user-facing copy', () => {
       lines.forEach((line, i) => {
         // Comments are allowed to discuss the topic; only shipped strings matter.
         if (/^\s*(\/\/|\*|\/\*)/.test(line)) return
-        if (!/lossless|skip silence|canvas video/i.test(line)) return
+        if (!/lossless|skip silence/i.test(line)) return
         if (!DENIAL.test(line)) offenders.push(`${file.replace(SRC, 'src/components')}:${i + 1}: ${line.trim()}`)
       })
     }

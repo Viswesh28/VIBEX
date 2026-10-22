@@ -205,19 +205,42 @@ shipped), `unavailable` (no setting and no second source would produce it).
 Rendered in Settings as a scannable list: a claim on each row, and the
 justification only on rows where it explains an absence.
 
-Three entries are `unavailable` and are asserted as such by
+Two entries are `unavailable` and are asserted as such by
 `test/capabilities.spec.js`:
 
 * **Lossless** — Saavn caps at 320 kbps AAC. A `Lossless` preference would be
   a label with nothing behind it.
 * **Skip silence** — the catalogue publishes no segment data, and the app does
   not analyse audio to find gaps.
-* **Canvas video** — there is no video behind the catalogue. The visualiser is
-  a local 2D canvas drawn from the analyser, so it is *not* the feature the
-  "canvas" toggle in other players refers to.
 
-That last point also settles Data Saver: the rule is **gate the fetch, not the
-display**. A local canvas costs no bytes, so hiding it under Data Saver would
+### Canvas video is the one cross-source capability
+
+The catalogue has no video, so the clip is looked up on **YouTube Music** while
+the audio stays on JioSaavn. `src/lib/canvas.js` owns the policy and
+`api/canvas.mjs` owns the one network hop; the split keeps the decision
+testable without a socket.
+
+The policy is deliberately conservative, because this is the only feature that
+spends a second provider's bandwidth:
+
+* fetched **only** while the full-screen player is open (`canvasDecision`);
+* never asked for under **Data Saver**, which would be a second download;
+* an explicit off switch (`svCanvas`), reported before Data Saver in the reason
+  so the UI never blames the wrong cause;
+* results cached per song in memory and `sessionStorage`; **negative** results
+  are not persisted, since a block may be transient;
+* every failure is typed (`not_found`, `blocked_by_upstream`, `lookup_failed`)
+  and degrades to artwork. A broken clip is cosmetic; a hanging request is a
+  broken song.
+
+The canvas field in InnerTube is undocumented and has moved between client
+versions, so `pickCanvasUrl` walks the whole response and ranks candidates
+instead of hard-coding a path, and refuses any URL that is not https on a
+Google media host, or that looks like a thumbnail.
+
+The local visualiser is unaffected by any of this, and it is what Data Saver
+still leaves alone: the rule there is **gate the fetch, not the display**, and
+a canvas drawn on-device has no fetch. A local canvas costs no bytes, so hiding it under Data Saver would
 remove a feature and save nothing. `describeVisual()` returns the reason a
 visual is in its current state (`user_disabled`, `live_audio`, `live_audio_
 unavailable`, `style_simulated`) plus `dataSaverApplies: false`, so the panel

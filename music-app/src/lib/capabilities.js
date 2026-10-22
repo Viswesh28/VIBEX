@@ -73,9 +73,10 @@ export const FEATURES = [
   {
     id: 'canvasVideo',
     label: 'Canvas video',
-    status: STATUS.unavailable,
-    claim: 'Not available',
-    detail: 'There is no video source behind the catalogue. The visualiser is drawn locally — no video is fetched.',
+    status: STATUS.available,
+    claim: 'From YouTube Music',
+    detail:
+      'A cross-source extra: audio stays on JioSaavn and only the looping clip comes from YouTube. Best effort — it is fetched when the full player opens, never under Data Saver, and falls back to artwork.',
   },
   {
     id: 'beatMatch',
@@ -101,7 +102,13 @@ export const FEATURES = [
 ]
 
 /** Features whose absence must never be papered over. */
-export const NEVER_CLAIM = ['lossless', 'skipSilence', 'canvasVideo']
+export const NEVER_CLAIM = ['lossless', 'skipSilence']
+
+/**
+ * Capabilities that depend on a second provider rather than the catalogue.
+ * Kept explicit so "one source" never turns into a false claim about the app.
+ */
+export const CROSS_SOURCE = ['canvasVideo']
 
 /** One row by id, or null. */
 export function feature(id) {

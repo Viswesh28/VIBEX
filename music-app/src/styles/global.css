@@ -389,6 +389,17 @@ h2#resultTitle {
 .exclude-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .set-row .set-label { flex: 1; text-align: left; min-width: 0; }
 
+/* Canvas video behind the full player. The artwork backdrop stays underneath
+   as the poster, so a clip that fails to load simply reveals it again. */
+#fpCanvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; z-index: 0; opacity: 0;
+  transition: opacity 0.5s ease;
+  filter: saturate(1.05) brightness(0.72);
+}
+#fpCanvas.on { opacity: 1; }
+#fpBg.has-canvas { opacity: 0; transition: opacity 0.5s ease; }
+
 /* The capability matrix in Settings. Facts, not marketing: an unavailable row
    is visually quieter than an available one, and the reason sits underneath
    rather than behind a tooltip nobody opens on a phone. */
