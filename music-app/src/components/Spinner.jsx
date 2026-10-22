@@ -4,7 +4,7 @@ export function Spinner() {
   return <div className="spinner" role="status" aria-label="Loading" />
 }
 
-export function EmptyState({ icon = 'music', title, hint }) {
+export function EmptyState({ icon = 'music', title, hint, action = null }) {
   return (
     <div className="empty-lib">
       <span className="empty-icon" aria-hidden="true">
@@ -12,6 +12,7 @@ export function EmptyState({ icon = 'music', title, hint }) {
       </span>
       <p>{title}</p>
       {hint && <span>{hint}</span>}
+      {action}
     </div>
   )
 }

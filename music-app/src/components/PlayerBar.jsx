@@ -1,6 +1,7 @@
 import { decodeHtml, fmt } from '../lib/format.js'
 import { artistsOf, dlUrlFor, imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
+import { RecBadge, TransitionBadge } from './Provenance.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
@@ -9,8 +10,9 @@ import { useUI } from '../state/UIContext.jsx'
 /** The persistent transport. Left: what is playing. Middle: controls. Right: utilities. */
 export function PlayerBar({ onDownload }) {
   const {
-    current, isPlaying, clock, volume, currentQuality,
+    current, currentIndex, isPlaying, clock, volume, currentQuality, transition,
     togglePlay, nextTrack, prevTrack, seekFrac, setVolume, reloadActive,
+    dismissRecommendation, clearForcedQuality,
   } = usePlayer()
   const { likedIds, toggleLike } = useLibrary()
   const s = useSettings()
@@ -57,9 +59,18 @@ export function PlayerBar({ onDownload }) {
           onClick={openFull}
         />
         <div id="pInfo" onClick={openFull}>
-          <div id="pTitle">{current ? name : 'Nothing playing'}</div>
+          <div id="pTitle">
+            {current ? name : 'Nothing playing'}
+            <TransitionBadge transition={transition} compact />
+          </div>
           <div id="pArtist">
             {current ? decodeHtml(artistsOf(current)) : 'Pick a song to start listening'}
+            {current?._prov && (
+              <RecBadge
+                prov={current._prov}
+                onDismiss={() => dismissRecommendation(currentIndex)}
+              />
+            )}
           </div>
           <div id="pTime">
             {fmt(clock.cur)} / {fmt(clock.dur)}
@@ -70,13 +81,25 @@ export function PlayerBar({ onDownload }) {
       <div className="controls">
         <button
           type="button"
-          className={'cbtn' + (s.shuffle ? ' toggled' : '')}
-          title={'Shuffle: ' + (s.shuffle ? 'on' : 'off')}
-          aria-label={s.shuffle ? 'Turn shuffle off' : 'Turn shuffle on'}
-          aria-pressed={s.shuffle}
-          onClick={s.toggleShuffle}
+          className={'cbtn' + (s.shuffleMode !== 'off' ? ' toggled' : '') + (s.shuffleMode === 'smart' ? ' smart' : '')}
+          title={
+            s.shuffleMode === 'smart'
+              ? 'Smart shuffle: queue order kept, suggestions mixed in'
+              : s.shuffleMode === 'on'
+                ? 'Shuffle: on'
+                : 'Shuffle: off'
+          }
+          aria-label={
+            s.shuffleMode === 'smart'
+              ? 'Smart shuffle on. Change shuffle mode'
+              : s.shuffleMode === 'on'
+                ? 'Shuffle on. Change shuffle mode'
+                : 'Shuffle off. Change shuffle mode'
+          }
+          aria-pressed={s.shuffleMode !== 'off'}
+          onClick={s.cycleShuffle}
         >
-          <Icon name="shuffle" size={18} />
+          <Icon name={s.shuffleMode === 'smart' ? 'sparkle' : 'shuffle'} size={18} />
         </button>
         <button type="button" className="cbtn" title="Previous" aria-label="Previous track" onClick={prevTrack}>
           <Icon name="prev" size={18} />
@@ -125,6 +148,8 @@ export function PlayerBar({ onDownload }) {
           value={currentQuality}
           onChange={(e) => {
             s.setQualityPref(e.target.value)
+            // An explicit choice outranks an automatic downgrade.
+            clearForcedQuality()
             // Defer: the context value the engine reads updates on the next tick.
             setTimeout(reloadActive, 0)
           }}

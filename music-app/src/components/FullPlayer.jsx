@@ -1,6 +1,7 @@
 import { decodeHtml, fmt } from '../lib/format.js'
 import { artistsOf, dlUrlFor, estimate, firstArtistId, imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
+import { RecBadge, TransitionBadge } from './Provenance.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
@@ -13,8 +14,8 @@ import { useUI } from '../state/UIContext.jsx'
  */
 export function FullPlayer({ onDownload }) {
   const {
-    current, isPlaying, clock, currentQuality,
-    togglePlay, nextTrack, prevTrack, seekFrac,
+    current, currentIndex, isPlaying, clock, currentQuality, transition,
+    togglePlay, nextTrack, prevTrack, seekFrac, dismissRecommendation,
   } = usePlayer()
   const { likedIds, toggleLike } = useLibrary()
   const s = useSettings()
@@ -66,6 +67,17 @@ export function FullPlayer({ onDownload }) {
               {current ? decodeHtml(artistsOf(current)) : ''}
             </div>
             <div id="fpAlbum">{current ? decodeHtml(current.album?.name || '') : ''}</div>
+            {(current?._prov || transition.state === 'mixing') && (
+              <div id="fpBadges">
+                <TransitionBadge transition={transition} />
+                {current?._prov && (
+                  <RecBadge
+                    prov={current._prov}
+                    onDismiss={() => dismissRecommendation(currentIndex)}
+                  />
+                )}
+              </div>
+            )}
 
             <div
               id="fpProgWrap"
@@ -96,13 +108,13 @@ export function FullPlayer({ onDownload }) {
             <div id="fpControls">
               <button
                 type="button"
-                className={'cbtn' + (s.shuffle ? ' toggled' : '')}
-                title="Shuffle"
-                aria-label={s.shuffle ? 'Turn shuffle off' : 'Turn shuffle on'}
-                aria-pressed={s.shuffle}
-                onClick={s.toggleShuffle}
+                className={'cbtn' + (s.shuffleMode !== 'off' ? ' toggled' : '') + (s.shuffleMode === 'smart' ? ' smart' : '')}
+                title={`Shuffle: ${s.shuffleMode}`}
+                aria-label={`Shuffle: ${s.shuffleMode}. Change shuffle mode`}
+                aria-pressed={s.shuffleMode !== 'off'}
+                onClick={s.cycleShuffle}
               >
-                <Icon name="shuffle" size={19} />
+                <Icon name={s.shuffleMode === 'smart' ? 'sparkle' : 'shuffle'} size={19} />
               </button>
               <button type="button" className="cbtn" title="Previous" aria-label="Previous track" onClick={prevTrack}>
                 <Icon name="prev" size={20} />

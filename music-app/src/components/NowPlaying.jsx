@@ -3,6 +3,7 @@ import { decodeHtml } from '../lib/format.js'
 import { artistsOf, dlUrlFor, estimate, firstArtistId, imgOf } from '../lib/song.js'
 import { store } from '../lib/storage.js'
 import { Icon } from './Icon.jsx'
+import { RecBadge, StopNote, TransitionBadge } from './Provenance.jsx'
 import { LyricsBody } from './LyricsBody.jsx'
 import { QueueList } from './QueueList.jsx'
 import { Visualizer } from './Visualizer.jsx'
@@ -15,7 +16,10 @@ import { useUI } from '../state/UIContext.jsx'
 
 /** The right rail: artwork, transport of the current track, lyrics and queue. */
 export function NowPlaying({ onDownload }) {
-  const { current, isPlaying, clock, togglePlay, seekFrac, queue, currentQuality } = usePlayer()
+  const {
+    current, currentIndex, isPlaying, clock, togglePlay, seekFrac, queue, currentQuality,
+    transition, stopReason, dismissRecommendation, startRadioFrom, playTrack,
+  } = usePlayer()
   const { likedIds, toggleLike } = useLibrary()
   const { dataSaver, viz, radio, setRadio } = useSettings()
   const { setStatus } = useStatus()
@@ -52,6 +56,7 @@ export function NowPlaying({ onDownload }) {
           </div>
         )}
         <img id="npCover" alt="" src={current ? imgOf(current, dataSaver) : undefined} style={{ opacity: current ? 1 : 0 }} />
+        <TransitionBadge transition={transition} />
         <button
           type="button"
           id="npPlayOverlay"
@@ -100,6 +105,16 @@ export function NowPlaying({ onDownload }) {
           {current ? decodeHtml(artistsOf(current)) : 'Search and pick a song'}
         </div>
         <div id="npAlbum">{current ? decodeHtml(current.album?.name || '') : ''}</div>
+        {current?._prov && (
+          <div className="np-why">
+            <RecBadge prov={current._prov} onDismiss={() => dismissRecommendation(currentIndex)} />
+            <span>
+              {current._prov.kind === 'smart_insert'
+                ? 'One of a few suggestions mixed into your queue.'
+                : 'Plays after your queue, so the music keeps going.'}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="np-actions">
@@ -168,6 +183,12 @@ export function NowPlaying({ onDownload }) {
         </div>
         <div id="lyricsCredit">Lyrics by LRCLIB</div>
       </div>
+
+      <StopNote
+        stopReason={stopReason}
+        onRetry={() => playTrack(currentIndex)}
+        onRadio={() => startRadioFrom(current)}
+      />
 
       <div className="np-head">
         <span>
