@@ -163,6 +163,9 @@ async function canvasFor(youtubeHost, videoId) {
       ok: true,
       bytes: blob.length,
       keys: Object.keys(r.json || {}).slice(0, 24),
+      playability: r.json?.playabilityStatus
+        ? { status: r.json.playabilityStatus.status, reason: r.json.playabilityStatus.reason || null }
+        : null,
       hasCanvas: /canvas/i.test(blob),
       hits: hits.length,
       paths: hits.slice(0, 3).map((h) => h.path),
@@ -171,7 +174,33 @@ async function canvasFor(youtubeHost, videoId) {
       return { found: { url: hits[0].url, path: hits[0].path, client: name }, diag }
     }
   }
+  const page = await watchPage(youtubeHost, videoId)
+  diag.push({ client: 'watch_page', host: youtubeHost, ...page.summary })
+  if (page.found) return { found: page.found, diag }
   return { found: null, diag }
+}
+
+async function watchPage(youtubeHost, videoId) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
+  try {
+    const r = await fetch(`https://${youtubeHost}/watch?v=${videoId}&hl=en&gl=US`, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' },
+    })
+    const html = await r.text()
+    const summary = { ok: r.ok, status: r.status, bytes: html.length, hasCanvas: /canvas/i.test(html) }
+    if (!r.ok) return { summary: { ...summary, ok: false }, found: null }
+    const hits = collectUrls({ html })
+    summary.hits = hits.length
+    summary.paths = hits.slice(0, 3).map((h) => h.path)
+    return { summary, found: hits.length ? { url: hits[0].url, path: hits[0].path, client: 'watch_page' } : null }
+  } catch (e) {
+    return { summary: { ok: false, error: e?.name === 'AbortError' ? 'timeout' : String(e?.message || e) }, found: null }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
