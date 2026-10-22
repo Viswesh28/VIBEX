@@ -104,9 +104,9 @@ export const FEATURES = [
     id: 'sources',
     label: 'Second source',
     status: STATUS.blocked,
-    claim: 'YT Music: browse on the web',
+    claim: 'YT Music: browse here, play in YouTube’s embed',
     detail:
-      'YouTube Music can be browsed and searched. Track audio is minted on the device, from a real page in the Android app or the helper extension, because YouTube will not serve it to a server. Anything over twenty minutes is not streamed here at all: it opens in YouTube’s own embed, with YouTube’s video and ads. JioSaavn is the source that always plays, and it is the default.',
+      'YouTube Music can be browsed and searched. Nothing is extracted anywhere: every YouTube item opens in YouTube’s own player, on the web and in the app alike, because YouTube will not serve its audio to a server or to a foreign origin. That means YouTube’s video and ads rather than our audio-only transport, so JioSaavn stays the source that plays as audio, and it is the default.',
   },
   {
     id: 'offline',
