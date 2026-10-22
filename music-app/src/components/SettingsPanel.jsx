@@ -11,7 +11,8 @@ import {
   mediaPlan,
   summary,
 } from '../lib/capabilities.js'
-import { SOURCES, sourceOf } from '../lib/sources.js'
+import { BROWSE_ONLY_NOTE, DEVICE_SOURCE_NOTE, SOURCES } from '../lib/sources.js'
+import { streamMintBridge } from '../lib/ytStream.js'
 import { Icon } from './Icon.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
@@ -429,7 +430,11 @@ export function SettingsPanel({ open, sleep }) {
           </select>
         </div>
         <p className="set-note">
-          {sourceOf(s.source).note}
+          {s.source === 'ytmusic'
+            ? streamMintBridge()
+              ? DEVICE_SOURCE_NOTE
+              : BROWSE_ONLY_NOTE
+            : 'JioSaavn provides both the catalogue and the audio, on every device.'}
         </p>
       </div>
 

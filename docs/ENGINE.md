@@ -329,6 +329,32 @@ this deployment) while its **audio** is refused (ADR 0001). `src/lib/sources.js`
 holds the whole policy — `cataloguePath`, `mapYtResult`, `playbackPlan` — and the
 player prints the reason it refuses rather than a generic failure. See ADR 0003.
 
+### The device mints YouTube audio; the server still does not
+
+ADR 0001 stands: no server-side session, no proxy, no residential relay. What
+changed in ADR 0004 is *where* the mint happens. The Android app loads the watch
+page in the offscreen WebView it already owns for canvas, lets the page's own
+player do the signature decipher and `n` transform, reads the resulting
+`googlevideo` URL off the network layer, and hands it to the existing
+`<audio>` deck. The page is then thrown away.
+
+Three rules hold that together, all in `src/lib/ytStream.js`:
+
+* **A URL is not accepted until it has been range-probed.** A one-byte request
+  says what total the server will serve; a request for the last kilobyte is what
+  a preview URL refuses. A minted URL that fails is a typed failure with its own
+  sentence, never a track that stops 61 s in.
+* **Only audio-only formats.** A muxed `video/*` rendition would play sound and
+  also stream several times the bytes; a track with no audio-only format is
+  refused rather than downgraded.
+* **One re-mint, ever.** A dead URL gets a second attempt because that is
+  latency. A bot challenge, a preview, or a page that fetched nothing is
+  terminal — a fallback to JioSaavn is the success case, and repeat mints are
+  what get an address flagged.
+
+On the web nothing changes: a browser tab has no page to mint from, so YouTube
+Music stays browse-only there and the picker says so.
+
 The choice itself lives in the **sticky top bar**, not in the song results: with
 it beside the results, a listener only discovered the app had two catalogues
 after searching, and a listener on the home feed never discovered it at all.

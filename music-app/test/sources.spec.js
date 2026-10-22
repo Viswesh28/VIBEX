@@ -108,8 +108,16 @@ describe('playbackPlan', () => {
 
   it('refuses a YouTube track and says why, per platform', () => {
     const t = mapYtResult(ytResult)
+    // In a browser there is nothing that can mint, so the refusal is final.
     expect(playbackPlan(t).reason).toBe(PLAYBACK_REASON.needsApp)
-    expect(playbackPlan(t, { native: true }).reason).toBe(PLAYBACK_REASON.needsSession)
+    expect(playbackPlan(t).willMint).toBeUndefined()
+    // On the device the app will *attempt* a mint, so the reason is a failure
+    // summary rather than a claim about the server.
+    expect(playbackPlan(t, { native: true })).toMatchObject({
+      playable: false,
+      willMint: true,
+      reason: PLAYBACK_REASON.mintFailed,
+    })
   })
 
   it('refuses anything else with no stream, without pretending it is YouTube', () => {

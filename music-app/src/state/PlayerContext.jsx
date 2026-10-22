@@ -10,7 +10,14 @@ import {
 import { api } from '../lib/api.js'
 import { decodeHtml } from '../lib/format.js'
 import { artistsOf, effQ, streamOf } from '../lib/song.js'
-import { playbackCopy, playbackPlan } from '../lib/sources.js'
+import { isYtTrack, playbackCopy, playbackPlan } from '../lib/sources.js'
+import {
+  forgetStream,
+  invalidateStreams,
+  mintYtStream,
+  streamFailureCopy,
+  streamMintBridge,
+} from '../lib/ytStream.js'
 import { isNative } from '../lib/config.js'
 import { isIOS, preparePlaybackAudioSession } from '../lib/platform.js'
 import { store } from '../lib/storage.js'
@@ -714,6 +721,37 @@ export function PlayerProvider({ children }) {
     return playbackCopy(plan.reason) || 'This track has no stream to play.'
   }, [])
 
+  /**
+   * The only route to YouTube audio: mint it from a real page on this device.
+   *
+   * The server cannot, and says so (ADR 0001/0003); a WebView running YouTube's
+   * own script can. `mintYtStream` owns the validity gate, so a URL that only
+   * serves a preview never reaches the player — the failure comes back typed
+   * and is shown as itself, not as a mid-song dropout.
+   *
+   * Returns the URL, or null after explaining why on the status line.
+   */
+  const mintUrl = useCallback(
+    async (song) => {
+      const bridge = streamMintBridge()
+      if (!bridge) {
+        // Native but no plugin: the plan's own refusal is the honest answer.
+        setStatus(unplayableCopy(song), true)
+        return null
+      }
+      const res = await mintYtStream({
+        videoId: song?.videoId || String(song?.id || '').replace(/^yt:/, ''),
+        bridge,
+      })
+      if (res.ok) return res.url
+      telemetry(EVENTS.streamFailed, { songId: song?.id, reason: res.reason })
+      setStatus(streamFailureCopy(res.reason) || unplayableCopy(song), true)
+      return null
+    },
+    [setStatus, unplayableCopy]
+  )
+
+
   const resolveQuality = useCallback((song) => {
     if (forcedQuality.current && song?.downloadUrl?.some((d) => d.quality === forcedQuality.current))
       return forcedQuality.current
@@ -724,6 +762,19 @@ export function PlayerProvider({ children }) {
     resolveQualityRef.current = resolveQuality
   }, [resolveQuality])
 
+  /** A YouTube track with no URL: mint, then continue on the same path. */
+  const resolveUrl = useCallback(
+    async (song) => {
+      const url = streamOf(song, resolveQuality(song))
+      if (url) return url
+      if (!isYtTrack(song)) return null
+      const plan = playbackPlan(song, { native: isNative() })
+      if (!plan.willMint) return null
+      return mintUrl(song)
+    },
+    [mintUrl, resolveQuality]
+  )
+
   /** Load track `i` onto the idle deck and crossfade into it. */
   const swapTo = useCallback(
     (i, durSec, lawOverride) => {
@@ -731,27 +782,40 @@ export function PlayerProvider({ children }) {
       if (!q.length) return
       const idx = ((i % q.length) + q.length) % q.length
       const s = q[idx]
-      const url = streamOf(s, resolveQuality(s))
-      if (!url) {
+      const finishSwap = (url) => {
+        if (!url) return
+        if (isExpired(url)) {
+          telemetry(EVENTS.streamFailed, { songId: s.id, reason: FAILURE.staleUrl })
+        }
+        const outEl = active()
+        const inEl = other()
+        setCurrentIndex(idx)
+        idxRef.current = idx
+        streamAttempts.current = 0
+        prepDeck(inEl)
+        inEl.src = url
+        activeRef.current = inEl
+        startFade(outEl, inEl, durSec, lawOverride)
+        afterStart(s)
+        setStatus('Playing: ' + decodeHtml(s.name) + (durSec > 0.6 ? ` (${durSec.toFixed(1)}s blend)` : ''))
+      };
+
+      const direct = streamOf(s, resolveQuality(s))
+      if (direct) {
+        finishSwap(direct)
+        return
+      }
+      const plan = playbackPlan(s, { native: isNative() })
+      if (!plan.willMint) {
         setStatus(unplayableCopy(s), true)
         return
       }
-      if (isExpired(url)) {
-        telemetry(EVENTS.streamFailed, { songId: s.id, reason: FAILURE.staleUrl })
-      }
-      const outEl = active()
-      const inEl = other()
-      setCurrentIndex(idx)
-      idxRef.current = idx
-      streamAttempts.current = 0
-      prepDeck(inEl)
-      inEl.src = url
-      activeRef.current = inEl
-      startFade(outEl, inEl, durSec, lawOverride)
-      afterStart(s)
-      setStatus('Playing: ' + decodeHtml(s.name) + (durSec > 0.6 ? ` (${durSec.toFixed(1)}s blend)` : ''))
+      // A cold mint is 2–5 s, so the blend cannot start until it lands. The
+      // queued track is announced while it waits rather than looking wedged.
+      setStatus('Resolving ' + decodeHtml(s.name) + ' on this device…')
+      resolveUrl(s).then(finishSwap)
     },
-    [afterStart, prepDeck, resolveQuality, setStatus, startFade, unplayableCopy]
+    [afterStart, prepDeck, resolveQuality, resolveUrl, setStatus, startFade, unplayableCopy]
   )
 
   const playTrack = useCallback(
@@ -767,24 +831,35 @@ export function PlayerProvider({ children }) {
       cancelFade()
       const idx = ((i % q.length) + q.length) % q.length
       const s = q[idx]
-      const url = streamOf(s, resolveQuality(s))
-      if (!url) {
+      const start = (url) => {
+        if (!url) return
+        setCurrentIndex(idx)
+        idxRef.current = idx
+        streamAttempts.current = 0
+        prepDeck(el)
+        el.src = url
+        writeVol(el, baseVol.current, sleepMul.current)
+        resetDeckGain(el)
+        armResume(el, s)
+        el.play().catch((e) => setStatus('Playback blocked: ' + e.message + ' (tap play)', true))
+        afterStart(s)
+        setStatus('Playing: ' + decodeHtml(s.name))
+      }
+
+      const direct = streamOf(s, resolveQuality(s))
+      if (direct) {
+        start(direct)
+        return
+      }
+      const plan = playbackPlan(s, { native: isNative() })
+      if (!plan.willMint) {
         setStatus(unplayableCopy(s), true)
         return
       }
-      setCurrentIndex(idx)
-      idxRef.current = idx
-      streamAttempts.current = 0
-      prepDeck(el)
-      el.src = url
-      writeVol(el, baseVol.current, sleepMul.current)
-      resetDeckGain(el)
-      armResume(el, s)
-      el.play().catch((e) => setStatus('Playback blocked: ' + e.message + ' (tap play)', true))
-      afterStart(s)
-      setStatus('Playing: ' + decodeHtml(s.name))
+      setStatus('Resolving ' + decodeHtml(s.name) + ' on this device…')
+      resolveUrl(s).then(start)
     },
-    [afterStart, armResume, cancelFade, prepDeck, resetDeckGain, resolveQuality, setStatus, swapTo, unplayableCopy]
+    [afterStart, armResume, cancelFade, prepDeck, resetDeckGain, resolveQuality, resolveUrl, setStatus, swapTo, unplayableCopy]
   )
 
   const stopPlayback = useCallback(
@@ -964,24 +1039,60 @@ export function PlayerProvider({ children }) {
     const s = queueRef.current[idxRef.current]
     const t = el.currentTime || 0
     const wasPlaying = !el.paused
-    prepDeck(el)
+
+    const apply = (url) => {
+      prepDeck(el)
+      el.src = url
+      writeVol(el, baseVol.current, sleepMul.current)
+      el.addEventListener('loadedmetadata', function h() {
+        // A re-minted URL is the *same file*, so the old position still means
+        // the same thing in it — unlike a quality downgrade, where it does not.
+        try {
+          if (isFinite(t) && t > 0) el.currentTime = t
+        } catch {
+          /* ignore */
+        }
+        el.removeEventListener('loadedmetadata', h)
+      })
+      if (wasPlaying) el.play()?.catch(() => {})
+    }
+
     // resolveQuality honours an automatic downgrade; using the raw preference
     // here would quietly undo the recovery on the next reload.
-    el.src = streamOf(s, resolveQuality(s))
-    writeVol(el, baseVol.current, sleepMul.current)
-    const restore = () => {
-      try {
-        if (isFinite(t) && t > 0) el.currentTime = t
-      } catch {
-        /* ignore */
-      }
+    const direct = streamOf(s, resolveQuality(s))
+    if (direct) {
+      apply(direct)
+      return
     }
-    el.addEventListener('loadedmetadata', function h() {
-      restore()
-      el.removeEventListener('loadedmetadata', h)
+
+    // A minted URL that failed mid-stream is usually expired or IP-bound to a
+    // network we have left. One re-mint is allowed; `mintYtStream` enforces it.
+    if (!isYtTrack(s)) return
+    const bridge = streamMintBridge()
+    if (!bridge) return
+    forgetStream(s.videoId || String(s.id || '').replace(/^yt:/, ''))
+    mintYtStream({
+      videoId: s.videoId || String(s.id || '').replace(/^yt:/, ''),
+      bridge,
+      force: true,
+    }).then((res) => {
+      if (res.ok) apply(res.url)
+      else setStatus(streamFailureCopy(res.reason) || unplayableCopy(s), true)
     })
-    if (wasPlaying) el.play()?.catch(() => {})
-  }, [cancelFade, prepDeck, resolveQuality])
+  }, [cancelFade, prepDeck, resolveQuality, setStatus, unplayableCopy])
+
+  /**
+   * A minted URL is bound to the address that minted it, so leaving Wi-Fi makes
+   * every cached URL a 403 — before its `expire` says anything is wrong. Drop
+   * them now rather than discovering it a track later.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const drop = () => invalidateStreams()
+    const events = ['online', 'offline', 'focus']
+    events.forEach((e) => window.addEventListener(e, drop))
+    return () => events.forEach((e) => window.removeEventListener(e, drop))
+  }, [])
 
   const togglePlay = useCallback(() => {
     if (idxRef.current < 0) {
