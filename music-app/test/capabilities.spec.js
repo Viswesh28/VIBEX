@@ -79,6 +79,14 @@ describe('the capability matrix', () => {
     expect(f.detail).toMatch(/not yet confirmed|unconfirmed/i)
   })
 
+  it('does not sell the second source as a way to hear YouTube Music', () => {
+    // The catalogue is real; the audio is not, and the row has to say both.
+    const f = feature('sources')
+    expect(f.status).toBe(STATUS.blocked)
+    expect(f.claim).toMatch(/browse only/i)
+    expect(f.detail).toMatch(/cannot play/i)
+  })
+
   it('counts only what actually ships', () => {
     const s = summary()
     expect(s.total).toBe(FEATURES.length)

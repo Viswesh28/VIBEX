@@ -101,6 +101,14 @@ export const FEATURES = [
     detail: '0–12s, scheduled on the audio clock. A gapless hand-over is a separate, exact cut.',
   },
   {
+    id: 'sources',
+    label: 'Second source',
+    status: STATUS.blocked,
+    claim: 'YT Music: browse only',
+    detail:
+      'YouTube Music can be browsed and searched, but YouTube will not serve its audio to this server, so those tracks cannot play here. JioSaavn remains the source that plays, and it is the default.',
+  },
+  {
     id: 'offline',
     label: 'Offline downloads',
     status: STATUS.strength,

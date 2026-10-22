@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { decodeHtml, fmt } from '../lib/format.js'
 import { artistsOf, imgOf } from '../lib/song.js'
+import { isYtTrack } from '../lib/sources.js'
 import { Icon } from './Icon.jsx'
 
 /**
@@ -67,6 +68,12 @@ export const SongRow = memo(function SongRow({
         <div className="s-title">
           {num ? `${num}. ` : ''}
           {title}
+          {/* Which catalogue this came from, so a mixed list stays readable. */}
+          {isYtTrack(song) && (
+            <span className="src-badge" title="From YouTube Music — plays in the app only">
+              YT
+            </span>
+          )}
         </div>
         <div className="s-artist">{artist}</div>
       </div>

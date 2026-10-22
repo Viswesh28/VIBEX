@@ -11,6 +11,7 @@ import {
   mediaPlan,
   summary,
 } from '../lib/capabilities.js'
+import { SOURCES, sourceOf } from '../lib/sources.js'
 import { Icon } from './Icon.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
@@ -406,6 +407,31 @@ export function SettingsPanel({ open, sleep }) {
           {resetArmed
             ? 'This erases plays, minutes and the taste profile. Likes and playlists stay.'
             : 'Reset erases plays, minutes and the taste profile — likes and playlists stay.'}
+        </p>
+      </div>
+
+      <div className="set-sec">
+        <div className="set-head">
+          <Icon name="music" size={16} />
+          <span>Music source</span>
+        </div>
+        <div className="set-row">
+          <select
+            aria-label="Music source"
+            value={s.source}
+            onChange={(e) => s.setSource(e.target.value)}
+          >
+            {SOURCES.map((src) => (
+              <option key={src.id} value={src.id}>
+                {src.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="set-note">
+          {sourceOf(s.source).plays === 'catalogue-only'
+            ? 'YouTube Music is browse-and-search only: YouTube will not serve audio to this server, so these tracks cannot play here. Switch back to JioSaavn to listen.'
+            : 'JioSaavn provides both the catalogue and the audio, on every device.'}
         </p>
       </div>
 
