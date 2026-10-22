@@ -16,7 +16,7 @@ import { usePlayer } from '../state/PlayerContext.jsx'
  * nothing. It is surfaced now, with the way out attached.
  */
 export function YouTubeEmbed() {
-  const { embedTrack, closeEmbed } = usePlayer()
+  const { embedTrack, closeEmbed, reportEmbed, nextTrack, prevTrack } = usePlayer()
   const open = Boolean(embedTrack)
   const frame = useRef(null)
   const [failure, setFailure] = useState('')
@@ -26,6 +26,14 @@ export function YouTubeEmbed() {
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     return embedUrl({ videoId: embedTrack.videoId }, { origin, autoplay: true })
   }, [embedTrack])
+
+  /** One command to YouTube's player, over the same channel as the handshake. */
+  const command = useCallback((func, args) => {
+    frame.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func, args: args || [], id: 1, channel: 'vibex' }),
+      '*'
+    )
+  }, [])
 
   const onKey = useCallback(
     (e) => {
@@ -58,7 +66,8 @@ export function YouTubeEmbed() {
 
     const onMessage = (event) => {
       if (!/^https:\/\/www\.youtube(-nocookie)?\.com$/.test(String(event.origin))) return
-      if (frame.current && event.source !== frame.current.contentWindow) return
+      const frameWindow = frame.current?.contentWindow
+      if (frameWindow && event.source !== frameWindow) return
       let data
       try {
         data = JSON.parse(event.data)
@@ -67,6 +76,18 @@ export function YouTubeEmbed() {
       }
       if (data?.event === 'onError') setFailure(embedErrorCopy(data.info))
       if (data?.event === 'onReady') setFailure('')
+      if (data?.event === 'onStateChange') {
+        // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued.
+        const code = Number(data.info)
+        if (code === 1) reportEmbed('playing')
+        if (code === 2) reportEmbed('paused')
+        if (code === 0) {
+          if (reportEmbed('ended') === 'replay') {
+            command('seekTo', [0, true])
+            command('playVideo')
+          }
+        }
+      }
     }
 
     window.addEventListener('message', onMessage)
@@ -84,7 +105,7 @@ export function YouTubeEmbed() {
       clearTimeout(stop)
       window.removeEventListener('message', onMessage)
     }
-  }, [open, src])
+  }, [open, src, reportEmbed])
 
   if (!open || !src) return null
 
@@ -99,6 +120,30 @@ export function YouTubeEmbed() {
           <Icon name="music" size={16} />
           <b>{title}</b>
           {artist && <span>{artist}</span>}
+        </div>
+        <div id="ytEmbedNav">
+          <button
+            type="button"
+            title="Previous"
+            aria-label="Previous track"
+            onClick={() => {
+              closeEmbed()
+              prevTrack()
+            }}
+          >
+            <Icon name="chevronLeft" size={18} />
+          </button>
+          <button
+            type="button"
+            title="Next"
+            aria-label="Next track"
+            onClick={() => {
+              closeEmbed()
+              nextTrack()
+            }}
+          >
+            <Icon name="chevronRight" size={18} />
+          </button>
         </div>
         <button
           type="button"
