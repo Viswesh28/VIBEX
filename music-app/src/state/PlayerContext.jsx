@@ -11,6 +11,7 @@ import { api } from '../lib/api.js'
 import { decodeHtml } from '../lib/format.js'
 import { artistsOf, effQ, streamOf } from '../lib/song.js'
 import { isYtTrack, playbackCopy, playbackPlan } from '../lib/sources.js'
+import { EMBED_NOTE, videoIdOf } from '../lib/ytEmbed.js'
 import {
   forgetStream,
   invalidateStreams,
@@ -151,6 +152,10 @@ export function PlayerProvider({ children }) {
   // Transition truth, not a timer: the badge and the cover cross-fade read this.
   const [transition, setTransition] = useState({ state: 'idle', kind: null, reason: null, dur: 0 })
   const [stopReason, setStopReason] = useState(null)
+  // The long-form embed, when one is open: { id, name, subtitle, videoId }.
+  // A different kind of playback from everything else in this file — YouTube's
+  // player, not ours — so it is state rather than a fifth deck.
+  const [longForm, setLongForm] = useState(null)
 
   // --- decks ---
   const deckA = useRef(null)
@@ -722,6 +727,42 @@ export function PlayerProvider({ children }) {
   }, [])
 
   /**
+   * Long-form YouTube items open in YouTube's own player.
+   *
+   * This is not a fallback and not an error path: an hour-long mix is a
+   * different kind of thing from a track, and the embed is the player that
+   * streams it well. The local decks are paused first — two players making
+   * sound at once is never what anyone meant — and nothing here mints.
+   */
+  const openLongForm = useCallback(
+    (song) => {
+      const videoId = videoIdOf(song)
+      if (!videoId) {
+        setStatus(unplayableCopy(song), true)
+        return
+      }
+      cancelFade()
+      playingRef.current = false
+      for (const el of [deckA.current, deckB.current]) {
+        try {
+          el?.pause()
+        } catch {
+          /* ignore */
+        }
+      }
+      setIsPlaying(false)
+      setLongForm({ id: song.id, name: song.name, subtitle: song.subtitle || '', videoId })
+      setStatus(EMBED_NOTE)
+    },
+    [cancelFade, setStatus, unplayableCopy]
+  )
+
+  const closeLongForm = useCallback(() => {
+    setLongForm(null)
+    setStatus('Closed YouTube’s player.')
+  }, [setStatus])
+
+  /**
    * The only route to YouTube audio: mint it from a real page on this device.
    *
    * The server cannot, and says so (ADR 0001/0003); a WebView running YouTube's
@@ -805,7 +846,17 @@ export function PlayerProvider({ children }) {
         finishSwap(direct)
         return
       }
-      const plan = playbackPlan(s, { native: isNative(), canMint: Boolean(streamMintBridge()) })
+      const plan = playbackPlan(s, {
+        native: isNative(),
+        canMint: Boolean(streamMintBridge()),
+        // Only a browser tab has an origin YouTube's embed accepts, and only a
+        // tab needs it: the app mints long items like any other file.
+        embed: !isNative(),
+      })
+      if (plan.mode === 'embed') {
+        openLongForm(s)
+        return
+      }
       if (!plan.willMint) {
         setStatus(unplayableCopy(s), true)
         return
@@ -815,7 +866,7 @@ export function PlayerProvider({ children }) {
       setStatus('Resolving ' + decodeHtml(s.name) + ' on this device…')
       resolveUrl(s).then(finishSwap)
     },
-    [afterStart, prepDeck, resolveQuality, resolveUrl, setStatus, startFade, unplayableCopy]
+    [afterStart, openLongForm, prepDeck, resolveQuality, resolveUrl, setStatus, startFade, unplayableCopy]
   )
 
   const playTrack = useCallback(
@@ -851,7 +902,15 @@ export function PlayerProvider({ children }) {
         start(direct)
         return
       }
-      const plan = playbackPlan(s, { native: isNative(), canMint: Boolean(streamMintBridge()) })
+      const plan = playbackPlan(s, {
+        native: isNative(),
+        canMint: Boolean(streamMintBridge()),
+        embed: !isNative(),
+      })
+      if (plan.mode === 'embed') {
+        openLongForm(s)
+        return
+      }
       if (!plan.willMint) {
         setStatus(unplayableCopy(s), true)
         return
@@ -859,7 +918,7 @@ export function PlayerProvider({ children }) {
       setStatus('Resolving ' + decodeHtml(s.name) + ' on this device…')
       resolveUrl(s).then(start)
     },
-    [afterStart, armResume, cancelFade, prepDeck, resetDeckGain, resolveQuality, resolveUrl, setStatus, swapTo, unplayableCopy]
+    [afterStart, armResume, cancelFade, openLongForm, prepDeck, resetDeckGain, resolveQuality, resolveUrl, setStatus, swapTo, unplayableCopy]
   )
 
   const stopPlayback = useCallback(
@@ -1619,6 +1678,8 @@ export function PlayerProvider({ children }) {
       setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
+      // The long-form embed: open, and this is what is open. Null otherwise.
+      longForm, closeLongForm,
       // Transition truth for the "Mixing" badge, plus typed stop reasons so the
       // UI can offer the right recovery instead of one generic error.
       transition,
@@ -1637,6 +1698,7 @@ export function PlayerProvider({ children }) {
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       transition, stopReason, dismissRecommendation, clearForcedQuality,
+      longForm, closeLongForm,
     ]
   )
 

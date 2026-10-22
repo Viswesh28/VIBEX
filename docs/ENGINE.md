@@ -361,8 +361,18 @@ same harvest in a hidden tab at `document_start` (real injection, which Android
 could not do) and probes from its service worker, where host permissions bypass
 CORS. The app's logic is unchanged: one seam, one gate. See ADR 0005.
 
-Without the extension, web stays browse-only — and the picker says which of the
-three situations applies rather than a blanket refusal.
+Without the extension, web stays browse-only for track audio — and the picker
+says which of the three situations applies rather than a blanket refusal.
+
+One exception, and it is not a mint: **anything longer than twenty minutes
+plays in YouTube's own embed.** An hour-long mix is not a track, and streaming
+it here would mean pulling 70–200 MB through a `<audio>` element that has no
+business holding it. `playbackPlan(..., { embed: true })` returns
+`mode: 'embed'` for those, `PlayerContext` pauses the local decks and opens
+`YouTubeEmbed`, and nothing is probed, minted or cached. It is video, it carries
+YouTube's advertising, and it exists only in a browser tab — a WebView origin is
+not one YouTube's embed accepts, and the app has a real mint anyway. The
+threshold lives in `src/lib/ytEmbed.js` as `LONG_FORM_SEC`. See ADR 0006.
 
 The choice itself lives in the **sticky top bar**, not in the song results: with
 it beside the results, a listener only discovered the app had two catalogues
