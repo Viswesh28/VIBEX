@@ -23,10 +23,10 @@ export const CANVAS_REASON = {
   blocked: 'blocked_by_upstream',
   failed: 'lookup_failed',
   /**
-   * YouTube answered this server with "sign in to confirm you're not a bot".
-   * Nothing about the song, nothing about the query — the deployment itself is
-   * refused, so it is reported apart from `not_found` instead of pretending
-   * the track simply has no clip.
+   * YouTube refused to describe the track to an unauthenticated client
+   * (`LOGIN_REQUIRED`). Nothing about this song and nothing about the query:
+   * a plain video resolves from the same server, music tracks do not. Reported
+   * apart from `not_found` instead of pretending the track has no clip.
    */
   deploymentBlocked: 'deployment_blocked',
 }
@@ -38,7 +38,7 @@ export const CANVAS_COPY = {
   [CANVAS_REASON.blocked]: 'YouTube Music did not return a canvas for this track.',
   [CANVAS_REASON.failed]: 'Couldn\'t reach YouTube Music — artwork instead.',
   [CANVAS_REASON.deploymentBlocked]:
-    'YouTube blocks this lookup from the server — artwork instead.',
+    'YouTube needs a signed-in session for music tracks — artwork instead.',
 }
 
 /**

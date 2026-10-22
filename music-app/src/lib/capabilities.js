@@ -82,9 +82,9 @@ export const FEATURES = [
     id: 'canvasVideo',
     label: 'Canvas video',
     status: STATUS.blocked,
-    claim: 'Blocked from this server',
+    claim: 'Needs a YouTube session',
     detail:
-      'A cross-source extra: audio stays on JioSaavn and only the looping clip would come from YouTube. YouTube answers the lookup from this deployment with "sign in to confirm you\'re not a bot", so no clip can be fetched. The player shows artwork instead, and a health check re-enables the lookup by itself if that changes.',
+      'A cross-source extra: audio stays on JioSaavn and only the looping clip would come from YouTube. YouTube will not describe a music track to a client without a signed-in session, and this server has none, so no clip can be fetched. The player shows artwork instead, and a health check re-enables the lookup by itself if that changes.',
   },
   {
     id: 'beatMatch',

@@ -242,36 +242,47 @@ Google media host, or that looks like a thumbnail.
 
 #### The lookup is blocked from this deployment
 
-Measured on the live production function on 2026-10-22: search works (it
-resolves a `videoId`), but every player call — `ANDROID_MUSIC` and `WEB_REMIX`,
-on both `music.youtube.com` and `www.youtube.com` — comes back
-`LOGIN_REQUIRED` with *"Sign in to confirm you're not a bot"*. The watch page
-loads (1.2 MB) and contains the same gate, so it yields no media URLs either.
-YouTube is challenging the request because it originates from a datacenter IP
-range; no query shape or client version changes that. Canvas URLs only appear
-in the player response, so **the clip cannot be fetched from Vercel at all**.
+Measured on the live production function on 2026-10-22. Search works — it
+resolves a `videoId` for every query tried. The player call does not:
+
+| probe | result |
+| --- | --- |
+| music track (`Gehra Hua`, `Blinding Lights`), `ANDROID_MUSIC` | `LOGIN_REQUIRED`, "Please sign in" |
+| same tracks, `WEB_REMIX` | `LOGIN_REQUIRED`, "Sign in to confirm you're not a bot" |
+| either client, on `music.youtube.com` and `www.youtube.com` | identical |
+| watch page for those ids | 200, ~1.2 MB, no media URLs (same gate) |
+| **plain UGC video, same server, same IP** | **`streamingData` returned** |
+
+That last row is the one that matters: the deployment is not firewalled off
+from YouTube, and it is not (only) an IP reputation problem. YouTube refuses to
+describe **music tracks** to a client with no signed-in session, while ordinary
+videos resolve fine from the same machine. Canvas metadata only exists on music
+tracks, so the clip cannot be fetched here — not by changing the query, the
+client version, or the host.
 
 The feature is therefore reported as `blocked`, not `available`, and not
 silently deleted:
 
-* `api/canvas.mjs` distinguishes the challenge (`deployment_blocked`) from a
-  track that simply has no clip (`not_found`), because they are different facts
-  and only one of them is about the song;
-* `GET /api/canvas?health=1` asks one cheap question — is this deployment
-  allowed to look? — and caches the answer for a minute when blocked, an hour
-  when healthy;
+* `api/canvas.mjs` distinguishes the refusal (`deployment_blocked`) from a track
+  that simply has no clip (`not_found`), because they are different facts and
+  only one of them is about the song;
+* `GET /api/canvas?health=1` asks the same question the feature would — search,
+  then a player call on a **music** track — and caches the answer for a minute
+  when blocked, an hour when healthy. Probing with a plain video would answer
+  "available" and then waste a request per song, which is the failure mode this
+  endpoint exists to prevent;
 * `useCanvasVideo` consults that answer before any per-track request, so a
-  challenged deployment costs **zero** lookup requests per track instead of one
-  wasted request each; the answer is shared per tab and re-checked every 30
-  minutes, which is what lets the feature switch itself back on;
-* the matrix row and the Settings note say blocked, in those words, and the
-  full player shows artwork.
+  blocked deployment costs **zero** lookup requests per track; the answer is
+  shared per tab and re-checked every 30 minutes, which is what lets the
+  feature switch itself back on if the requirement ever goes away;
+* the matrix row and the Settings note say it needs a signed-in session, in
+  those words, and the full player shows artwork.
 
 This is the honest shape of the trade: the matcher, ranking, caching, gating
 and fallback are all correct and tested, and none of them are advertised as
-delivering something the deployment cannot. If the challenge disappears, the
-probe notices and the feature returns without a code change.
-
+delivering something the deployment cannot. Unblocking it would mean holding a
+YouTube session on the server, which is precisely the provider impersonation
+this project has refused from the start.
 
 The local visualiser is unaffected by any of this, and it is what Data Saver
 still leaves alone: the rule there is **gate the fetch, not the display**, and

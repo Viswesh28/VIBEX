@@ -15,8 +15,15 @@
 
 const SEARCH_TIMEOUT = 6000
 const PLAYER_TIMEOUT = 6000
-/** A single, long-lived video, used only to ask "is this deployment gated?" */
-const HEALTH_VIDEO_ID = 'dQw4w9WgXcQ'
+/**
+ * The probe has to exercise the *music* path.
+ *
+ * A plain UGC video plays fine from this deployment while every music track is
+ * refused, so probing with one would report "available" and then spend a
+ * lookup on every song to be told otherwise. This is a fixed, widely available
+ * music track; the query is resolved through search exactly like a real one.
+ */
+const HEALTH_QUERY = 'Blinding Lights The Weeknd'
 
 const WEB_REMIX = {
   client: { clientName: 'WEB_REMIX', clientVersion: '1.20240701.00.00', hl: 'en', gl: 'US' },
@@ -261,12 +268,18 @@ async function egressCheck() {
  * the feature turns itself back on if the deployment stops being challenged.
  */
 async function health() {
+  // Search first, for the same reason the feature does: an ATV track id is what
+  // the player refuses, and a hard-coded id would go stale or be geo-restricted.
+  const s = await search('music.youtube.com', HEALTH_QUERY)
+  if (!s.ok) return { canvas: 'unknown', reason: `search_${s.status}`, detail: s.error || null }
+
   const r = await postJson(
-    'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
-    { context: WEB_REMIX, videoId: HEALTH_VIDEO_ID, contentCheckOk: true, racyCheckOk: true },
+    'https://music.youtube.com/youtubei/v1/player?prettyPrint=false',
+    { context: WEB_REMIX, videoId: s.videoId, contentCheckOk: true, racyCheckOk: true },
     PLAYER_TIMEOUT
   )
-  if (!r.ok) return { canvas: 'unknown', reason: r.error || `http_${r.status}` }
+  if (!r.ok) return { canvas: 'unknown', reason: `player_${r.status}`, detail: r.error || r.body || null }
+
   const play = r.json?.playabilityStatus
   let blob = ''
   try {
@@ -275,10 +288,10 @@ async function health() {
     blob = ''
   }
   if (play && /LOGIN_REQUIRED|AGE_CHECK_REQUIRED|ERROR/i.test(String(play.status))) {
-    return { canvas: 'deployment_blocked', reason: play.reason || null }
+    return { canvas: 'deployment_blocked', reason: play.reason || null, probe: s.videoId }
   }
-  if (/streamingData|videoDetails/.test(blob)) return { canvas: 'available' }
-  return { canvas: 'unknown', reason: play?.status || null }
+  if (/streamingData|videoDetails/.test(blob)) return { canvas: 'available', probe: s.videoId }
+  return { canvas: 'unknown', reason: play?.status || null, probe: s.videoId }
 }
 
 export default async function handler(req, res) {

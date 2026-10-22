@@ -322,7 +322,7 @@ export function SettingsPanel({ open, sleep }) {
           {s.dataSaver
             ? 'Off while Data Saver is on — the clip would be a second download.'
             : s.canvas
-              ? 'Looks up a looping clip on YouTube Music when you open the full player. Audio stays on JioSaavn; falls back to artwork if none is found. From this server YouTube refuses the lookup, so artwork is what you will see.'
+              ? 'Looks up a looping clip on YouTube Music when you open the full player. Audio stays on JioSaavn; falls back to artwork if none is found. YouTube needs a signed-in session for music tracks, which this server does not have, so artwork is what you will see.'
               : 'Off — the full player shows artwork only, and nothing is requested from YouTube.'}
         </p>
         <p className="set-note">
@@ -418,7 +418,8 @@ export function SettingsPanel({ open, sleep }) {
           Audio comes from one source, {SOURCE.label} — up to {SOURCE.maxKbps} kbps {SOURCE.format}.{' '}
           {caps.available} of {caps.total} capabilities below work; the rest are listed because no
           setting would produce them. Canvas video is the one cross-source extra — the clip would
-          come from YouTube Music, but YouTube challenges this server, so it stays artwork.
+          come from YouTube Music, but YouTube will not describe music tracks without a signed-in
+          session, so it stays artwork.
         </p>
         <ul className="cap-list">
           {FEATURES.map((f) => (

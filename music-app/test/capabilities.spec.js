@@ -70,8 +70,8 @@ describe('the capability matrix', () => {
     // cannot get a single clip today. "Available" would be a claim, not a fact.
     const f = feature('canvasVideo')
     expect(f.status).toBe(STATUS.blocked)
-    expect(f.claim).toMatch(/blocked/i)
-    expect(f.detail).toMatch(/sign in|not a bot/i)
+    expect(f.claim).toMatch(/session/i)
+    expect(f.detail).toMatch(/signed-in|sign in/i)
     expect(f.detail).toMatch(/artwork/i)
     // And it says how it comes back: the health check, not a user setting.
     expect(f.detail).toMatch(/health/i)
