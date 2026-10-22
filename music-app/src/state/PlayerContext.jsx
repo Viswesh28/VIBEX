@@ -10,6 +10,8 @@ import {
 import { api } from '../lib/api.js'
 import { decodeHtml } from '../lib/format.js'
 import { artistsOf, effQ, streamOf } from '../lib/song.js'
+import { playbackCopy, playbackPlan } from '../lib/sources.js'
+import { isNative } from '../lib/config.js'
 import { isIOS, preparePlaybackAudioSession } from '../lib/platform.js'
 import { store } from '../lib/storage.js'
 import {
@@ -700,6 +702,18 @@ export function PlayerProvider({ children }) {
     })
   }, [])
 
+  /**
+   * Why this track cannot play, in words the listener can act on.
+   *
+   * A YouTube Music result carries no stream, and the reason is a fact about
+   * the deployment rather than a glitch — so it is named, with the way out,
+   * instead of the old catch-all "No stream URL for this song."
+   */
+  const unplayableCopy = useCallback((song) => {
+    const plan = playbackPlan(song, { native: isNative() })
+    return playbackCopy(plan.reason) || 'This track has no stream to play.'
+  }, [])
+
   const resolveQuality = useCallback((song) => {
     if (forcedQuality.current && song?.downloadUrl?.some((d) => d.quality === forcedQuality.current))
       return forcedQuality.current
@@ -719,7 +733,7 @@ export function PlayerProvider({ children }) {
       const s = q[idx]
       const url = streamOf(s, resolveQuality(s))
       if (!url) {
-        setStatus('No stream URL for this song.', true)
+        setStatus(unplayableCopy(s), true)
         return
       }
       if (isExpired(url)) {
@@ -737,7 +751,7 @@ export function PlayerProvider({ children }) {
       afterStart(s)
       setStatus('Playing: ' + decodeHtml(s.name) + (durSec > 0.6 ? ` (${durSec.toFixed(1)}s blend)` : ''))
     },
-    [afterStart, prepDeck, resolveQuality, setStatus, startFade]
+    [afterStart, prepDeck, resolveQuality, setStatus, startFade, unplayableCopy]
   )
 
   const playTrack = useCallback(
@@ -755,7 +769,7 @@ export function PlayerProvider({ children }) {
       const s = q[idx]
       const url = streamOf(s, resolveQuality(s))
       if (!url) {
-        setStatus('No stream URL for this song.', true)
+        setStatus(unplayableCopy(s), true)
         return
       }
       setCurrentIndex(idx)
@@ -770,7 +784,7 @@ export function PlayerProvider({ children }) {
       afterStart(s)
       setStatus('Playing: ' + decodeHtml(s.name))
     },
-    [afterStart, armResume, cancelFade, prepDeck, resetDeckGain, resolveQuality, setStatus, swapTo]
+    [afterStart, armResume, cancelFade, prepDeck, resetDeckGain, resolveQuality, setStatus, swapTo, unplayableCopy]
   )
 
   const stopPlayback = useCallback(

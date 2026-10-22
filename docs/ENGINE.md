@@ -320,6 +320,15 @@ lossless, skip-silence or canvas video in a rendered string must be a denial
 exempt — `transition.js` legitimately holds a `lossless` flag, used to *refuse*
 auto-mixing on that path rather than to claim a mix.
 
+### Two sources, one of which cannot play here
+
+The listener can choose JioSaavn or YouTube Music (`svSource`, default
+JioSaavn). The choice is real, but the two are not interchangeable and the app
+never pretends otherwise: YouTube Music supplies a **catalogue** (search answers
+this deployment) while its **audio** is refused (ADR 0001). `src/lib/sources.js`
+holds the whole policy — `cataloguePath`, `mapYtResult`, `playbackPlan` — and the
+player prints the reason it refuses rather than a generic failure. See ADR 0003.
+
 ## 9. What this build deliberately does not do
 
 * **No BPM/key analysis.** The planner supports it, the app does not ship a

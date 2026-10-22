@@ -6,6 +6,7 @@
   "functions": {
     "api/[...path].mjs": { "maxDuration": 60 },
     "api/dl.mjs": { "maxDuration": 60 },
+    "api/ytmusic.mjs": { "maxDuration": 30 },
     "api/search/[path].mjs": { "maxDuration": 60 },
     "api/artists/[path].mjs": { "maxDuration": 60 },
     "api/songs/[path].mjs": { "maxDuration": 60 }

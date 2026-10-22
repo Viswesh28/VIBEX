@@ -8,6 +8,7 @@ import {
   MIN_CROSSFADE_SEC,
   normaliseLaw,
 } from '../lib/transition.js'
+import { normalizeSource } from '../lib/sources.js'
 
 const Ctx = createContext(null)
 export const useSettings = () => useContext(Ctx)
@@ -59,6 +60,8 @@ export function SettingsProvider({ children }) {
   // Canvas video is a cross-source extra (the clip comes from YouTube Music),
   // so it has its own switch rather than riding on the local visualiser.
   const [canvasOn, setCanvasOn] = useState(() => store.get('svCanvas', '1') === '1')
+  // Which catalogue the listener is browsing. One of SOURCES in lib/sources.js.
+  const [source, setSourceState] = useState(() => normalizeSource(store.get('svSource', 'jiosaavn')))
   const [vizStyle, setVizStyle] = useState(() => {
     const v = store.get('svVizStyle', 'spectrum')
     return VIZ_STYLES.includes(v) ? v : 'spectrum'
@@ -229,6 +232,12 @@ export function SettingsProvider({ children }) {
         setVizStyle(v)
         store.set('svVizStyle', v)
       },
+      source,
+      setSource: (id) => {
+        const next = normalizeSource(id)
+        setSourceState(next)
+        store.set('svSource', next)
+      },
       canvas: canvasOn,
       setCanvas: (v) => {
         setCanvasOn(v)
@@ -262,7 +271,7 @@ export function SettingsProvider({ children }) {
     }),
     [
       dataSaver, setDataSaver, saverAuto, crossfadeOn, crossfadeDur, crossfadeLaw, setCrossfadeLaw,
-      vizOn, vizStyle, canvasOn, shuffleMode, cycleShuffle, chooseShuffleMode, repeat, cycleRepeat, theme, radio, setRadio,
+      vizOn, vizStyle, canvasOn, source, shuffleMode, cycleShuffle, chooseShuffleMode, repeat, cycleRepeat, theme, radio, setRadio,
       autoplay, setAutoplay, qualityPref, setQualityPref, liveOK, ios, privateSession,
       excludedArtists, excludeArtist, unexcludeArtist, isExcluded,
     ]
