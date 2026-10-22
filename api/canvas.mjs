@@ -49,8 +49,13 @@ async function postJson(url, body, timeoutMs, extraHeaders = {}) {
       body: JSON.stringify(body),
       signal: controller.signal,
     })
-    if (!res.ok) return { ok: false, status: res.status }
-    return { ok: true, json: await res.json() }
+    const text = await res.text()
+    if (!res.ok) return { ok: false, status: res.status, body: text.slice(0, 120) }
+    try {
+      return { ok: true, json: JSON.parse(text) }
+    } catch {
+      return { ok: false, status: res.status, error: 'non_json', body: text.slice(0, 120) }
+    }
   } catch (e) {
     return { ok: false, status: 0, error: e?.name === 'AbortError' ? 'timeout' : String(e?.message || e) }
   } finally {
@@ -125,7 +130,7 @@ function firstVideoId(json) {
 async function search(youtubeHost, query) {
   const body = { context: WEB_REMIX, query, params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D' }
   const r = await postJson(`https://${youtubeHost}/youtubei/v1/search?prettyPrint=false`, body, SEARCH_TIMEOUT)
-  if (!r.ok) return { ok: false, status: r.status }
+  if (!r.ok) return { ok: false, status: r.status, error: r.error || null }
   const videoId = firstVideoId(r.json)
   return videoId ? { ok: true, videoId } : { ok: false, status: 'no_results' }
 }
@@ -150,6 +155,24 @@ async function canvasFor(youtubeHost, videoId) {
  * building at all? Without it a failed lookup is ambiguous between "YouTube
  * refused" and "this deployment has no egress", which are very different bugs.
  */
+async function hostCheck(host) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 5000)
+  try {
+    const r = await fetch(`https://${host}/`, {
+      method: 'GET',
+      signal: ctrl.signal,
+      redirect: 'manual',
+      headers: { 'user-agent': UA },
+    })
+    return { ok: true, status: r.status }
+  } catch (e) {
+    return { ok: false, error: e?.name === 'AbortError' ? 'timeout' : String(e?.message || e) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function egressCheck() {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 4000)
@@ -190,7 +213,7 @@ export default async function handler(req, res) {
       const s = await search(host, query)
       if (!s.ok) {
         lastStatus = s.status
-        lastError = s.error || null
+        lastError = s.error || s.body || null
         continue
       }
       const c = await canvasFor(host, s.videoId)
@@ -206,7 +229,11 @@ export default async function handler(req, res) {
         success: false,
         code: lastStatus === 429 ? 'blocked' : 'not_found',
         message: 'No canvas clip was found for this track.',
-        ...(debug ? { debug: { query, lastStatus, lastError, egress: await egressCheck() } } : {}),
+        ...(debug ? { debug: { query, lastStatus, lastError, egress: await egressCheck(), hosts: {
+            music: await hostCheck('music.youtube.com'),
+            www: await hostCheck('www.youtube.com'),
+            lh3: await hostCheck('lh3.googleusercontent.com'),
+          } } } : {}),
       })
       return
     }
