@@ -22,6 +22,7 @@ import { MobileNav } from './components/MobileNav.jsx'
 import { StatsView } from './components/StatsView.jsx'
 import { TasteView } from './components/TasteView.jsx'
 import { Chips, TopBar } from './components/TopBar.jsx'
+import { YouTubeEmbed } from './components/YouTubeEmbed.jsx'
 
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts.js'
 import { useMediaSession } from './hooks/useMediaSession.js'
@@ -281,6 +282,7 @@ export default function App() {
       <FullPlayer onDownload={onDownload} />
       <LyricsOverlay />
       <PlaylistModal />
+      <YouTubeEmbed />
     </>
   )
 }

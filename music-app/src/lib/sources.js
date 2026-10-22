@@ -17,6 +17,8 @@
  * Nothing here talks to the network, so the whole policy is testable.
  */
 
+import { isLongForm, videoIdOf } from './ytEmbed.js'
+
 /**
  * The limit, in one sentence.
  *
@@ -97,6 +99,11 @@ export const PLAYBACK_REASON = {
    * picker-level summary, and it still names the source that will work.
    */
   mintFailed: 'mint_failed',
+  /**
+   * Too long to be a stream. Played by YouTube's own embed instead, which is a
+   * different kind of playback: video, YouTube's transport, no crossfade.
+   */
+  longForm: 'long_form',
 }
 
 export const PLAYBACK_COPY = {
@@ -107,6 +114,8 @@ export const PLAYBACK_COPY = {
     'YouTube Music audio needs the Android app or the VIBEX browser extension — choose JioSaavn to play.',
   [PLAYBACK_REASON.mintFailed]:
     'YouTube Music audio could not be resolved on this device — choose JioSaavn to play.',
+  [PLAYBACK_REASON.longForm]:
+    'This is a long video, so it opens in YouTube’s own player instead of streaming as audio here.',
 }
 
 /** True when a track came from the YouTube Music catalogue. */
@@ -127,10 +136,27 @@ export function isYtTrack(track) {
  * the caller owns the async attempt; anywhere else the refusal is final and
  * says so. `playable` stays false either way, because playing it is not a fact
  * until a URL lands.
+ *
+ * `embed` says the caller has YouTube's own player available (a browser tab).
+ * It changes one thing: a YouTube item past `LONG_FORM_SEC` comes back as
+ * `mode: 'embed'` rather than as a mint, because an hour-long mix is not a
+ * track and streaming it here serves nobody.
  */
-export function playbackPlan(track, { native = false, canMint = false } = {}) {
+export function playbackPlan(track, { native = false, canMint = false, embed = false } = {}) {
   if (!track) return { playable: false, reason: PLAYBACK_REASON.noStream }
   if (isYtTrack(track)) {
+    // Long-form first: no mint is attempted for it at all, because a real file
+    // that size is the worst case for both the listener and the provider. Only
+    // a browser tab has an origin YouTube's embed will accept, so the app
+    // (`native`) keeps minting and never takes this branch.
+    if (embed && !native && isLongForm(track)) {
+      return {
+        playable: false,
+        mode: 'embed',
+        videoId: videoIdOf(track),
+        reason: PLAYBACK_REASON.longForm,
+      }
+    }
     // `canMint` is the browser extension. Native always can; a plain tab never.
     const mint = native || canMint
     return {

@@ -131,6 +131,38 @@ describe('playbackPlan', () => {
     })
   })
 
+  it('sends a long YouTube video to the embed instead of a mint', () => {
+    // A one-hour mix is not a track: no mint, no gate, no 200 MB pull.
+    const mix = mapYtResult({ ...ytResult, videoId: 'mix12345678', duration: 3600 })
+    const plan = playbackPlan(mix, { embed: true })
+    expect(plan).toMatchObject({
+      playable: false,
+      mode: 'embed',
+      videoId: 'mix12345678',
+      reason: PLAYBACK_REASON.longForm,
+    })
+    // And it is not something the player would try to mint behind our back.
+    expect(plan.willMint).toBeUndefined()
+  })
+
+  it('keeps a normal-length YouTube track on the mint path', () => {
+    const t = mapYtResult(ytResult) // 200 s
+    expect(playbackPlan(t, { embed: true, canMint: true })).toMatchObject({
+      willMint: true,
+      reason: PLAYBACK_REASON.mintFailed,
+    })
+    expect(playbackPlan(t, { embed: true }).mode).toBeUndefined()
+  })
+
+  it('never sends a long video to the embed on the device', () => {
+    // A WebView origin is not one YouTube's embed accepts, and the app has a
+    // real mint, so `native` outranks the embed however the caller asks.
+    const mix = mapYtResult({ ...ytResult, videoId: 'mix12345678', duration: 3600 })
+    const plan = playbackPlan(mix, { native: true, embed: true })
+    expect(plan.mode).toBeUndefined()
+    expect(plan.willMint).toBe(true)
+  })
+
   it('refuses anything else with no stream, without pretending it is YouTube', () => {
     expect(playbackPlan({ id: 'x', downloadUrl: [] }).reason).toBe(PLAYBACK_REASON.noStream)
     expect(playbackPlan(null).playable).toBe(false)
@@ -142,7 +174,9 @@ describe('playbackPlan', () => {
       const copy = playbackCopy(reason)
       expect(copy, reason).toBeTruthy()
       // Each refusal points at a way forward rather than just stopping.
-      expect(copy).toMatch(/choose JioSaavn|no stream/i)
+      // `longForm` is the one that is not a refusal: it names YouTube's own
+      // player, which is where that item actually plays.
+      expect(copy).toMatch(/choose JioSaavn|no stream|YouTube’s own player/i)
     }
   })
 })
