@@ -145,6 +145,28 @@ async function canvasFor(youtubeHost, videoId) {
   return null
 }
 
+/**
+ * Diagnostic only, behind `debug=1`: is this function able to leave the
+ * building at all? Without it a failed lookup is ambiguous between "YouTube
+ * refused" and "this deployment has no egress", which are very different bugs.
+ */
+async function egressCheck() {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 4000)
+  try {
+    const r = await fetch('https://www.google.com/generate_204', {
+      method: 'GET',
+      signal: ctrl.signal,
+      redirect: 'manual',
+    })
+    return { ok: true, status: r.status }
+  } catch (e) {
+    return { ok: false, error: e?.name === 'AbortError' ? 'timeout' : String(e?.message || e) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export default async function handler(req, res) {
   const q = req.query || {}
   const title = String(q.title || '').slice(0, 160)
@@ -163,10 +185,12 @@ export default async function handler(req, res) {
     // music host has the mixes, the plain host is a fallback if it is gated.
     let found = null
     let lastStatus = 0
+    let lastError = null
     for (const host of ['music.youtube.com', 'www.youtube.com']) {
       const s = await search(host, query)
       if (!s.ok) {
         lastStatus = s.status
+        lastError = s.error || null
         continue
       }
       const c = await canvasFor(host, s.videoId)
@@ -182,7 +206,7 @@ export default async function handler(req, res) {
         success: false,
         code: lastStatus === 429 ? 'blocked' : 'not_found',
         message: 'No canvas clip was found for this track.',
-        ...(debug ? { debug: { query, lastStatus } } : {}),
+        ...(debug ? { debug: { query, lastStatus, lastError, egress: await egressCheck() } } : {}),
       })
       return
     }
