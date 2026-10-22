@@ -36,12 +36,16 @@
 | | |
 |---|---|
 | 🔍 **Deep search** | Songs, albums, playlists & artists with a trending home feed |
-| ▶️ **Full player** | Shuffle, repeat, sleep timer, crossfade, queue manager, live spectrum visualizer |
+| ▶️ **Full player** | Shuffle, repeat, sleep timer, transitions, queue manager, live spectrum visualizer |
 | 🖥️ **Full-screen mode** | Spotify-style immersive view — click any song title to enter |
 | 📜 **Synced lyrics** | Karaoke-style line highlighting via the 🎤 mic button |
 | ⬇️ **One-click downloads** | Real audio files with correct names, served by a smart retrying backend |
 | 🎤 **Artist pages** | Top songs, albums, follower counts, artist radio stations |
 | 📻 **Endless radio** | Auto-extending stations seeded from any song |
+| 🎚️ **Real transitions** | Equal-power, linear or bass-swap curves, scheduled on the audio clock; gapless at 0 s; a skip never gets the fancy blend |
+| ✨ **Smart shuffle** | Off → on → smart: queue order kept, one suggestion per 3 tracks, only in queues over 15 tracks, each one badged with *why* |
+| 🧭 **Autoplay that explains itself** | A recommendation ladder (context → smart insert → autoplay → radio → stop) with typed stop reasons and a retry that fits the failure |
+| 🩹 **Stream recovery** | Expiring URLs refreshed, transport errors retried, codec failures stepped down a quality tier, then a typed reason |
 | 🎵 **Custom playlists** | Create, rename, reorder — saved on your device |
 | 📊 **Listening stats** | Plays, minutes, top songs & artists |
 | 🌗 **Dark / light** | Premium glass UI with a Data Saver mode for slow networks |
@@ -94,7 +98,7 @@ is meaningless at the repo root.
 
 ```bash
 cd music-app
-npm test              # 169 offline unit/integration tests (vitest + jsdom)
+npm test              # 258 offline unit/integration tests (vitest + jsdom)
 npm run verify:mobile # phone layout, 5 viewports — needs Playwright + a running gateway
 npm run verify:ux     # contrast, accessible names, tap spacing — same prerequisites
 ```
@@ -103,6 +107,12 @@ npm run verify:ux     # contrast, accessible names, tap spacing — same prerequ
 helpers, the storage guard, the ID3/MP4 tag writer, the settings store, the
 `SongRow` component, the native-`fetch` patch and the in-process API router
 (upstream stubbed at `fetch`, so the real DES-ECB media-URL decryption runs).
+
+The playback engine is unit-tested as pure functions: the crossfade curves
+(including the golden `g_out² + g_in² = 1` property), the transition planner,
+the recommendation ladder, and the stream-recovery classifier — plus the home
+feed's degrade-don't-blank behaviour. See
+[`docs/ENGINE.md`](docs/ENGINE.md).
 
 The two `verify:*` scripts drive a real Chromium and exit non-zero without
 pretending otherwise if Playwright or the gateway is missing.
@@ -119,6 +129,30 @@ mkdir -p .github/workflows && cp docs/ci.yml.example .github/workflows/ci.yml
 
 The 21 specs vendored inside `jiosaavn-api/src` are **not** in CI: each one dials
 the live `www.jiosaavn.com`, so they need egress and are flaky by nature.
+
+## 🎧 How the player behaves
+
+A quick tour of the parts that are easy to get wrong:
+
+- **Crossfade has three laws.** Equal power (default) for two unrelated
+  recordings, linear for correlated material, and bass swap for club-style
+  hand-overs. The curve is scheduled on the Web Audio clock when the visualiser
+  graph is live, and falls back to a wall-clock-corrected element ramp when it
+  is not. `0 s` means gapless — a sample-accurate cut, not a silent crossfade.
+- **A skip is not a blend.** Manual skips get a fixed 0.35 s hand-over; the
+  configured transition only applies to play-through.
+- **Smart shuffle is a mode, not a badge.** Off → on → smart. Smart keeps your
+  queue order and inserts one suggestion per three tracks, in queues longer than
+  15. The budget resets for every new playlist.
+- **Suggestions are a side channel.** Every added track carries provenance and
+  is badged with the reason it appeared. It is never written into a saved
+  playlist; dismissing it (or skipping it in the first 30 s) keeps it away.
+- **Failures are typed.** "Queue finished", "we found nothing similar", "your
+  browser can't decode this" and "the URL expired" are different states with
+  different recoveries, not one generic error.
+
+Full detail, including what is deliberately *not* implemented:
+[`docs/ENGINE.md`](docs/ENGINE.md).
 
 ## 📸 Screenshots
 
@@ -173,13 +207,15 @@ VIBEX/
 │   │   ├── components/ # UI components (sidebar, player bar, views, overlays)
 │   │   ├── state/      # React contexts: settings, library, player, UI, status
 │   │   ├── hooks/      # visualizer, lyrics sync, sleep timer, shortcuts
-│   │   ├── lib/        # api client, formatters, song helpers, LRC parser
+│   │   ├── lib/        # api client, formatters, song helpers, LRC parser,
+│   │   │               # transition + recommendation + stream-recovery engines
 │   │   └── styles/     # global stylesheet
 │   ├── index.html      # Vite entry shell
 │   ├── tagger.mjs      # zero-dependency ID3v2.3 / MP4 tag writer
 │   └── server.mjs      # gateway: serves the build, proxies /api, /dl downloads
 ├── jiosaavn-api/       # music metadata + stream backend (Bun + Hono)
 │   └── run-local.mjs   # local runner (port 3001)
+├── docs/ENGINE.md      # how transitions, recommendations and recovery work
 ├── docs/screenshots/   # README product screenshots
 └── setup.sh            # local dependency installer
 ```

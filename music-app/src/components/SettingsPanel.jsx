@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fmt } from '../lib/format.js'
+import { LAW_HINTS, LAW_LABELS, MAX_CROSSFADE_SEC, describePlan, planTransition } from '../lib/transition.js'
+import { DEFAULT_REC, REC_REASON_SENTENCE } from '../lib/recommend.js'
 import { estimate } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
@@ -129,7 +131,7 @@ export function SettingsPanel({ open, sleep }) {
       <div className="set-sec">
         <div className="set-head">
           <Icon name="sparkle" size={16} />
-          <span>Crossfade</span>
+          <span>Transitions</span>
         </div>
         <label className="switch-row">
           <span>Blend tracks</span>
@@ -146,17 +148,86 @@ export function SettingsPanel({ open, sleep }) {
         <div className="set-row">
           <input
             type="range"
-            min="1"
-            max="12"
+            min="0"
+            max={MAX_CROSSFADE_SEC}
             step="1"
             aria-label="Crossfade duration in seconds"
             value={s.crossfade.dur}
             disabled={!s.crossfade.on}
             onChange={(e) => s.setCrossfadeDur(+e.target.value)}
           />
-          <span>{s.crossfade.dur}s</span>
+          <span>{s.crossfade.dur === 0 ? 'Gapless' : `${s.crossfade.dur}s`}</span>
         </div>
-        <p className="set-note">Overlap between auto-advancing tracks. Skips use a quick fade.</p>
+
+        <label className="set-field">
+          <span>Curve</span>
+          <select
+            aria-label="Crossfade curve"
+            value={s.crossfade.law}
+            disabled={!s.crossfade.on || s.crossfade.dur === 0}
+            onChange={(e) => s.setCrossfadeLaw(e.target.value)}
+          >
+            {s.crossfadeLaws.map((law) => (
+              <option key={law} value={law}>
+                {LAW_LABELS[law]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="set-note">
+          {s.crossfade.dur === 0
+            ? 'Gapless: the next track is cut in exactly at the boundary. Not a 0-second crossfade — no ramp at all.'
+            : LAW_HINTS[s.crossfade.law]}
+        </p>
+        <p className="set-note">
+          {describePlan(
+            planTransition({
+              crossfadeOn: s.crossfade.on,
+              crossfadeSec: s.crossfade.dur,
+              law: s.crossfade.law,
+            })
+          )}{' '}
+          · A manual skip uses a short {Math.round(0.35 * 1000)}ms hand-over instead.
+        </p>
+      </div>
+
+      <div className="set-sec">
+        <div className="set-head">
+          <Icon name="shuffle" size={16} />
+          <span>Suggestions</span>
+        </div>
+        <div className="set-row">
+          <select
+            aria-label="Shuffle mode"
+            value={s.shuffleMode}
+            onChange={(e) => s.setShuffleMode(e.target.value)}
+          >
+            <option value="off">Shuffle off</option>
+            <option value="on">Shuffle on</option>
+            <option value="smart">Smart shuffle</option>
+          </select>
+        </div>
+        <label className="switch-row">
+          <span>Keep playing after the queue</span>
+          <span>
+            <input
+              type="checkbox"
+              aria-label="Autoplay similar songs when the queue ends"
+              checked={s.autoplay}
+              onChange={(e) => s.setAutoplay(e.target.checked)}
+            />
+            <span className="switch" />
+          </span>
+        </label>
+        <p className="set-note">
+          {s.shuffleMode === 'smart'
+            ? `One suggestion every ${DEFAULT_REC.insertEvery} tracks, and only in queues longer than ${DEFAULT_REC.minTracks}. They are marked in the queue and never added to your playlist.`
+            : `Autoplay adds ${REC_REASON_SENTENCE.same_artist.toLowerCase()} once your own queue runs out. Every added track is marked, and you can dismiss it with −.`}
+        </p>
+        <p className="set-note">
+          A skip in the first {DEFAULT_REC.earlySkipSec} seconds counts as “not this”, and dismissed
+          suggestions stay away for {DEFAULT_REC.dismissDays} days.
+        </p>
       </div>
 
       <div className="set-sec">

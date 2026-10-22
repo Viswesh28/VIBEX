@@ -2,11 +2,12 @@ import { useEffect, useRef } from 'react'
 import { decodeHtml, fmt } from '../lib/format.js'
 import { artistsOf, imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
+import { RecBadge } from './Provenance.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 
 export function QueueList() {
-  const { queue, currentIndex, playTrack, qMove, qRemove } = usePlayer()
+  const { queue, currentIndex, playTrack, qMove, qRemove, dismissRecommendation } = usePlayer()
   const { dataSaver } = useSettings()
   const activeRef = useRef(null)
 
@@ -56,7 +57,12 @@ export function QueueList() {
             />
             <div className="q-info">
               <div className="q-t">{name}</div>
-              <div className="q-a">{decodeHtml(artistsOf(s))}</div>
+              <div className="q-a">
+                {decodeHtml(artistsOf(s))}
+                {s._prov && (
+                  <RecBadge prov={s._prov} onDismiss={() => dismissRecommendation(i)} />
+                )}
+              </div>
             </div>
             <span className="q-acts">
               <button
@@ -75,6 +81,17 @@ export function QueueList() {
               >
                 <Icon name="chevronDown" size={14} />
               </button>
+              {s._prov && (
+                <button
+                  type="button"
+                  data-a="dismiss"
+                  title="Dismiss this suggestion"
+                  aria-label={`Dismiss ${name} and hear fewer like it`}
+                  onClick={stop(() => dismissRecommendation(i))}
+                >
+                  <Icon name="sparkle" size={14} />
+                </button>
+              )}
               <button
                 type="button"
                 data-a="rm"

@@ -15,6 +15,9 @@ function Probe() {
       <span data-testid="shuffle">{String(ctx.shuffle)}</span>
       <span data-testid="radio">{String(ctx.radio)}</span>
       <span data-testid="saver">{String(ctx.dataSaver)}</span>
+      <span data-testid="shuffleMode">{ctx.shuffleMode}</span>
+      <span data-testid="law">{ctx.crossfade.law}</span>
+      <span data-testid="autoplay">{String(ctx.autoplay)}</span>
     </div>
   )
 }
@@ -86,6 +89,74 @@ describe('persistence', () => {
     expect(screen.getByTestId('theme')).toHaveTextContent('light')
     expect(screen.getByTestId('repeat')).toHaveTextContent('one')
     expect(screen.getByTestId('shuffle')).toHaveTextContent('true')
+  })
+})
+
+describe('shuffle modes', () => {
+  // Smart shuffle is a third state, not a badge on top of random play: the
+  // queue keeps its order and only the insertion budget is spent.
+  it('cycles off -> on -> smart -> off and remembers the mode', () => {
+    setup()
+    expect(ctx.shuffleMode).toBe('off')
+    act(() => ctx.cycleShuffle())
+    expect(ctx.shuffleMode).toBe('on')
+    expect(localStorage.getItem('svShuffle')).toBe('1')
+    act(() => ctx.cycleShuffle())
+    expect(ctx.shuffleMode).toBe('smart')
+    expect(ctx.smartShuffle).toBe(true)
+    expect(ctx.shuffle).toBe(true)
+    expect(localStorage.getItem('svShuffle')).toBe('smart')
+    act(() => ctx.cycleShuffle())
+    expect(ctx.shuffleMode).toBe('off')
+    expect(ctx.shuffle).toBe(false)
+  })
+
+  it('restores smart mode from storage', () => {
+    localStorage.setItem('svShuffle', 'smart')
+    setup()
+    expect(screen.getByTestId('shuffleMode')).toHaveTextContent('smart')
+  })
+
+  it('accepts an explicit mode from the settings panel', () => {
+    setup()
+    act(() => ctx.setShuffleMode('smart'))
+    expect(ctx.shuffleMode).toBe('smart')
+  })
+})
+
+describe('transition preferences', () => {
+  it('defaults to equal power at 5 s', () => {
+    setup()
+    expect(screen.getByTestId('law')).toHaveTextContent('equalPower')
+    expect(ctx.crossfade.dur).toBe(5)
+  })
+
+  it('persists the chosen curve', () => {
+    setup()
+    act(() => ctx.setCrossfadeLaw('linear'))
+    expect(localStorage.getItem('svCfl')).toBe('linear')
+    expect(ctx.crossfade.law).toBe('linear')
+  })
+
+  it('rejects an unknown curve instead of storing it', () => {
+    setup()
+    act(() => ctx.setCrossfadeLaw('phase-vocoder'))
+    expect(ctx.crossfade.law).toBe('equalPower')
+  })
+
+  it('allows a gapless 0 s overlap and clamps the upper bound', () => {
+    setup()
+    act(() => ctx.setCrossfadeDur(0))
+    expect(ctx.crossfade.dur).toBe(0)
+    act(() => ctx.setCrossfadeDur(99))
+    expect(ctx.crossfade.dur).toBe(12)
+  })
+
+  it('autoplay is on by default and can be turned off', () => {
+    setup()
+    expect(screen.getByTestId('autoplay')).toHaveTextContent('true')
+    act(() => ctx.setAutoplay(false))
+    expect(localStorage.getItem('svAuto')).toBe('0')
   })
 })
 

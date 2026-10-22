@@ -1127,6 +1127,153 @@ h2#resultTitle {
 /* ---------- responsive -------------------------------------------------- */
 
 /* The rail is a bonus at wide sizes; below this the bar carries the track. */
+
+/* ==========================================================================
+   Provenance, transitions and honest degradation
+   --------------------------------------------------------------------------
+   Three small surfaces that carry the behavioural upgrades: where a queued
+   song came from, whether a hand-over is mixing right now, and what the app
+   says when part of it failed. All of them are additive — nothing here changes
+   the layout or the type scale.
+   ========================================================================== */
+
+/* --- recommendation badge ------------------------------------------------ */
+.rec-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 6px; padding: 1px 6px 1px 5px;
+  border-radius: 999px;
+  background: var(--card-strong);
+  color: var(--muted-2);
+  font-size: 9.5px; font-weight: 750; letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.rec-badge .icon { color: currentColor; flex-shrink: 0; }
+.rec-badge-t { overflow: hidden; text-overflow: ellipsis; }
+.rec-badge.smart {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.rec-badge.smart .icon { color: var(--accent-bright); }
+.rec-dismiss {
+  display: grid; place-items: center;
+  width: 15px; height: 15px; margin-left: 1px;
+  border-radius: 50%;
+  color: currentColor; opacity: 0.72;
+}
+.rec-dismiss:hover { opacity: 1; background: rgba(255, 255, 255, 0.14); }
+body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
+
+/* --- "Mixing" badge (playback truth, not a timer) ------------------------ */
+.mix-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: 8px; padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(9, 9, 11, 0.72);
+  color: #fff;
+  font-size: 9.5px; font-weight: 800; letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.mix-badge.compact { margin-left: 7px; padding: 1px 7px; font-size: 8.5px; }
+.mix-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent-bright);
+  animation: mixPulse 1.1s ease-in-out infinite;
+}
+@keyframes mixPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+#npArtWrap .mix-badge { position: absolute; top: 10px; right: 10px; z-index: 3; margin: 0; }
+
+/* --- why this song is in the queue -------------------------------------- */
+.np-why {
+  display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 11px; line-height: 1.5; color: var(--muted);
+}
+.np-why .rec-badge { margin-left: 0; }
+
+/* --- typed stop note ----------------------------------------------------- */
+.stop-note, .degrade-note {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 12px; line-height: 1.5;
+}
+.stop-note .icon, .degrade-note .icon { color: var(--accent-text); flex-shrink: 0; }
+.stop-note span, .degrade-note span { flex: 1; min-width: 160px; }
+.btn-ghost.tiny {
+  min-height: 28px; padding: 0 11px;
+  font-size: 11.5px; font-weight: 700;
+  border-radius: 999px;
+}
+
+/* --- fixed-height skeletons (zero CLS while the home feed loads) --------- */
+.skeleton { pointer-events: none; }
+.sk-media {
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  background: linear-gradient(100deg, var(--card) 30%, var(--card-hover) 48%, var(--card) 66%);
+  background-size: 260% 100%;
+  animation: shimmer 1.25s linear infinite;
+}
+.sk-line {
+  display: block; height: 11px; width: 78%; margin-bottom: 7px;
+  border-radius: 5px;
+  background: var(--card-hover);
+}
+.sk-line.short { width: 48%; height: 9px; }
+.skeleton-hero {
+  min-height: 244px;
+  background: linear-gradient(100deg, var(--card) 30%, var(--card-hover) 48%, var(--card) 66%);
+  background-size: 260% 100%;
+  animation: shimmer 1.25s linear infinite;
+  box-shadow: none;
+}
+@keyframes shimmer {
+  from { background-position: 130% 0; }
+  to { background-position: -30% 0; }
+}
+@media (max-width: 900px) {
+  .skeleton-hero { min-height: 180px; }
+}
+
+/* --- settings: labelled select ------------------------------------------ */
+.set-field {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-top: 10px;
+  font-size: 12.5px; font-weight: 650; color: var(--text-2);
+}
+.set-field select {
+  max-width: 168px;
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--input-border);
+  font-size: 12px;
+}
+.set-field select:disabled { opacity: 0.45; }
+
+/* Smart shuffle gets its own tint so the third state is not a mystery. */
+.cbtn.smart { color: var(--accent-text); }
+.cbtn.smart { box-shadow: inset 0 0 0 1px var(--accent-line); }
+
+/* Provenance rows are visibly a side channel, not part of the user's list. */
+.q-row .rec-badge { margin-left: 5px; padding: 0 5px; font-size: 8.5px; }
+.q-acts button[data-a="dismiss"]:hover { color: var(--accent-bright); }
+
 @media (max-width: 1240px) {
   #app { grid-template-columns: 252px minmax(0, 1fr); }
   #nowplaying { display: none; }
