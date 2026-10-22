@@ -17,6 +17,17 @@
  * Nothing here talks to the network, so the whole policy is testable.
  */
 
+/**
+ * The limit, in one sentence.
+ *
+ * Every surface that mentions the limit — the header banner, the Settings
+ * panel, the capability matrix — renders this constant rather than its own
+ * paraphrase. Drift here is the difference between "browse-only" and a vague
+ * promise someone reads as "it will probably play".
+ */
+export const BROWSE_ONLY_NOTE =
+  'YouTube Music is browse-only here: YouTube will not serve audio to this server, so these tracks cannot play. Switch to JioSaavn to listen.'
+
 export const SOURCE_ID = {
   jiosaavn: 'jiosaavn',
   ytmusic: 'ytmusic',
@@ -29,7 +40,7 @@ export const SOURCES = [
     short: 'Saavn',
     /** Catalogue + audio, in every build. */
     plays: 'here',
-    note: 'Full catalogue and playback, on every device.',
+    note: 'JioSaavn provides both the catalogue and the audio, on every device.',
   },
   {
     id: SOURCE_ID.ytmusic,
@@ -37,7 +48,7 @@ export const SOURCES = [
     short: 'YT Music',
     /** Catalogue only; audio needs a session this deployment does not have. */
     plays: 'catalogue-only',
-    note: 'Browse and search only. YouTube will not serve audio to this server, so these tracks cannot play here yet.',
+    note: BROWSE_ONLY_NOTE,
   },
 ]
 

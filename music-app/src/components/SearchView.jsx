@@ -7,7 +7,7 @@ import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
-import { SOURCE_ID, SOURCES, cataloguePath, mapYtResults, sourceOf } from '../lib/sources.js'
+import { SOURCE_ID, cataloguePath, mapYtResults } from '../lib/sources.js'
 
 const ENDPOINT = {
   songs: (q) => `/search/songs?query=${encodeURIComponent(q)}&limit=20`,
@@ -23,7 +23,7 @@ export function SearchView({ query, tab, onCount }) {
   const { setStatus } = useStatus()
   const { navigate } = useUI()
   const { setQueue } = usePlayer()
-  const { source, setSource } = useSettings()
+  const { source } = useSettings()
 
   // YouTube Music can search, but not play: the note below the results says so
   // instead of leaving a listener to discover it by pressing play.
@@ -66,34 +66,9 @@ export function SearchView({ query, tab, onCount }) {
   if (!data?.length)
     return <EmptyState icon="search" title={`No ${tab} found`} hint="Try another search." />
 
-  if (tab === 'songs') {
-    const chosen = sourceOf(source)
-    return (
-      <>
-        {/* The choice lives where the results are, not buried in Settings —
-            switching source is something you want mid-search. */}
-        <div className="src-switch" role="group" aria-label="Music source">
-          {SOURCES.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className={'src-chip' + (s.id === source ? ' on' : '')}
-              aria-pressed={s.id === source}
-              onClick={() => setSource(s.id)}
-            >
-              {s.short}
-            </button>
-          ))}
-        </div>
-        <p className="set-note src-note">
-          {chosen.plays === 'catalogue-only'
-            ? chosen.note
-            : `Searching ${chosen.label}.`}
-        </p>
-        <SongList songs={data} />
-      </>
-    )
-  }
+  // The source switch itself lives in the top bar (see SourceSwitch), so the
+  // results do not repeat it; the banner there carries the limit.
+  if (tab === 'songs') return <SongList songs={data} />
   if (tab === 'artists')
     return <ArtistGrid items={data} onOpen={(a) => navigate({ kind: 'artist', id: a.id })} />
   return (
