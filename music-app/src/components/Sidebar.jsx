@@ -12,6 +12,9 @@ export const NAV = [
   { kind: 'feed', icon: 'home', label: 'Listen Now' },
   { kind: 'search', icon: 'search', label: 'Search' },
   { kind: 'library', icon: 'library', label: 'Library' },
+  // "For you" sits next to Stats on purpose: both are about your own
+  // listening, one is the record and the other is the mix built from it.
+  { kind: 'taste', icon: 'sparkle', label: 'For you' },
   { kind: 'stats', icon: 'stats', label: 'Stats' },
 ]
 

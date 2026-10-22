@@ -38,6 +38,7 @@ import {
   parseExpiry,
 } from '../lib/stream.js'
 import { EVENTS, track as telemetry } from '../lib/telemetry.js'
+import { buildTaste, rankByTaste, recentlyPlayedIds } from '../lib/taste.js'
 import { useSettings } from './SettingsContext.jsx'
 import { useLibrary } from './LibraryContext.jsx'
 import { useStatus } from './StatusContext.jsx'
@@ -58,6 +59,27 @@ const MIN_CROSSFADE_RUN = 0.06
 // to resume with one tap — instead of an empty player.
 const SESSION_KEY = 'svSession'
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+// The playhead is stored separately from the queue: rewriting a 120-track
+// queue every few seconds to save one number is a lot of localStorage churn.
+const RESUME_KEY = 'svResume'
+/**
+ * The sleep fade rides on top of both other volume lanes: user volume and the
+ * crossfade curve. One writer keeps the three from fighting — a ramp that the
+ * next crossfade tick overwrites is not a fade, it is a glitch.
+ */
+function writeVol(el, frac, mul = 1) {
+  if (!el) return
+  try {
+    const v = frac * mul
+    el.volume = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0))
+  } catch {
+    /* deck detached */
+  }
+}
+
+/** Below this a resume is not worth the seek. */
+const RESUME_MIN_SEC = 5
+const RESUME_TICK_MS = 5000
 
 function readSavedSession() {
   const empty = { queue: [], index: -1 }
@@ -74,6 +96,24 @@ function readSavedSession() {
 }
 
 /**
+ * The saved playhead, if — and only if — it belongs to the track that the
+ * saved queue is sitting on. A stale id means the listener moved on: silently
+ * seeking is worse than starting from zero.
+ */
+function readSavedPosition(songId) {
+  if (!songId) return 0
+  const saved = store.getJSON(RESUME_KEY, null)
+  if (!saved || saved.id !== songId) return 0
+  if (!saved.at || Date.now() - saved.at > SESSION_TTL_MS) return 0
+  const pos = Number(saved.pos)
+  if (!Number.isFinite(pos) || pos < RESUME_MIN_SEC) return 0
+  const dur = Number(saved.dur)
+  // A position at (or past) the end is a finished track, not a resume point.
+  if (Number.isFinite(dur) && dur > 0 && pos >= dur - 2) return 0
+  return pos
+}
+
+/**
  * Owns playback. Two <audio> decks are held in refs and driven imperatively so
  * that a crossfade — which runs on a 50ms interval and touches both elements —
  * is never interrupted by a React re-render. Only the values the UI actually
@@ -81,7 +121,7 @@ function readSavedSession() {
  */
 export function PlayerProvider({ children }) {
   const settings = useSettings()
-  const { statsOnPlay, flushStats } = useLibrary()
+  const { statsOnPlay, flushStats, loadStats } = useLibrary()
   const { setStatus } = useStatus()
 
   // Read once, before the first paint, so the restored track is in the very
@@ -92,7 +132,12 @@ export function PlayerProvider({ children }) {
   const [queue, setQueueState] = useState(() => bootRef.current.queue)
   const [currentIndex, setCurrentIndex] = useState(() => bootRef.current.index)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [clock, setClock] = useState({ cur: 0, dur: 0 })
+  const bootTrack = bootRef.current.index >= 0 ? bootRef.current.queue[bootRef.current.index] : null
+  const bootPos = readSavedPosition(bootTrack?.id)
+  // The UI should show the restored playhead before anything is loaded.
+  const [clock, setClock] = useState(() =>
+    bootPos > 0 ? { cur: bootPos, dur: Number(bootTrack?.duration) || 0 } : { cur: 0, dur: 0 }
+  )
   const [volume, setVolumeState] = useState(0.85)
   // Transition truth, not a timer: the badge and the cover cross-fade read this.
   const [transition, setTransition] = useState({ state: 'idle', kind: null, reason: null, dur: 0 })
@@ -105,6 +150,9 @@ export function PlayerProvider({ children }) {
   const fadeTimer = useRef(null)
   const fadeOutEl = useRef(null)
   const baseVol = useRef(0.85)
+  // Sleep fade multiplier. 1 = normal, 0 = silent. Read by every volume write
+  // so a fade survives crossfades and volume changes.
+  const sleepMul = useRef(1)
   // Element volume and crossfade gain are the same lane on <audio>; with a Web
   // Audio graph they are separate nodes. Keeping them apart is what stops a
   // "volume" change from bending the crossfade curve.
@@ -139,6 +187,9 @@ export function PlayerProvider({ children }) {
   const radioFailed = useRef(false)
   const playedRec = useRef(null)
   const trackStart = useRef(0)
+  // Where playback should resume on the next load, consumed once.
+  const resumePos = useRef(bootPos)
+  const resumeFor = useRef(bootPos > 0 ? bootTrack?.id || null : null)
   // Set once qRemove exists; dismissRecommendation is declared earlier than the
   // queue mutators it uses.
   const qRemoveRef = useRef(null)
@@ -173,7 +224,7 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     if (!activeRef.current) activeRef.current = deckA.current
     ;[deckA.current, deckB.current].forEach((el) => {
-      if (el) el.volume = baseVol.current
+      writeVol(el, baseVol.current, sleepMul.current)
     })
   }, [])
 
@@ -278,7 +329,7 @@ export function PlayerProvider({ children }) {
       if (!el) return
       resetDeckGain(el)
       try {
-        el.volume = baseVol.current
+        writeVol(el, baseVol.current, sleepMul.current)
       } catch {
         /* deck not ready */
       }
@@ -323,7 +374,7 @@ export function PlayerProvider({ children }) {
         resetDeckGain(outEl)
         resetDeckGain(inEl)
         try {
-          inEl.volume = baseVol.current
+          writeVol(inEl, baseVol.current, sleepMul.current)
         } catch {
           /* ignore */
         }
@@ -339,7 +390,7 @@ export function PlayerProvider({ children }) {
         setTransition({ state: 'idle', kind: 'hard_cut', law: null, reason: null, dur: 0 })
         finish()
         try {
-          inEl.volume = baseVol.current
+          writeVol(inEl, baseVol.current, sleepMul.current)
         } catch {
           /* ignore */
         }
@@ -372,8 +423,8 @@ export function PlayerProvider({ children }) {
       }
 
       try {
-        outEl.volume = baseVol.current
-        inEl.volume = scheduled ? baseVol.current : 0
+        writeVol(outEl, baseVol.current, sleepMul.current)
+        writeVol(inEl, scheduled ? baseVol.current : 0, sleepMul.current)
       } catch {
         /* ignore */
       }
@@ -385,8 +436,8 @@ export function PlayerProvider({ children }) {
         if (!scheduled) {
           const g = fadeGains(fadeLaw.current, e)
           try {
-            outEl.volume = Math.max(0, Math.min(1, baseVol.current * g.out))
-            inEl.volume = Math.max(0, Math.min(1, baseVol.current * g.in))
+            writeVol(outEl, baseVol.current * g.out, sleepMul.current)
+            writeVol(inEl, baseVol.current * g.in, sleepMul.current)
           } catch {
             /* deck detached */
           }
@@ -566,6 +617,8 @@ export function PlayerProvider({ children }) {
 
   const afterStart = useCallback(
     (song) => {
+      // A different track started, so a pending resume no longer applies.
+      if (resumeFor.current && song?.id !== resumeFor.current) resumeFor.current = null
       settleOutgoing()
       trackStart.current = now()
       playedRec.current = song?._prov
@@ -598,6 +651,53 @@ export function PlayerProvider({ children }) {
     })
     telemetry(EVENTS.transitionPlanned, { type: plan.type, reason: plan.reason, law: plan.law })
     return { dur: plan.lengthSec, law: plan.law, plan }
+  }, [])
+
+  /**
+   * Seek to the restored playhead — once, and only on the track it belongs to.
+   * Guarding on the id matters: the listener can start a different song first,
+   * and inheriting a stranger's position would be a bug, not a nice touch.
+   */
+  const armResume = useCallback((el, song) => {
+    if (!el || !resumeFor.current || song?.id !== resumeFor.current) return
+    const pos = resumePos.current
+    resumeFor.current = null
+    resumePos.current = 0
+    if (!(pos > 0)) return
+    const apply = () => {
+      try {
+        const dur = Number(el.duration)
+        if (Number.isFinite(dur) && dur > 0 && pos >= dur - 2) return
+        el.currentTime = pos
+        setClock((c) => ({ ...c, cur: pos }))
+      } catch {
+        /* the stream refused the seek; starting at 0 is acceptable */
+      }
+    }
+    if (el.readyState >= 1) apply()
+    else
+      el.addEventListener('loadedmetadata', function h() {
+        el.removeEventListener('loadedmetadata', h)
+        apply()
+      })
+  }, [])
+
+  /** Write the playhead for the track that is playing right now. */
+  const savePosition = useCallback(() => {
+    const el = active()
+    const song = queueRef.current[idxRef.current]
+    if (!el || !song || !el.src) return
+    const pos = Number(el.currentTime) || 0
+    if (pos < RESUME_MIN_SEC) {
+      store.remove(RESUME_KEY)
+      return
+    }
+    store.setJSON(RESUME_KEY, {
+      id: song.id,
+      pos: Math.floor(pos),
+      dur: Math.floor(Number(el.duration) || Number(song.duration) || 0),
+      at: Date.now(),
+    })
   }, [])
 
   const resolveQuality = useCallback((song) => {
@@ -663,13 +763,14 @@ export function PlayerProvider({ children }) {
       streamAttempts.current = 0
       prepDeck(el)
       el.src = url
-      el.volume = baseVol.current
+      writeVol(el, baseVol.current, sleepMul.current)
       resetDeckGain(el)
+      armResume(el, s)
       el.play().catch((e) => setStatus('Playback blocked: ' + e.message + ' (tap play)', true))
       afterStart(s)
       setStatus('Playing: ' + decodeHtml(s.name))
     },
-    [afterStart, cancelFade, prepDeck, resetDeckGain, resolveQuality, setStatus, swapTo]
+    [afterStart, armResume, cancelFade, prepDeck, resetDeckGain, resolveQuality, setStatus, swapTo]
   )
 
   const stopPlayback = useCallback(
@@ -853,7 +954,7 @@ export function PlayerProvider({ children }) {
     // resolveQuality honours an automatic downgrade; using the raw preference
     // here would quietly undo the recovery on the next reload.
     el.src = streamOf(s, resolveQuality(s))
-    el.volume = baseVol.current
+    writeVol(el, baseVol.current, sleepMul.current)
     const restore = () => {
       try {
         if (isFinite(t) && t > 0) el.currentTime = t
@@ -988,6 +1089,21 @@ export function PlayerProvider({ children }) {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
+  /**
+   * The sleep timer's volume lane. The hook calls this every 250ms through the
+   * final SLEEP_FADE_SEC of the countdown, then with 1 once the timer is off —
+   * a cancelled timer must hand the volume back, not leave it quiet.
+   */
+  const setSleepGain = useCallback((g) => {
+    const mul = Number.isFinite(g) ? Math.max(0, Math.min(1, g)) : 1
+    sleepMul.current = mul
+    // Mid-crossfade the tick owns the writes; it reads sleepMul on each frame.
+    if (!fadeTimer.current) {
+      writeVol(active(), baseVol.current, mul)
+      writeVol(other(), baseVol.current, mul)
+    }
+  }, [])
+
   /** Called when the listener picks a quality themselves. */
   const clearForcedQuality = useCallback(() => {
     forcedQuality.current = null
@@ -998,7 +1114,7 @@ export function PlayerProvider({ children }) {
     setVolumeState(v)
     if (!fadeTimer.current) {
       try {
-        active().volume = v
+        writeVol(active(), v, sleepMul.current)
       } catch {
         /* ignore */
       }
@@ -1163,7 +1279,7 @@ export function PlayerProvider({ children }) {
       el.addEventListener('timeupdate', onTime)
       el.addEventListener('ended', onEnded)
       el.addEventListener('error', onError)
-      el.volume = baseVol.current
+      writeVol(el, baseVol.current, sleepMul.current)
     })
     return () => {
       decks.forEach((el) => {
@@ -1175,6 +1291,25 @@ export function PlayerProvider({ children }) {
       })
     }
   }, [swapTo, cancelFade, stopPlayback, nextTrack, setStatus])
+
+  // Persist the playhead on a slow tick, and immediately when the app is
+  // backgrounded or closed — a phone kills the tab without warning.
+  useEffect(() => {
+    const t = setInterval(savePosition, RESUME_TICK_MS)
+    const flush = () => savePosition()
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') savePosition()
+    }
+    window.addEventListener('beforeunload', flush)
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      clearInterval(t)
+      window.removeEventListener('beforeunload', flush)
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onHide)
+    }
+  }, [savePosition])
 
   // Credit listening time periodically, not just on track change.
   useEffect(() => {
@@ -1357,7 +1492,7 @@ export function PlayerProvider({ children }) {
     () => ({
       queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
       setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
-      seekFrac, seekBy, seekTo, setVolume, reloadActive, qMove, qRemove, qClear,
+      seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       // Transition truth for the "Mixing" badge, plus typed stop reasons so the
       // UI can offer the right recovery instead of one generic error.
@@ -1374,7 +1509,7 @@ export function PlayerProvider({ children }) {
     [
       queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
       setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
-      seekFrac, seekBy, seekTo, setVolume, reloadActive, qMove, qRemove, qClear,
+      seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       transition, stopReason, dismissRecommendation, clearForcedQuality,
     ]

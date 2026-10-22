@@ -3,12 +3,13 @@ import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
+import { artistsOf } from '../lib/song.js'
 
 /**
  * Renders `songs` and, on click, makes that list the queue. `numbered` matches
  * the album/playlist presentation; search results are unnumbered.
  */
-export function SongList({ songs, numbered = false, onRemove = null }) {
+export function SongList({ songs, numbered = false, onRemove = null, allowExclude = false, onExclude = null }) {
   const { likedIds, toggleLike } = useLibrary()
   const { queue, currentIndex, playFromList, startRadioFrom } = usePlayer()
   const { dataSaver } = useSettings()
@@ -31,6 +32,9 @@ export function SongList({ songs, numbered = false, onRemove = null }) {
           onAddToPlaylist={() => openPlaylistModal(s)}
           onRemove={onRemove ? () => onRemove(s.id) : null}
           onRadio={() => startRadioFrom(s)}
+          onExclude={
+            allowExclude && onExclude ? () => onExclude(artistsOf(s).split(',')[0].trim()) : null
+          }
         />
       ))}
     </div>

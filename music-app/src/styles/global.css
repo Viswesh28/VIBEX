@@ -380,6 +380,16 @@ h2#resultTitle {
   transition: background 0.16s, border-color 0.16s, color 0.16s, transform 0.16s;
 }
 .chip:hover { border-color: var(--accent-line); background: var(--card-hover); color: var(--text); transform: translateY(-1px); }
+.chip { display: inline-flex; align-items: center; gap: 6px; }
+.chip.off { opacity: 0.45; text-decoration: line-through; }
+
+/* The seed chips on "For you": what the mix was built from, and a one-tap way
+   to take an artist back out of it. */
+.taste-seeds { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 18px; }
+.exclude-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.set-row .set-label { flex: 1; text-align: left; min-width: 0; }
+.set-row .set-count { min-width: 24px; }
+.btn-ghost.danger { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent-line); }
 
 /* ---------- buttons ----------------------------------------------------- */
 .btn-primary, .btn-ghost {
@@ -557,6 +567,9 @@ h2#resultTitle {
   animation: fadeUp 0.3s ease backwards;
 }
 .song-row:hover { background: var(--card); }
+/* The exclude control is opt-in, so it gets its own column instead of
+   shifting every other cell in every list. */
+.song-row.with-exclude { grid-template-columns: 46px minmax(0, 1fr) 180px 34px 34px 34px 34px 46px; }
 .song-row.playing { background: var(--card); border-color: var(--accent-line); }
 .s-art { position: relative; width: 46px; height: 46px; flex-shrink: 0; }
 .s-art img {
@@ -588,16 +601,18 @@ h2#resultTitle {
   font-size: 12px; color: var(--muted); text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.like-btn, .pl-btn, .radio-btn, .rm-btn {
+.like-btn, .pl-btn, .radio-btn, .rm-btn, .excl-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; border-radius: 9px;
   color: var(--muted); background: transparent;
   opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
 .song-row:hover .like-btn, .song-row:hover .pl-btn,
-.song-row:hover .radio-btn, .song-row:hover .rm-btn { opacity: 1; }
+.song-row:hover .radio-btn, .song-row:hover .rm-btn,
+.song-row:hover .excl-btn { opacity: 1; }
 .like-btn.liked { opacity: 1; color: var(--heart); }
 .like-btn:hover, .pl-btn:hover, .radio-btn:hover { background: var(--card-hover); color: var(--text); }
+.excl-btn:hover { background: var(--card-hover); color: var(--warn, #e0a35c); }
 .like-btn:hover { color: var(--heart); }
 .rm-btn:hover { background: var(--card-hover); color: var(--heart); }
 .radio-btn:hover { color: var(--accent-text); }
@@ -1293,6 +1308,7 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   .tabs { flex: 0 0 auto; }
   .s-album { display: none; }
   .song-row { grid-template-columns: 46px minmax(0, 1fr) 34px 34px 34px 46px; }
+  .song-row.with-exclude { grid-template-columns: 46px minmax(0, 1fr) 34px 34px 34px 34px 46px; }
 }
 
 @media (max-width: 1080px) {
@@ -1308,7 +1324,7 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
 
 /* Touch devices cannot hover: every hover-gated action must be visible. */
 @media (hover: none), (pointer: coarse) {
-  .like-btn, .pl-btn, .radio-btn, .rm-btn { opacity: 1; }
+  .like-btn, .pl-btn, .radio-btn, .rm-btn, .excl-btn { opacity: 1; }
   .card-play { opacity: 1; transform: none; }
   /* Queue reordering is hover-revealed on a mouse; a finger cannot hover. */
   .q-acts { display: flex; }
@@ -1422,7 +1438,7 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   .s-album, .s-dur { display: none; }
   .s-title { font-size: 13.5px; }
   .s-artist { font-size: 12px; }
-  .like-btn, .pl-btn, .radio-btn, .rm-btn { width: 40px; height: 40px; opacity: 1; }
+  .like-btn, .pl-btn, .radio-btn, .rm-btn, .excl-btn { width: 40px; height: 40px; opacity: 1; }
   .stat-row { grid-template-columns: 18px 40px minmax(0, 1fr) auto; gap: 10px; padding: 8px 4px; }
   .stat-row img { width: 40px; height: 40px; }
   .stat-row .n { font-size: 11px; }

@@ -137,7 +137,62 @@ analytics dependency. The vocabulary is intentionally small: `home.degraded`,
 `recommend.skipped_early`, `autoplay.failed`, `transition.planned`,
 `transition.fallback`, `stream.recovered`, `stream.failed`.
 
-## 7. What this build deliberately does not do
+## 7. Taste, resume, privacy, sleep
+
+Four small pieces of state that make the player feel like it remembers you,
+each deliberately kept in its own module so it can be tested without a DOM.
+
+### `src/lib/taste.js` — the local ranker
+
+`buildTaste(stats, { excluded })` turns the on-device `svStats` blob into a
+weighted artist map. Two properties matter:
+
+* **Completion beats plays.** `songWeight` multiplies a play by the share of
+  the track actually heard (`sec / dur`), with a skip under 15% counting for
+  `0.3×`. A track left running while the phone is in a pocket should not
+  outweigh one listened to.
+* **Recency decays.** `recencyWeight` is a 14-day half-life computed from the
+  entry's `last` timestamp, so this month's taste outranks last year's.
+
+`rankByTaste` then filters candidates — dismissed, already queued, played in
+the last 3 days, excluded artists, no stream URL — and sorts by affinity.
+`pickSeeds` takes the top three artists, and the "For you" view fetches their
+top songs and ranks them. Every ordering decision is in this one module; the
+view only fetches and renders.
+
+### `src/lib/sleep.js` — the fade
+
+The sleep timer no longer cuts playback dead. `sleepGain(elapsed, total)` is an
+equal-power cosine ramp over the last `SLEEP_FADE_SEC` (20s), returning exactly
+`1` outside the window and exactly `0` at the end — the exact-zero case is
+special-cased because `cos(π/2)` is `6.1e-17`, not zero, and a non-zero floor is
+audible as a click plus a tiny leak of sound after "stop". The gain is a third
+volume lane on top of user volume and the crossfade curve, applied through a
+single `writeVol` helper so a crossfade tick cannot overwrite the fade.
+
+### Resume with a position
+
+`svSession` stores the queue; `svResume` stores `{ id, pos, dur, at }` on a 5s
+tick and whenever the page is hidden or unloaded. On boot the playhead is only
+restored if the saved id matches the track the queue is sitting on, the entry is
+under 7 days old, the position is past 5s, and it is not within 2s of the end.
+Restoring still leaves playback paused: a reload must not start making noise.
+
+### Privacy controls
+
+* **Private session** (`svPrivate`) — `LibraryContext` short-circuits its
+  recording path, so plays, seconds, recency and artist credit are all skipped.
+  The internal flush clock keeps advancing, so a later public session does not
+  inherit one enormous unattributed chunk of time.
+* **Excluded artists** (`svExcluded`) — a name list consulted by `buildTaste`,
+  `rankByTaste` and the "For you" chips. An excluded artist contributes zero
+  weight rather than negative weight, so excluding does not distort the rest of
+  the profile.
+* **Reset history** — removes `svStats` only. Likes and playlists are separate
+  keys and survive; the destructive action is two-step in the UI because it
+  cannot be undone.
+
+## 8. What this build deliberately does not do
 
 * **No BPM/key analysis.** The planner supports it, the app does not ship a
   time-stretch/DSP stage, and pretending to beat-match without an analyser is

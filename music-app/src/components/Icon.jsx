@@ -69,6 +69,12 @@ const STROKE = {
   close: <path d="m6.2 6.2 11.6 11.6M17.8 6.2 6.2 17.8" />,
   plus: <path d="M12 5.2v13.6M5.2 12h13.6" />,
   check: <path d="m5.2 12.6 4.4 4.4L18.8 7.4" />,
+  ban: (
+    <>
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="m6.4 17.6 11.2-11.2" />
+    </>
+  ),
   more: (
     <>
       <circle cx="5.6" cy="12" r="1.4" fill="currentColor" stroke="none" />
