@@ -70,4 +70,4 @@ export function embedUrl(track, { origin = '', autoplay = true } = {}) {
 
 /** The line the status bar shows while the embed is open. */
 export const EMBED_NOTE =
-  'Long video — playing in YouTube’s own player rather than as an audio stream.'
+  'Playing in YouTube’s own player — YouTube’s video and ads, not our audio stream.'

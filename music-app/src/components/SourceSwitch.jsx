@@ -1,12 +1,5 @@
-import {
-  BROWSE_ONLY_NOTE,
-  DEVICE_SOURCE_NOTE,
-  SOURCE_ID,
-  SOURCES,
-  sourceOf,
-} from '../lib/sources.js'
+import { BROWSE_ONLY_NOTE, SOURCE_ID, SOURCES, sourceOf } from '../lib/sources.js'
 import { useSettings } from '../state/SettingsContext.jsx'
-import { streamMintBridge } from '../lib/ytStream.js'
 
 /**
  * The choice between catalogues, always in the header.
@@ -54,12 +47,9 @@ export function SourceSwitch() {
 export function SourceBanner() {
   const { source, setSource } = useSettings()
   if (source !== SOURCE_ID.ytmusic) return null
-  // On a device that can mint, "cannot play" would be untrue; what is true is
-  // "it resolves here, and it may still be refused".
-  const note = streamMintBridge() ? DEVICE_SOURCE_NOTE : BROWSE_ONLY_NOTE
   return (
     <div className="src-banner" role="note">
-      <span className="src-banner-text">{note}</span>
+      <span className="src-banner-text">{BROWSE_ONLY_NOTE}</span>
       <button type="button" className="src-banner-btn" onClick={() => setSource(SOURCE_ID.jiosaavn)}>
         Use JioSaavn
       </button>

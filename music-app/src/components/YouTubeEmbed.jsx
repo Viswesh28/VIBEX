@@ -18,20 +18,20 @@ import { usePlayer } from '../state/PlayerContext.jsx'
  * words, which is more accurate than anything this app could infer.
  */
 export function YouTubeEmbed() {
-  const { longForm, closeLongForm } = usePlayer()
-  const open = Boolean(longForm)
+  const { embedTrack, closeEmbed } = usePlayer()
+  const open = Boolean(embedTrack)
 
   const src = useMemo(() => {
-    if (!longForm) return null
+    if (!embedTrack) return null
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
-    return embedUrl({ videoId: longForm.videoId }, { origin, autoplay: true })
-  }, [longForm])
+    return embedUrl({ videoId: embedTrack.videoId }, { origin, autoplay: true })
+  }, [embedTrack])
 
   const onKey = useCallback(
     (e) => {
-      if (e.key === 'Escape') closeLongForm()
+      if (e.key === 'Escape') closeEmbed()
     },
-    [closeLongForm]
+    [closeEmbed]
   )
 
   useEffect(() => {
@@ -42,8 +42,8 @@ export function YouTubeEmbed() {
 
   if (!open || !src) return null
 
-  const title = decodeHtml(longForm.name || 'YouTube video')
-  const artist = longForm.subtitle ? decodeHtml(longForm.subtitle) : ''
+  const title = decodeHtml(embedTrack.name || 'YouTube video')
+  const artist = embedTrack.subtitle ? decodeHtml(embedTrack.subtitle) : ''
 
   return (
     <div id="ytEmbed" role="dialog" aria-modal="true" aria-label="YouTube player">
@@ -58,7 +58,7 @@ export function YouTubeEmbed() {
           id="ytEmbedClose"
           title="Close (Esc)"
           aria-label="Close YouTube player"
-          onClick={closeLongForm}
+          onClick={closeEmbed}
         >
           <Icon name="close" size={18} />
         </button>
@@ -74,7 +74,7 @@ export function YouTubeEmbed() {
         />
       </div>
       <p id="ytEmbedNote">
-        Long videos play here rather than as an audio stream. YouTube’s own controls and
+        YouTube items play here rather than as an audio stream. YouTube’s own controls and
         its advertising apply.
       </p>
     </div>

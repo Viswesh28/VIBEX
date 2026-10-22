@@ -10,16 +10,8 @@ import {
 import { api } from '../lib/api.js'
 import { decodeHtml } from '../lib/format.js'
 import { artistsOf, effQ, streamOf } from '../lib/song.js'
-import { isYtTrack, playbackCopy, playbackPlan } from '../lib/sources.js'
+import { playbackCopy, playbackPlan } from '../lib/sources.js'
 import { EMBED_NOTE, videoIdOf } from '../lib/ytEmbed.js'
-import {
-  forgetStream,
-  invalidateStreams,
-  mintYtStream,
-  streamFailureCopy,
-  streamMintBridge,
-} from '../lib/ytStream.js'
-import { isNative } from '../lib/config.js'
 import { isIOS, preparePlaybackAudioSession } from '../lib/platform.js'
 import { store } from '../lib/storage.js'
 import {
@@ -155,7 +147,7 @@ export function PlayerProvider({ children }) {
   // The long-form embed, when one is open: { id, name, subtitle, videoId }.
   // A different kind of playback from everything else in this file — YouTube's
   // player, not ours — so it is state rather than a fifth deck.
-  const [longForm, setLongForm] = useState(null)
+  const [embedTrack, setLongForm] = useState(null)
 
   // --- decks ---
   const deckA = useRef(null)
@@ -722,19 +714,19 @@ export function PlayerProvider({ children }) {
    * instead of the old catch-all "No stream URL for this song."
    */
   const unplayableCopy = useCallback((song) => {
-    const plan = playbackPlan(song, { native: isNative(), canMint: Boolean(streamMintBridge()) })
+    const plan = playbackPlan(song, { embed: true })
     return playbackCopy(plan.reason) || 'This track has no stream to play.'
   }, [])
 
   /**
-   * Long-form YouTube items open in YouTube's own player.
+   * YouTube items open in YouTube's own player.
    *
-   * This is not a fallback and not an error path: an hour-long mix is a
-   * different kind of thing from a track, and the embed is the player that
-   * streams it well. The local decks are paused first — two players making
-   * sound at once is never what anyone meant — and nothing here mints.
+   * This is not a fallback and not an error path any more: it is the only
+   * route a YouTube track has, in the browser and in the app alike, because
+   * nothing here extracts audio. The local decks are paused first — two
+   * players making sound at once is never what anyone meant.
    */
-  const openLongForm = useCallback(
+  const openEmbed = useCallback(
     (song) => {
       const videoId = videoIdOf(song)
       if (!videoId) {
@@ -757,40 +749,11 @@ export function PlayerProvider({ children }) {
     [cancelFade, setStatus, unplayableCopy]
   )
 
-  const closeLongForm = useCallback(() => {
+  const closeEmbed = useCallback(() => {
     setLongForm(null)
     setStatus('Closed YouTube’s player.')
   }, [setStatus])
 
-  /**
-   * The only route to YouTube audio: mint it from a real page on this device.
-   *
-   * The server cannot, and says so (ADR 0001/0003); a WebView running YouTube's
-   * own script can. `mintYtStream` owns the validity gate, so a URL that only
-   * serves a preview never reaches the player — the failure comes back typed
-   * and is shown as itself, not as a mid-song dropout.
-   *
-   * Returns the URL, or null after explaining why on the status line.
-   */
-  const mintUrl = useCallback(
-    async (song) => {
-      const bridge = streamMintBridge()
-      if (!bridge) {
-        // Native but no plugin: the plan's own refusal is the honest answer.
-        setStatus(unplayableCopy(song), true)
-        return null
-      }
-      const res = await mintYtStream({
-        videoId: song?.videoId || String(song?.id || '').replace(/^yt:/, ''),
-        bridge,
-      })
-      if (res.ok) return res.url
-      telemetry(EVENTS.streamFailed, { songId: song?.id, reason: res.reason })
-      setStatus(streamFailureCopy(res.reason) || unplayableCopy(song), true)
-      return null
-    },
-    [setStatus, unplayableCopy]
-  )
 
 
   const resolveQuality = useCallback((song) => {
@@ -802,19 +765,6 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     resolveQualityRef.current = resolveQuality
   }, [resolveQuality])
-
-  /** A YouTube track with no URL: mint, then continue on the same path. */
-  const resolveUrl = useCallback(
-    async (song) => {
-      const url = streamOf(song, resolveQuality(song))
-      if (url) return url
-      if (!isYtTrack(song)) return null
-      const plan = playbackPlan(song, { native: isNative(), canMint: Boolean(streamMintBridge()) })
-      if (!plan.willMint) return null
-      return mintUrl(song)
-    },
-    [mintUrl, resolveQuality]
-  )
 
   /** Load track `i` onto the idle deck and crossfade into it. */
   const swapTo = useCallback(
@@ -846,27 +796,17 @@ export function PlayerProvider({ children }) {
         finishSwap(direct)
         return
       }
-      const plan = playbackPlan(s, {
-        native: isNative(),
-        canMint: Boolean(streamMintBridge()),
-        // Only a browser tab has an origin YouTube's embed accepts, and only a
-        // tab needs it: the app mints long items like any other file.
-        embed: !isNative(),
-      })
+      // Embed-only: a YouTube item goes to YouTube's own player, on every
+      // client. Anything else that got here carries no stream, and saying so is
+      // better than a spinner.
+      const plan = playbackPlan(s, { embed: true })
       if (plan.mode === 'embed') {
-        openLongForm(s)
+        openEmbed(s)
         return
       }
-      if (!plan.willMint) {
-        setStatus(unplayableCopy(s), true)
-        return
-      }
-      // A cold mint is 2–5 s, so the blend cannot start until it lands. The
-      // queued track is announced while it waits rather than looking wedged.
-      setStatus('Resolving ' + decodeHtml(s.name) + ' on this device…')
-      resolveUrl(s).then(finishSwap)
+      setStatus(unplayableCopy(s), true)
     },
-    [afterStart, openLongForm, prepDeck, resolveQuality, resolveUrl, setStatus, startFade, unplayableCopy]
+    [afterStart, openEmbed, prepDeck, resolveQuality, setStatus, startFade, unplayableCopy]
   )
 
   const playTrack = useCallback(
@@ -902,23 +842,14 @@ export function PlayerProvider({ children }) {
         start(direct)
         return
       }
-      const plan = playbackPlan(s, {
-        native: isNative(),
-        canMint: Boolean(streamMintBridge()),
-        embed: !isNative(),
-      })
+      const plan = playbackPlan(s, { embed: true })
       if (plan.mode === 'embed') {
-        openLongForm(s)
+        openEmbed(s)
         return
       }
-      if (!plan.willMint) {
-        setStatus(unplayableCopy(s), true)
-        return
-      }
-      setStatus('Resolving ' + decodeHtml(s.name) + ' on this device…')
-      resolveUrl(s).then(start)
+      setStatus(unplayableCopy(s), true)
     },
-    [afterStart, armResume, cancelFade, openLongForm, prepDeck, resetDeckGain, resolveQuality, resolveUrl, setStatus, swapTo, unplayableCopy]
+    [afterStart, armResume, cancelFade, openEmbed, prepDeck, resetDeckGain, resolveQuality, setStatus, swapTo, unplayableCopy]
   )
 
   const stopPlayback = useCallback(
@@ -1124,34 +1055,9 @@ export function PlayerProvider({ children }) {
       return
     }
 
-    // A minted URL that failed mid-stream is usually expired or IP-bound to a
-    // network we have left. One re-mint is allowed; `mintYtStream` enforces it.
-    if (!isYtTrack(s)) return
-    const bridge = streamMintBridge()
-    if (!bridge) return
-    forgetStream(s.videoId || String(s.id || '').replace(/^yt:/, ''))
-    mintYtStream({
-      videoId: s.videoId || String(s.id || '').replace(/^yt:/, ''),
-      bridge,
-      force: true,
-    }).then((res) => {
-      if (res.ok) apply(res.url)
-      else setStatus(streamFailureCopy(res.reason) || unplayableCopy(s), true)
-    })
-  }, [cancelFade, prepDeck, resolveQuality, setStatus, unplayableCopy])
-
-  /**
-   * A minted URL is bound to the address that minted it, so leaving Wi-Fi makes
-   * every cached URL a 403 — before its `expire` says anything is wrong. Drop
-   * them now rather than discovering it a track later.
-   */
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined
-    const drop = () => invalidateStreams()
-    const events = ['online', 'offline', 'focus']
-    events.forEach((e) => window.addEventListener(e, drop))
-    return () => events.forEach((e) => window.removeEventListener(e, drop))
-  }, [])
+    // Nothing to re-mint: a track either carries a working signed URL or it
+    // does not, and YouTube items are played by the embed.
+  }, [cancelFade, prepDeck, resolveQuality])
 
   const togglePlay = useCallback(() => {
     if (idxRef.current < 0) {
@@ -1679,7 +1585,7 @@ export function PlayerProvider({ children }) {
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       // The long-form embed: open, and this is what is open. Null otherwise.
-      longForm, closeLongForm,
+      embedTrack, closeEmbed,
       // Transition truth for the "Mixing" badge, plus typed stop reasons so the
       // UI can offer the right recovery instead of one generic error.
       transition,
@@ -1698,7 +1604,7 @@ export function PlayerProvider({ children }) {
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       transition, stopReason, dismissRecommendation, clearForcedQuality,
-      longForm, closeLongForm,
+      embedTrack, closeEmbed,
     ]
   )
 

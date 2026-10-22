@@ -37,7 +37,10 @@ describe('the source registry', () => {
   it('never describes YouTube Music as if it could play here', () => {
     const yt = sourceOf(SOURCE_ID.ytmusic)
     expect(yt.plays).toBe('catalogue-only')
-    expect(yt.note).toMatch(/cannot play|will not serve audio/i)
+    // It plays — but in YouTube's player, with YouTube's video and ads, never
+    // as audio from here. The note has to carry both halves.
+    expect(yt.note).toMatch(/YouTube’s own player/i)
+    expect(yt.note).toMatch(/video and ads/i)
   })
 
   it('falls back to JioSaavn for anything unrecognised', () => {
@@ -106,28 +109,33 @@ describe('playbackPlan', () => {
     expect(playbackPlan(saavnSong)).toEqual({ playable: true, reason: PLAYBACK_REASON.ok })
   })
 
-  it('refuses a YouTube track and says why, per platform', () => {
+  it('sends a YouTube track to YouTube’s player and names that as the reason', () => {
     const t = mapYtResult(ytResult)
-    // In a browser there is nothing that can mint, so the refusal is final.
-    expect(playbackPlan(t).reason).toBe(PLAYBACK_REASON.needsApp)
-    expect(playbackPlan(t).willMint).toBeUndefined()
-    // On the device the app will *attempt* a mint, so the reason is a failure
-    // summary rather than a claim about the server.
-    expect(playbackPlan(t, { native: true })).toMatchObject({
+    // No player to hand it to: a refusal that says so.
+    expect(playbackPlan(t)).toEqual({ playable: false, reason: PLAYBACK_REASON.embed })
+    // A player: the item goes there, with the id the iframe needs.
+    expect(playbackPlan(t, { embed: true })).toMatchObject({
       playable: false,
-      willMint: true,
-      reason: PLAYBACK_REASON.mintFailed,
+      mode: 'embed',
+      videoId: ytResult.videoId,
+      reason: PLAYBACK_REASON.embed,
     })
+    expect(playbackPlan(t, { embed: true }).willMint).toBeUndefined()
   })
 
-  it('will attempt a mint in a browser that has the extension', () => {
+  it('never mints, whatever the platform or capability arguments claim', () => {
     const t = mapYtResult(ytResult)
-    // A plain tab: final refusal.
-    expect(playbackPlan(t, { canMint: false }).willMint).toBeUndefined()
-    // Extension installed: attempt, with the mint's own failure summary.
-    expect(playbackPlan(t, { canMint: true })).toMatchObject({
-      willMint: true,
-      reason: PLAYBACK_REASON.mintFailed,
+    for (const opts of [{ native: true }, { canMint: true }, { native: true, canMint: true }]) {
+      const plan = playbackPlan(t, opts)
+      expect(plan.willMint, JSON.stringify(opts)).toBeUndefined()
+      expect(plan.reason, JSON.stringify(opts)).toBe(PLAYBACK_REASON.embed)
+    }
+  })
+
+  it('refuses a YouTube item with no usable video id, instead of an empty embed', () => {
+    expect(playbackPlan({ id: 'yt:', source: 'ytmusic' }, { embed: true })).toEqual({
+      playable: false,
+      reason: PLAYBACK_REASON.noVideo,
     })
   })
 
@@ -145,22 +153,24 @@ describe('playbackPlan', () => {
     expect(plan.willMint).toBeUndefined()
   })
 
-  it('keeps a normal-length YouTube track on the mint path', () => {
+  it('embeds a normal-length YouTube track too — the twenty-minute rule is moot', () => {
     const t = mapYtResult(ytResult) // 200 s
-    expect(playbackPlan(t, { embed: true, canMint: true })).toMatchObject({
-      willMint: true,
-      reason: PLAYBACK_REASON.mintFailed,
+    expect(playbackPlan(t, { embed: true })).toMatchObject({
+      mode: 'embed',
+      videoId: ytResult.videoId,
+      reason: PLAYBACK_REASON.embed,
     })
-    expect(playbackPlan(t, { embed: true }).mode).toBeUndefined()
   })
 
-  it('never sends a long video to the embed on the device', () => {
-    // A WebView origin is not one YouTube's embed accepts, and the app has a
-    // real mint, so `native` outranks the embed however the caller asks.
+  it('embeds on the device as well, where no mint exists any more', () => {
     const mix = mapYtResult({ ...ytResult, videoId: 'mix12345678', duration: 3600 })
     const plan = playbackPlan(mix, { native: true, embed: true })
-    expect(plan.mode).toBeUndefined()
-    expect(plan.willMint).toBe(true)
+    expect(plan).toMatchObject({
+      mode: 'embed',
+      videoId: 'mix12345678',
+      reason: PLAYBACK_REASON.longForm,
+    })
+    expect(plan.willMint).toBeUndefined()
   })
 
   it('refuses anything else with no stream, without pretending it is YouTube', () => {

@@ -84,13 +84,14 @@ describe('the capability matrix', () => {
     const f = feature('sources')
     expect(f.status).toBe(STATUS.blocked)
     expect(f.claim).toMatch(/browse/i)
-    // The distinction that matters: the device can mint, a server cannot.
-    expect(f.detail).toMatch(/minted on the device/i)
-    expect(f.detail).toMatch(/extension/i)
-    // And the one thing web *can* play is named for what it is: an embed,
-    // not audio-only, and only above the long-form threshold.
-    expect(f.detail).toMatch(/twenty minutes/i)
-    expect(f.detail).toMatch(/embed/i)
+    // There is no extraction path left on any client, so nothing here may
+    // promise on-device audio.
+    expect(f.detail).not.toMatch(/minted on the device/i)
+    expect(f.detail).not.toMatch(/extension/i)
+    // What it can do is named for what it is: YouTube's own player, video and
+    // ads included — not audio-only, not our transport.
+    expect(f.detail).toMatch(/YouTube’s own player/i)
+    expect(f.detail).toMatch(/video and ads/i)
   })
 
   it('counts only what actually ships', () => {
