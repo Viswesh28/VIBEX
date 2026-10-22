@@ -4,38 +4,78 @@
   "buildCommand": "npm run build --prefix music-app",
   "outputDirectory": "music-app/dist",
   "functions": {
-    "api/[...path].mjs": { "maxDuration": 60 },
-    "api/dl.mjs": { "maxDuration": 60 },
-    "api/ytmusic.mjs": { "maxDuration": 30 },
-    "api/search/[path].mjs": { "maxDuration": 60 },
-    "api/artists/[path].mjs": { "maxDuration": 60 },
-    "api/songs/[path].mjs": { "maxDuration": 60 }
+    "api/[...path].mjs": {
+      "maxDuration": 60
+    },
+    "api/dl.mjs": {
+      "maxDuration": 60
+    },
+    "api/ytmusic.mjs": {
+      "maxDuration": 30
+    },
+    "api/search/[path].mjs": {
+      "maxDuration": 60
+    },
+    "api/artists/[path].mjs": {
+      "maxDuration": 60
+    },
+    "api/songs/[path].mjs": {
+      "maxDuration": 60
+    },
+    "api/canvas.mjs": {
+      "maxDuration": 30
+    }
   },
   "rewrites": [
-    { "source": "/dl", "destination": "/api/dl" }
+    {
+      "source": "/dl",
+      "destination": "/api/dl"
+    }
   ],
   "headers": [
     {
       "source": "/sw.js",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
-        { "key": "Service-Worker-Allowed", "value": "/" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
       ]
     },
     {
       "source": "/manifest.webmanifest",
       "headers": [
-        { "key": "Content-Type", "value": "application/manifest+json; charset=utf-8" },
-        { "key": "Cache-Control", "value": "public, max-age=3600" }
+        {
+          "key": "Content-Type",
+          "value": "application/manifest+json; charset=utf-8"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600"
+        }
       ]
     },
     {
       "source": "/icons/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800, immutable" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=604800, immutable"
+        }
+      ]
     },
     {
       "source": "/splash/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800, immutable" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=604800, immutable"
+        }
+      ]
     }
   ]
 }

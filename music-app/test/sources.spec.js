@@ -50,7 +50,7 @@ describe('the source registry', () => {
   it('points each source at its own catalogue endpoint', () => {
     expect(cataloguePath(SOURCE_ID.jiosaavn, 'arijit')).toBe('/search/songs?query=arijit&limit=20')
     expect(cataloguePath(SOURCE_ID.ytmusic, 'blinding lights', 5)).toBe(
-      '/ytmusic/search?query=blinding%20lights&limit=5'
+      '/ytmusic?query=blinding%20lights&limit=5'
     )
   })
 })

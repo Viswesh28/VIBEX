@@ -56,7 +56,7 @@ export function normalizeSource(id) {
 export function cataloguePath(source, query, limit = 20) {
   const q = encodeURIComponent(query)
   return source === SOURCE_ID.ytmusic
-    ? `/ytmusic/search?query=${q}&limit=${limit}`
+    ? `/ytmusic?query=${q}&limit=${limit}`
     : `/search/songs?query=${q}&limit=${limit}`
 }
 
