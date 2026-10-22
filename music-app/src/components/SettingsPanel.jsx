@@ -26,6 +26,7 @@ const CAP_ICONS = {
   [STATUS.strength]: 'sparkle',
   [STATUS.local]: 'clock',
   [STATUS.unavailable]: 'close',
+  [STATUS.blocked]: 'clock',
 }
 const IOS_STEPS = 'Tap the Share button in Safari, scroll down, then choose “Add to Home Screen”.'
 
@@ -305,6 +306,25 @@ export function SettingsPanel({ open, sleep }) {
             <option value="orbit">Orbit (simulated)</option>
           </select>
         </div>
+        <label className="switch-row">
+          <span>Canvas video in the full player</span>
+          <span>
+            <input
+              type="checkbox"
+              aria-label="Canvas video in the full player"
+              checked={s.canvas}
+              onChange={(e) => s.setCanvas(e.target.checked)}
+            />
+            <span className="switch" />
+          </span>
+        </label>
+        <p className="set-note">
+          {s.dataSaver
+            ? 'Off while Data Saver is on — the clip would be a second download.'
+            : s.canvas
+              ? 'Looks up a looping clip on YouTube Music when you open the full player. Audio stays on JioSaavn; falls back to artwork if none is found. YouTube needs a signed-in session for music tracks, which this server does not have, so artwork is what you will see.'
+              : 'Off — the full player shows artwork only, and nothing is requested from YouTube.'}
+        </p>
         <p className="set-note">
           {visual.reason === 'live_audio_unavailable'
             ? s.ios
@@ -395,9 +415,11 @@ export function SettingsPanel({ open, sleep }) {
           <span>What VIBEX can and can’t do</span>
         </div>
         <p className="set-note">
-          One source, {SOURCE.label} — up to {SOURCE.maxKbps} kbps {SOURCE.format}.{' '}
+          Audio comes from one source, {SOURCE.label} — up to {SOURCE.maxKbps} kbps {SOURCE.format}.{' '}
           {caps.available} of {caps.total} capabilities below work; the rest are listed because no
-          setting, and no second source, would produce them.
+          setting would produce them. Canvas video is the one cross-source extra — the clip would
+          come from YouTube Music, but YouTube will not describe music tracks without a signed-in
+          session, so it stays artwork.
         </p>
         <ul className="cap-list">
           {FEATURES.map((f) => (

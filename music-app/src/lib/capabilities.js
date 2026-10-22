@@ -34,6 +34,14 @@ export const STATUS = {
   local: 'local',
   /** No source in this app can supply it, now or later. */
   unavailable: 'unavailable',
+  /**
+   * Shipped, but this deployment cannot reach it. Distinct from `unavailable`
+   * because the code is real and self-healing: the only thing standing between
+   * the listener and the feature is a challenge from the provider, not a
+   * missing capability. Reported rather than hidden — a silent failure here
+   * would be a claim by omission.
+   */
+  blocked: 'blocked',
 }
 
 /**
@@ -73,9 +81,10 @@ export const FEATURES = [
   {
     id: 'canvasVideo',
     label: 'Canvas video',
-    status: STATUS.unavailable,
-    claim: 'Not available',
-    detail: 'There is no video source behind the catalogue. The visualiser is drawn locally — no video is fetched.',
+    status: STATUS.blocked,
+    claim: 'Needs a YouTube session',
+    detail:
+      'A cross-source extra: audio stays on JioSaavn and only the looping clip would come from YouTube. YouTube will not describe a music track to a client without a signed-in session, and this server has none, so no clip can be fetched. The player shows artwork instead, and a health check re-enables the lookup by itself if that changes.',
   },
   {
     id: 'beatMatch',
@@ -101,7 +110,13 @@ export const FEATURES = [
 ]
 
 /** Features whose absence must never be papered over. */
-export const NEVER_CLAIM = ['lossless', 'skipSilence', 'canvasVideo']
+export const NEVER_CLAIM = ['lossless', 'skipSilence']
+
+/**
+ * Capabilities that depend on a second provider rather than the catalogue.
+ * Kept explicit so "one source" never turns into a false claim about the app.
+ */
+export const CROSS_SOURCE = ['canvasVideo']
 
 /** One row by id, or null. */
 export function feature(id) {

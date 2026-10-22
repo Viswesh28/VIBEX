@@ -1,7 +1,9 @@
+import { useEffect, useRef } from 'react'
 import { decodeHtml, fmt } from '../lib/format.js'
 import { artistsOf, dlUrlFor, estimate, firstArtistId, imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
 import { RecBadge, TransitionBadge } from './Provenance.jsx'
+import { useCanvasVideo } from '../hooks/useCanvasVideo.js'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
@@ -27,9 +29,50 @@ export function FullPlayer({ onDownload }) {
   const liked = current ? likedIds.has(current.id) : false
   const est = estimate(currentQuality, current?.duration)
 
+  // The clip is fetched only while this view is open, so a listener who never
+  // opens it never causes a request to the second provider.
+  const { url: canvasUrl } = useCanvasVideo({
+    track: current,
+    open,
+    dataSaver: s.dataSaver,
+    enabled: s.canvas,
+  })
+  const videoRef = useRef(null)
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    // Muted, looping wallpaper that follows the transport — it must never
+    // fight the audio for the play button or continue under a paused track.
+    if (isPlaying) v.play()?.catch(() => {})
+    else v.pause()
+  }, [isPlaying, canvasUrl, open])
+
   return (
     <div id="fullPlayer" className={'full-player' + (open ? ' open' : '')}>
-      <div id="fpBg" style={{ backgroundImage: img ? `url("${img}")` : 'none' }} aria-hidden="true" />
+      {canvasUrl && (
+        <video
+          id="fpCanvas"
+          ref={videoRef}
+          className={isPlaying ? 'on' : ''}
+          src={canvasUrl}
+          muted
+          loop
+          playsInline
+          preload="none"
+          aria-hidden="true"
+          onError={() => {
+            // A clip that will not decode falls back to the artwork rather
+            // than leaving a black rectangle where the design should be.
+            if (videoRef.current) videoRef.current.style.opacity = '0'
+          }}
+        />
+      )}
+      <div
+        id="fpBg"
+        className={canvasUrl ? 'has-canvas' : ''}
+        style={{ backgroundImage: img ? `url("${img}")` : 'none' }}
+        aria-hidden="true"
+      />
       <div id="fpShade" onClick={() => setFullOpen(false)} aria-hidden="true" />
       <div id="fpInner" role="dialog" aria-modal="true" aria-label="Full-screen player">
         <div id="fpTop">

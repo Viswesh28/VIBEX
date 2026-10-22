@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
+  CROSS_SOURCE,
   FEATURES,
   NEVER_CLAIM,
   SOURCE,
@@ -56,6 +57,24 @@ describe('the capability matrix', () => {
 
   it('marks beat-matched transitions as unfinished rather than shipping a fake', () => {
     expect(feature('beatMatch').status).toBe(STATUS.local)
+  })
+
+  it('declares canvas video as cross-source, not as catalogue data', () => {
+    // The audio is JioSaavn; the clip is YouTube. The qualifier is not optional.
+    expect(CROSS_SOURCE).toContain('canvasVideo')
+    expect(feature('canvasVideo').detail).toMatch(/YouTube/i)
+  })
+
+  it('reports the canvas as blocked rather than selling it as available', () => {
+    // The lookup exists, but YouTube challenges this deployment, so a listener
+    // cannot get a single clip today. "Available" would be a claim, not a fact.
+    const f = feature('canvasVideo')
+    expect(f.status).toBe(STATUS.blocked)
+    expect(f.claim).toMatch(/session/i)
+    expect(f.detail).toMatch(/signed-in|sign in/i)
+    expect(f.detail).toMatch(/artwork/i)
+    // And it says how it comes back: the health check, not a user setting.
+    expect(f.detail).toMatch(/health/i)
   })
 
   it('counts only what actually ships', () => {
@@ -137,7 +156,7 @@ describe('user-facing copy', () => {
       lines.forEach((line, i) => {
         // Comments are allowed to discuss the topic; only shipped strings matter.
         if (/^\s*(\/\/|\*|\/\*)/.test(line)) return
-        if (!/lossless|skip silence|canvas video/i.test(line)) return
+        if (!/lossless|skip silence/i.test(line)) return
         if (!DENIAL.test(line)) offenders.push(`${file.replace(SRC, 'src/components')}:${i + 1}: ${line.trim()}`)
       })
     }

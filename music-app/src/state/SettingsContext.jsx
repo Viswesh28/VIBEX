@@ -56,6 +56,9 @@ export function SettingsProvider({ children }) {
     normaliseLaw(store.get('svCfl', 'equalPower'))
   )
   const [vizOn, setVizOn] = useState(() => store.get('svViz', '1') === '1')
+  // Canvas video is a cross-source extra (the clip comes from YouTube Music),
+  // so it has its own switch rather than riding on the local visualiser.
+  const [canvasOn, setCanvasOn] = useState(() => store.get('svCanvas', '1') === '1')
   const [vizStyle, setVizStyle] = useState(() => {
     const v = store.get('svVizStyle', 'spectrum')
     return VIZ_STYLES.includes(v) ? v : 'spectrum'
@@ -226,6 +229,11 @@ export function SettingsProvider({ children }) {
         setVizStyle(v)
         store.set('svVizStyle', v)
       },
+      canvas: canvasOn,
+      setCanvas: (v) => {
+        setCanvasOn(v)
+        store.set('svCanvas', v ? '1' : '0')
+      },
       shuffle: shuffleMode !== 'off',
       shuffleMode,
       cycleShuffle,
@@ -254,7 +262,7 @@ export function SettingsProvider({ children }) {
     }),
     [
       dataSaver, setDataSaver, saverAuto, crossfadeOn, crossfadeDur, crossfadeLaw, setCrossfadeLaw,
-      vizOn, vizStyle, shuffleMode, cycleShuffle, chooseShuffleMode, repeat, cycleRepeat, theme, radio, setRadio,
+      vizOn, vizStyle, canvasOn, shuffleMode, cycleShuffle, chooseShuffleMode, repeat, cycleRepeat, theme, radio, setRadio,
       autoplay, setAutoplay, qualityPref, setQualityPref, liveOK, ios, privateSession,
       excludedArtists, excludeArtist, unexcludeArtist, isExcluded,
     ]
