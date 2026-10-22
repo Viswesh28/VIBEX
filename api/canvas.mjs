@@ -41,6 +41,9 @@ const ANDROID_MUSIC = {
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+/** ytmusicapi sends exactly this from an unauthenticated client. */
+const YTM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0'
+const YTM_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30'
 
 async function postJson(url, body, timeoutMs, extraHeaders = {}) {
   const controller = new AbortController()
@@ -294,8 +297,121 @@ async function health() {
   return { canvas: 'unknown', reason: play?.status || null, probe: s.videoId }
 }
 
+/**
+ * The ytmusicapi recipe, ported to see whether it behaves differently here.
+ *
+ * sigma67/ytmusicapi is the most-used unauthenticated YouTube Music client, and
+ * its request shape differs from ours in four ways we did not send: a client
+ * version built from *today's* date, the public web API key, a visitor id read
+ * from the page's own `ytcfg`, and a `signatureTimestamp` parsed out of
+ * `base.js`. If any of those is what makes its requests acceptable, this probe
+ * shows it — and if it fails identically, the block is not about our request.
+ *
+ * Its own test suite skips the unauthenticated streaming assertion on GitHub CI
+ * ("doesn't work for some reason"), which is a datacenter IP like this one.
+ * That is a reason to check rather than assume, not a reason to skip checking.
+ */
+async function recipeProbe(videoId) {
+  const out = { recipe: 'ytmusicapi', videoId, steps: [] }
+
+  const pageResp = await fetch('https://music.youtube.com/', {
+    headers: { 'user-agent': YTM_UA, accept: '*/*' },
+  })
+  const page = await pageResp.text()
+  out.steps.push({ step: 'page', status: pageResp.status, bytes: page.length })
+
+  const cfgMatch = /ytcfg\.set\s*\(\s*({.+?})\s*\)\s*;/.exec(page)
+  let visitorId = ''
+  if (cfgMatch) {
+    try {
+      visitorId = JSON.parse(cfgMatch[1]).VISITOR_DATA || ''
+    } catch {
+      visitorId = ''
+    }
+  }
+  const jsMatch = /jsUrl"\s*:\s*"([^"]+)"/.exec(page)
+  out.steps.push({ step: 'ytcfg', visitor: visitorId ? 'present' : 'absent', jsUrl: jsMatch ? 'present' : 'absent' })
+
+  let signatureTimestamp = null
+  if (jsMatch) {
+    const basejs = await fetch('https://music.youtube.com' + jsMatch[1], {
+      headers: { 'user-agent': YTM_UA },
+    })
+    const js = await basejs.text()
+    const sts = /signatureTimestamp[:=](\d+)/.exec(js)
+    signatureTimestamp = sts ? Number(sts[1]) : null
+    out.steps.push({ step: 'basejs', status: basejs.status, bytes: js.length, signatureTimestamp })
+  }
+
+  const body = {
+    context: {
+      client: {
+        clientName: 'WEB_REMIX',
+        clientVersion: '1.' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '.01.00',
+      },
+      user: {},
+    },
+    videoId,
+  }
+  if (signatureTimestamp) {
+    body.playbackContext = { contentPlaybackContext: { signatureTimestamp } }
+  }
+
+  const url = `https://music.youtube.com/youtubei/v1/player?alt=json&key=${YTM_KEY}`
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'user-agent': YTM_UA,
+      accept: '*/*',
+      'content-type': 'application/json',
+      origin: 'https://music.youtube.com',
+      ...(visitorId ? { 'x-goog-visitor-id': visitorId } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  const text = await r.text()
+  let json = null
+  try {
+    json = JSON.parse(text)
+  } catch {
+    json = null
+  }
+  const play = json?.playabilityStatus
+  out.steps.push({
+    step: 'player',
+    status: r.status,
+    bytes: text.length,
+    playability: play ? { status: play.status, reason: play.reason || null } : null,
+    hasStreaming: /streamingData/i.test(text),
+    hasCanvas: /canvas/i.test(text),
+    formats: Array.isArray(json?.streamingData?.adaptiveFormats)
+      ? json.streamingData.adaptiveFormats.length
+      : 0,
+  })
+  out.verdict = !json
+    ? 'non_json'
+    : play && /LOGIN_REQUIRED|ERROR|AGE_CHECK/i.test(String(play.status))
+      ? 'gated'
+      : /streamingData/i.test(text)
+        ? 'works'
+        : 'no_streaming'
+  return out
+}
+
 export default async function handler(req, res) {
   const q = req.query || {}
+
+  // `?recipe=1&videoId=…` runs the ytmusicapi request shape end to end.
+  if (q.recipe === '1') {
+    const videoId = String(q.videoId || 'J7p4bzqLvCw')
+    res.setHeader('Cache-Control', 'no-store')
+    try {
+      res.status(200).json({ success: true, data: await recipeProbe(videoId) })
+    } catch (e) {
+      res.status(200).json({ success: false, code: 'probe_failed', message: String(e?.message || e).slice(0, 200) })
+    }
+    return
+  }
 
   // `?health=1` answers only "may this deployment ask?", never about a song.
   // Short-cached when blocked, so a promotion or an unblock is noticed quickly.

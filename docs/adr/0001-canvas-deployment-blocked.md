@@ -37,6 +37,47 @@ both the Settings toggle and the capability matrix implied canvas was
 available. That misstatement is the actual defect: the lookup failing is a
 provider fact, the app claiming otherwise is our bug.
 
+### Corroboration, and a correction (2026-10-22)
+
+`sigma67/ytmusicapi` is the most widely used unauthenticated YouTube Music
+client, and it is a better control than anything written here. Reading it, then
+porting its exact request shape into `api/canvas.mjs` (`?recipe=1`) and running
+it from the same deployment:
+
+| element | ours, before | ytmusicapi's recipe | result here |
+| --- | --- | --- | --- |
+| client version | hardcoded `1.20240701.00.00` | `1.<today>.01.00` | today's date used |
+| API key | none | public web key | sent |
+| `alt=json` | none | yes | sent |
+| visitor id | none | read from page `ytcfg` | `present` |
+| `signatureTimestamp` | none | parsed from `base.js` | `20745` |
+| **player response** | `LOGIN_REQUIRED` | — | **`LOGIN_REQUIRED`** |
+
+So the block is **not** the shape of our request. Matching the reference client
+exactly changes nothing: the deployment is still asked to sign in.
+
+Two further facts pin down the mechanism:
+
+* ytmusicapi's own test suite asserts `streamingData` on an **unauthenticated**
+  `get_song` — but skips that assertion on GitHub CI, with the comment
+  *"skip assert on GitHub CI because it doesn't work for some reason"*. CI is a
+  datacenter IP, like this deployment.
+* The same unauthenticated call is expected to work from a normal connection.
+
+This **corrects** the earlier claim in this ADR that the requirement is simply
+"signed-in only for music tracks". The accurate statement is narrower and more
+awkward: an unauthenticated client is served music tracks from a residential
+address and challenged from a datacenter one. It is reputation and origin, not
+a rule about the content. The remedy is therefore the same either way — ask
+from where the listener actually is — which is what an on-device WebView does
+(see [ADR 0002](0002-canvas-mint-on-device.md)). It also means 0002's route has
+a materially better chance than anything that ran on this server.
+
+`ytmusicapi` supplies no canvas support to copy: the word appears nowhere in the
+codebase, and `get_song` strips the response to five keys
+(`videoDetails`, `playabilityStatus`, `streamingData`, `microformat`,
+`playbackTracking`), deleting any canvas data it was handed.
+
 ## Decision
 
 Keep the code. Stop advertising the capability. Report it as `blocked`, and let

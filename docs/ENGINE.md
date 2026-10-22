@@ -254,9 +254,12 @@ resolves a `videoId` for every query tried. The player call does not:
 | **plain UGC video, same server, same IP** | **`streamingData` returned** |
 
 That last row is the one that matters: the deployment is not firewalled off
-from YouTube, and it is not (only) an IP reputation problem. YouTube refuses to
-describe **music tracks** to a client with no signed-in session, while ordinary
-videos resolve fine from the same machine. Canvas metadata only exists on music
+from YouTube. The block is about origin, not content — an unauthenticated client
+is served music tracks from a residential address and challenged from a
+datacenter one. `?recipe=1` reproduces `sigma67/ytmusicapi`'s exact request
+shape (today's client version, public API key, visitor id, `base.js`
+signature timestamp) and is refused identically, so the request is not what is
+wrong. See ADR 0001. Canvas metadata only exists on music
 tracks, so the clip cannot be fetched here — not by changing the query, the
 client version, or the host.
 
