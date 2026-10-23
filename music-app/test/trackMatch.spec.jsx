@@ -523,30 +523,103 @@ describe('YouTube Music pure track playback in the UI', () => {
   })
 })
 
-describe('/api/ytaudio & two-pass Video-to-Audio Track conversion', () => {
-  it('converts Lofi / Acoustic / Extended YouTube music videos cleanly into studio <audio> tracks on Pass 2', async () => {
-    const videoRows = [
+describe('/api/ytaudio & strict thumbnail-to-audio sync invariants', () => {
+  it('matches official music videos with matching runtime while strictly rejecting wrong movie songs, remixes, and jukeboxes', async () => {
+    const kesariyaStudio = studioCandidate({
+      id: 'saavn_kesariya',
+      name: 'Kesariya',
+      artist: 'Arijit Singh, Pritam',
+      album: 'Brahmastra',
+      duration: 268,
+      streamUrl: 'https://aac.saavncdn.com/kesariya_320.mp4',
+    })
+
+    // Exact official music video of the same cut matches cleanly:
+    const officialVideo = [
       {
         videoId: 'VidSong0001',
+        title: 'Kesariya - Official Video | Brahmastra | Arijit Singh',
+        artists: ['Sony Music India'],
+        duration: 276,
+      },
+    ]
+    const enrichedOfficial = await enrichResultsWithSaavnAudio(officialVideo, {
+      saavnSearchFn: async () => [kesariyaStudio],
+    })
+    expect(enrichedOfficial[0].matchedAudio?.songId).toBe('saavn_kesariya')
+    expect(enrichedOfficial[0].matchedAudio?.downloadUrl.at(-1).url).toContain('kesariya_320.mp4')
+
+    // Lofi / Remix / Extended cuts and different songs from the same movie NEVER hijack audio:
+    const mismatchRows = [
+      {
+        videoId: 'LofiVid0002',
         title: 'Kesariya (Lofi Flip Full Video) | Brahmastra | Arijit Singh',
         artists: ['Sony Music India'],
         duration: 420,
       },
+      {
+        videoId: 'LeoSong0003',
+        title: 'Ordinary Person - Leo | Thalapathy Vijay | Anirudh',
+        artists: ['Sony Music South'],
+        duration: 138,
+      },
     ]
-    const enriched = await enrichResultsWithSaavnAudio(videoRows, {
-      saavnSearchFn: async () => [
-        studioCandidate({
-          id: 'saavn_kesariya',
-          name: 'Kesariya',
-          artist: 'Arijit Singh, Pritam',
-          album: 'Brahmastra',
-          duration: 268,
-          streamUrl: 'https://aac.saavncdn.com/kesariya_320.mp4',
-        }),
-      ],
+    const leoTitleTrack = studioCandidate({
+      id: 'saavn_leo_title',
+      name: 'Leo',
+      artist: 'Anirudh Ravichander',
+      album: 'Leo',
+      duration: 140,
+      streamUrl: 'https://aac.saavncdn.com/leo_title_320.mp4',
     })
-    expect(enriched[0].matchedAudio?.songId).toBe('saavn_kesariya')
-    expect(enriched[0].matchedAudio?.downloadUrl.at(-1).url).toContain('kesariya_320.mp4')
+    const enrichedMismatch = await enrichResultsWithSaavnAudio(mismatchRows, {
+      saavnSearchFn: async () => [kesariyaStudio, leoTitleTrack],
+    })
+    expect(enrichedMismatch[0].matchedAudio).toBeUndefined()
+    expect(enrichedMismatch[1].matchedAudio).toBeUndefined()
+  })
+
+  it('rejects IP-bound 403 upstream streams during probe so ?meta=1 never falsely claims playable: true', async () => {
+    const mock403Fetch = vi.fn(async (url) => {
+      const target = String(url)
+      if (target.includes('youtubei/v1/player')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            playabilityStatus: { status: 'OK' },
+            videoDetails: { title: 'Locked Stream', author: 'Artist', lengthSeconds: '210' },
+            streamingData: {
+              adaptiveFormats: [
+                {
+                  url: 'https://rr1.googlevideo.com/videoplayback?ip_locked=1',
+                  mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                  bitrate: 131_072,
+                },
+              ],
+            },
+          }),
+        }
+      }
+      return { ok: false, status: 403, headers: new Headers() }
+    })
+
+    let rawBody = ''
+    const res = {
+      statusCode: 200,
+      headersSent: false,
+      setHeader: () => {},
+      end: (chunk) => {
+        rawBody = String(chunk || '')
+      },
+    }
+    await ytaudioHandler(
+      { method: 'GET', url: '/api/ytaudio?id=IpLocked11X&meta=1', headers: { host: 'localhost' } },
+      res,
+      { fetchImpl: mock403Fetch }
+    )
+    expect(res.statusCode).toBe(404)
+    expect(JSON.parse(rawBody).success).toBe(false)
   })
 
   it('picks audio/mp4 formats first and streams range/download bytes via /api/ytaudio', async () => {

@@ -391,28 +391,13 @@ export async function enrichResultsWithSaavnAudio(
       }
 
       const queries = buildMatchQueries(item)
-      const collected = [...seedCandidates]
-      let matched = false
       for (const q of queries) {
         if (ctl.signal.aborted) break
         const candidates = await cachedSearch(q)
-        if (Array.isArray(candidates) && candidates.length) {
-          collected.push(...candidates)
-          const hit = matchSaavnTrack(item, candidates)
-          if (hit?.song) {
-            out[idx] = { ...item, matchedAudio: toMatchedAudioPayload(hit.song) }
-            matched = true
-            break
-          }
-        }
-      }
-
-      // Pass 2: Video-to-Audio Track conversion — convert Music Videos, Lyric Videos,
-      // Live / Acoustic / Lofi uploads & extended video cuts cleanly to pure `<audio>` tracks.
-      if (!matched && collected.length) {
-        const videoTrackHit = matchSaavnTrack(item, collected, { allowVideoToTrack: true })
-        if (videoTrackHit?.song) {
-          out[idx] = { ...item, matchedAudio: toMatchedAudioPayload(videoTrackHit.song) }
+        const hit = matchSaavnTrack(item, candidates)
+        if (hit?.song) {
+          out[idx] = { ...item, matchedAudio: toMatchedAudioPayload(hit.song) }
+          break
         }
       }
     }

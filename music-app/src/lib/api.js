@@ -28,7 +28,7 @@ export async function api(path) {
   if (typeof path === 'string' && path.startsWith('/ytmusic')) {
     const customYtKey = String(store.get('svYtApiKey', '') || '').trim()
     if (customYtKey) headers['x-youtube-api-key'] = customYtKey
-    effectivePath = `${path}${path.includes('?') ? '&' : '?'}v=6`
+    effectivePath = `${path}${path.includes('?') ? '&' : '?'}v=7`
   }
   let response
   try {
