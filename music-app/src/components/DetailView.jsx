@@ -6,7 +6,7 @@ import { Icon } from './Icon.jsx'
 import { SongList } from './SongList.jsx'
 import { EmptyState, Spinner } from './Spinner.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 
 /** An album or a JioSaavn playlist: an editorial hero plus its tracks. */
@@ -14,7 +14,7 @@ export function DetailView({ type, id, onTitle }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const { setStatus } = useStatus()
-  const { playFromList } = usePlayer()
+  const { playFromList } = usePlayerTransport()
   const s = useSettings()
 
   useEffect(() => {
@@ -66,7 +66,13 @@ export function DetailView({ type, id, onTitle }) {
           style={{ backgroundImage: `url("${imgOf(data, s.dataSaver)}")` }}
         />
         <div className="hero-scrim" aria-hidden="true" />
-        <img className="hero-cover" src={imgOf(data, s.dataSaver)} alt="" />
+        <img
+          className="hero-cover"
+          src={imgOf(data, s.dataSaver)}
+          fetchpriority="high"
+          decoding="async"
+          alt=""
+        />
         <div className="hero-body">
           <span className="eyebrow">
             <span className="dot" aria-hidden="true" />

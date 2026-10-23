@@ -7,7 +7,7 @@ import { SongList } from './SongList.jsx'
 import { EmptyState, Spinner } from './Spinner.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 
 const ENDPOINT = {
@@ -24,7 +24,7 @@ export function SearchView({ query, tab, onCount }) {
   const [error, setError] = useState(null)
   const { setStatus } = useStatus()
   const { navigate } = useUI()
-  const { setQueue } = usePlayer()
+  const { setQueue } = usePlayerTransport()
   const { source } = useSettings()
 
   // Scoped per view lifecycle so non-sensitive metadata is cached across tab

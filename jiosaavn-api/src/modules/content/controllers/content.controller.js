@@ -1,7 +1,7 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import { ContentService } from '../services/index.js'
 
-const UPSTREAM_SYNC = {"repository":"https://github.com/sumitkolhe/jiosaavn-api.git","branch":"main","commit":"fc6bd132193d1fc71c2ab3db373e78b92884f67c","commitMessage":"fix: remove api folder for vercel deployments","commitDate":"2026-04-16T09:13:30+05:30","syncedAt":"2026-10-23T08:12:52.959Z","compiledFiles":126}
+const UPSTREAM_SYNC = {"repository":"https://github.com/sumitkolhe/jiosaavn-api.git","branch":"main","commit":"fc6bd132193d1fc71c2ab3db373e78b92884f67c","commitMessage":"fix: remove api folder for vercel deployments","commitDate":"2026-04-16T09:13:30+05:30","syncedAt":"2026-10-23T08:30:27.121Z","compiledFiles":126}
 
 const feedQuerySchema = z.object({
   languages: z.string().optional(),

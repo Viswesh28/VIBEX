@@ -1,13 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { decodeHtml, fmt } from '../lib/format.js'
 import { artistsOf, imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
 import { RecBadge } from './Provenance.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 
-export function QueueList() {
-  const { queue, currentIndex, playTrack, qMove, qRemove, dismissRecommendation } = usePlayer()
+export const QueueList = memo(function QueueList() {
+  const { queue, currentIndex, playTrack, qMove, qRemove, dismissRecommendation } = usePlayerTransport()
   const { dataSaver } = useSettings()
   const activeRef = useRef(null)
 
@@ -50,6 +50,7 @@ export function QueueList() {
             <img
               src={imgOf(s, dataSaver)}
               loading="lazy"
+              decoding="async"
               alt=""
               onError={(e) => {
                 e.currentTarget.style.opacity = 0.25
@@ -108,4 +109,4 @@ export function QueueList() {
       })}
     </div>
   )
-}
+})

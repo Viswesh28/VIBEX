@@ -3,17 +3,21 @@ import { artistsOf, imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
 import { LyricsBody } from './LyricsBody.jsx'
 import { useLyrics } from '../hooks/useLyrics.js'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
-/** Full-screen lyrics, washed in the current artwork. */
+function ActiveLyricsPanel({ current }) {
+  const { res, activeIdx } = useLyrics(current, true)
+  return <LyricsBody res={res} activeIdx={activeIdx} />
+}
+
+/** Full-screen lyrics, washed in the current artwork. Subscribes to clock ONLY while open. */
 export function LyricsOverlay() {
-  const { current } = usePlayer()
+  const { current } = usePlayerTransport()
   const { dataSaver } = useSettings()
   const { lyricsOpen, setLyricsOpen } = useUI()
   const open = lyricsOpen && !!current
-  const { res, activeIdx } = useLyrics(current, open)
   const art = current ? imgOf(current, dataSaver) : ''
 
   return (
@@ -38,7 +42,7 @@ export function LyricsOverlay() {
           </button>
         </div>
         <div id="lyrOvContent">
-          <LyricsBody res={open ? res : null} activeIdx={activeIdx} />
+          {open ? <ActiveLyricsPanel current={current} /> : <LyricsBody res={null} activeIdx={-1} />}
         </div>
       </div>
     </div>

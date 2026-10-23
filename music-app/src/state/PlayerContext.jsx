@@ -56,8 +56,16 @@ import { useSettings } from './SettingsContext.jsx'
 import { useLibrary } from './LibraryContext.jsx'
 import { useStatus } from './StatusContext.jsx'
 
-const Ctx = createContext(null)
-export const usePlayer = () => useContext(Ctx)
+const TransportCtx = createContext(null)
+const ClockCtx = createContext({ cur: 0, dur: 0 })
+
+export const usePlayerTransport = () => useContext(TransportCtx)
+export const usePlayerClock = () => useContext(ClockCtx)
+export const usePlayer = () => {
+  const transport = useContext(TransportCtx)
+  const clock = useContext(ClockCtx)
+  return transport ? { ...transport, clock } : null
+}
 
 const RADIO_LOOKAHEAD = 4
 const RADIO_BATCH = 5
@@ -1550,7 +1558,9 @@ export function PlayerProvider({ children, streamResolver = null }) {
       const dur = (isFinite(el.duration) && el.duration) || 0
       const cur = el.currentTime || 0
       const tot = dur || q[idxRef.current]?.duration || 0
-      setClock({ cur, dur: tot })
+      setClock((prev) =>
+        Math.abs(prev.cur - cur) < 0.08 && prev.dur === tot ? prev : { cur, dur: tot }
+      )
 
       // Begin the overlap early enough that the outgoing track ends silent.
       const remain = dur ? dur - cur : -1
@@ -1925,9 +1935,9 @@ export function PlayerProvider({ children, streamResolver = null }) {
       ? '12kbps'
       : settings.qualityPref
 
-  const value = useMemo(
+  const transportValue = useMemo(
     () => ({
-      queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
+      queue, currentIndex, current, isPlaying, volume, currentQuality,
       setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
@@ -1949,7 +1959,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       ios: isIOS(),
     }),
     [
-      queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
+      queue, currentIndex, current, isPlaying, volume, currentQuality,
       setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
@@ -1959,10 +1969,12 @@ export function PlayerProvider({ children, streamResolver = null }) {
   )
 
   return (
-    <Ctx.Provider value={value}>
-      {children}
-      <audio ref={deckA} preload="metadata" />
-      <audio ref={deckB} preload="metadata" />
-    </Ctx.Provider>
+    <TransportCtx.Provider value={transportValue}>
+      <ClockCtx.Provider value={clock}>
+        {children}
+        <audio ref={deckA} preload="metadata" />
+        <audio ref={deckB} preload="metadata" />
+      </ClockCtx.Provider>
+    </TransportCtx.Provider>
   )
 }

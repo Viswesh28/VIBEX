@@ -5,7 +5,7 @@ import { Icon } from './Icon.jsx'
 import { SongList } from './SongList.jsx'
 import { EmptyState, SectionTitle } from './Spinner.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
@@ -14,7 +14,7 @@ import { useUI } from '../state/UIContext.jsx'
 export function LibraryView({ onTitle }) {
   const { liked, playlists } = useLibrary()
   const { setStatus } = useStatus()
-  const { playFromList } = usePlayer()
+  const { playFromList } = usePlayerTransport()
   const { dataSaver } = useSettings()
   const { navigate, openNewPlaylistModal } = useUI()
 

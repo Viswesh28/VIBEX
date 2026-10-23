@@ -6,7 +6,7 @@ import { EVENTS, track } from '../lib/telemetry.js'
 import { Shelf } from './CardGrid.jsx'
 import { Icon } from './Icon.jsx'
 import { EmptyState } from './Spinner.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
@@ -70,7 +70,7 @@ export function FeedView() {
   const alive = useRef(true)
   const retryTimer = useRef(null)
   const lastFetchedAt = useRef(0)
-  const player = usePlayer()
+  const player = usePlayerTransport()
   const { setStatus } = useStatus()
   const { navigate, search } = useUI()
   const { dataSaver } = useSettings()
@@ -83,10 +83,10 @@ export function FeedView() {
     []
   )
 
-  const refreshLiveSongs = useCallback(() => {
+  const refreshLiveSongs = useCallback((bypassCache = false) => {
     Promise.allSettled(
       LIVE_SONG_FEEDS.map(([title, endpoint]) =>
-        api(endpoint).then((d) => ({
+        api(endpoint, { bypassCache }).then((d) => ({
           title,
           items: (d?.results || []).filter((s) => s && s.id && s.downloadUrl?.length),
         }))
@@ -160,7 +160,7 @@ export function FeedView() {
     if (!sections.length) return undefined
     const interval = setInterval(() => {
       if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
-        refreshLiveSongs()
+        refreshLiveSongs(true)
       }
     }, LIVE_FEED_REFRESH_MS)
 
@@ -170,7 +170,7 @@ export function FeedView() {
         document.visibilityState === 'visible' &&
         Date.now() - lastFetchedAt.current >= VISIBILITY_REFRESH_MS
       ) {
-        refreshLiveSongs()
+        refreshLiveSongs(true)
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
@@ -226,7 +226,13 @@ export function FeedView() {
           style={{ backgroundImage: `url("${imgOf(featured, dataSaver)}")` }}
         />
         <div className="hero-scrim" aria-hidden="true" />
-        <img className="hero-cover" src={imgOf(featured, dataSaver)} alt="" />
+        <img
+          className="hero-cover"
+          src={imgOf(featured, dataSaver)}
+          fetchpriority="high"
+          decoding="async"
+          alt=""
+        />
         <div className="hero-body">
           <span className="eyebrow">
             <span className="dot" aria-hidden="true" />

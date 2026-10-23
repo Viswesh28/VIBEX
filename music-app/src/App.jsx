@@ -28,10 +28,16 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts.js'
 import { useMediaSession } from './hooks/useMediaSession.js'
 import { useAndroidBack } from './hooks/useAndroidBack.js'
 import { useSleepTimer } from './hooks/useSleepTimer.js'
-import { usePlayer } from './state/PlayerContext.jsx'
+import { usePlayerClock, usePlayerTransport } from './state/PlayerContext.jsx'
 import { useSettings } from './state/SettingsContext.jsx'
 import { useStatus } from './state/StatusContext.jsx'
 import { useUI } from './state/UIContext.jsx'
+
+function MediaSessionBridge({ current, isPlaying, dataSaver, actions }) {
+  const clock = usePlayerClock()
+  useMediaSession({ current, isPlaying, clock, dataSaver, actions })
+  return null
+}
 
 export default function App() {
   const [apiOnline, setApiOnline] = useState(null)
@@ -41,10 +47,10 @@ export default function App() {
 
   const { status, setStatus } = useStatus()
   const {
-    current, currentQuality, isPlaying, clock,
-    togglePlay, nextTrack, prevTrack, seekBy, seekTo, play, pause, resumeFromSystem,
+    current, currentQuality, isPlaying,
+    togglePlay, nextTrack, prevTrack, seekBy, seekTo, pause, resumeFromSystem,
     setSleepGain,
-  } = usePlayer()
+  } = usePlayerTransport()
   const { dataSaver } = useSettings()
   const {
     view, back, canGoBack, navigate, searchQuery, searchTab,
@@ -120,7 +126,6 @@ export default function App() {
     }),
     [resumeFromSystem, pause, nextTrack, prevTrack, seekBy, seekTo]
   )
-  useMediaSession({ current, isPlaying, clock, dataSaver, actions: mediaActions })
 
   const backActions = useMemo(
     () => ({ closeDrawer: () => setDrawer(false), closePlaylistModal, setLyricsOpen, setFullOpen, back }),
@@ -283,6 +288,12 @@ export default function App() {
       <LyricsOverlay />
       <PlaylistModal />
       <YouTubeEmbed />
+      <MediaSessionBridge
+        current={current}
+        isPlaying={isPlaying}
+        dataSaver={dataSaver}
+        actions={mediaActions}
+      />
     </>
   )
 }
