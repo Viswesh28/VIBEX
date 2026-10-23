@@ -79,19 +79,13 @@ describe('the capability matrix', () => {
     expect(f.detail).toMatch(/not yet confirmed|unconfirmed/i)
   })
 
-  it('does not sell the second source as a way to hear YouTube Music', () => {
-    // The catalogue is real; the audio is not, and the row has to say both.
+  it('advertises YouTube Music songs and videos as pure audio playback with no video window', () => {
     const f = feature('sources')
-    expect(f.status).toBe(STATUS.blocked)
-    expect(f.claim).toMatch(/browse/i)
-    // There is no extraction path left on any client, so nothing here may
-    // promise on-device audio.
-    expect(f.detail).not.toMatch(/minted on the device/i)
-    expect(f.detail).not.toMatch(/extension/i)
-    // What it can do is named for what it is: YouTube's own player, video and
-    // ads included — not audio-only, not our transport.
-    expect(f.detail).toMatch(/YouTube’s own player/i)
-    expect(f.detail).toMatch(/video and ads/i)
+    expect(f.status).toBe(STATUS.available)
+    expect(f.claim).toMatch(/pure audio/i)
+    expect(f.detail).toMatch(/pure audio tracks/i)
+    expect(f.detail).not.toMatch(/video and ads/i)
+    expect(f.detail).not.toMatch(/YouTube’s own player/i)
   })
 
   it('counts only what actually ships', () => {

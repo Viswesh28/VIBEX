@@ -103,10 +103,10 @@ export const FEATURES = [
   {
     id: 'sources',
     label: 'Second source',
-    status: STATUS.blocked,
-    claim: 'YT Music: browse here, play in YouTube’s embed',
+    status: STATUS.available,
+    claim: 'YT Music: songs & videos play as pure audio',
     detail:
-      'YouTube Music can be browsed and searched. Nothing is extracted anywhere: every YouTube item opens in YouTube’s own player, on the web and in the app alike, because YouTube will not serve its audio to a server or to a foreign origin. That means YouTube’s video and ads rather than our audio-only transport, so JioSaavn stays the source that plays as audio, and it is the default.',
+      'YouTube Music songs and videos convert automatically to pure audio tracks inside VIBEX — matching studio AAC up to 320 kbps when available and streaming audio-only tracks directly with no video window.',
   },
   {
     id: 'offline',

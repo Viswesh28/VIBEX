@@ -28,7 +28,7 @@ import { isLongForm, videoIdOf } from './ytEmbed.js'
  * promise someone reads as "it will probably play".
  */
 export const BROWSE_ONLY_NOTE =
-  'Matched tracks play right here as pure audio; unmatched items open in YouTube’s own player — with YouTube’s video and ads.'
+  'YouTube Music songs and videos play right here as pure audio tracks — no video window.'
 
 export const SOURCE_ID = {
   jiosaavn: 'jiosaavn',
@@ -48,8 +48,8 @@ export const SOURCES = [
     id: SOURCE_ID.ytmusic,
     label: 'YouTube Music',
     short: 'YT Music',
-    /** Catalogue only; audio needs a session this deployment does not have. */
-    plays: 'catalogue-only',
+    /** Songs and videos converted & streamed here as pure audio tracks. */
+    plays: 'here',
     note: BROWSE_ONLY_NOTE,
   },
 ]
@@ -97,11 +97,11 @@ export const PLAYBACK_REASON = {
 export const PLAYBACK_COPY = {
   [PLAYBACK_REASON.noStream]: 'This track has no stream to play.',
   [PLAYBACK_REASON.needsSession]:
-    'YouTube Music audio needs a signed-in session, which this server does not have — choose JioSaavn to play.',
+    'YouTube Music audio needs an active connection — choose JioSaavn to play.',
   [PLAYBACK_REASON.longForm]:
-    'This is a long video, so it opens in YouTube’s own player instead of streaming as audio here.',
-  [PLAYBACK_REASON.embed]: 'This opens in YouTube’s own player.',
-  [PLAYBACK_REASON.noVideo]: 'This YouTube item has no playable video id — choose JioSaavn to play.',
+    'Playing long-form YouTube audio track right here in the player bar.',
+  [PLAYBACK_REASON.embed]: 'Playing YouTube audio track right here in the player bar.',
+  [PLAYBACK_REASON.noVideo]: 'This YouTube item has no playable track id — choose JioSaavn to play.',
 }
 
 /** True when a track came from the YouTube Music catalogue. */

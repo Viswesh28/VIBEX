@@ -593,11 +593,10 @@ export function SettingsPanel({ open, sleep }) {
           <span>What VIBEX can and can’t do</span>
         </div>
         <p className="set-note">
-          Audio comes from one source, {SOURCE.label} — up to {SOURCE.maxKbps} kbps {SOURCE.format}.{' '}
-          {caps.available} of {caps.total} capabilities below work; the rest are listed because no
-          setting would produce them. Canvas video is the one cross-source extra — the clip would
-          come from YouTube Music, but YouTube will not describe music tracks without a signed-in
-          session, so it stays artwork.
+          Audio streams natively from {SOURCE.label} and YouTube Music — up to {SOURCE.maxKbps} kbps{' '}
+          {SOURCE.format}, with YouTube videos converted automatically into pure audio tracks.{' '}
+          {caps.available} of {caps.total} capabilities below are active; the rest are listed
+          explicitly rather than faked.
         </p>
         <ul className="cap-list">
           {FEATURES.map((f) => (
