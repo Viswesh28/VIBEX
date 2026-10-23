@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   buildMatchQueries,
@@ -10,6 +10,7 @@ import {
 import {
   enrichResultsWithSaavnAudio,
   parseYtDataApiResponse,
+  toResult,
 } from '../../api/ytmusic.mjs'
 import { createYtMusicStreamResolver } from '../src/lib/providers.js'
 import App from '../src/App.jsx'
@@ -183,6 +184,70 @@ describe('cross-catalog studio audio matching', () => {
     expect(streamPlan.mode).toBe('stream')
     expect(streamPlan.uri).toBe('https://aac.saavncdn.com/blinding_320.mp4')
   })
+
+  it('parses modern WEB_REMIX subtitles containing leading type chips and trailing play/view counts', () => {
+    const modernSongRow = toResult({
+      playlistItemData: { videoId: 'J7p4bzqLvCw' },
+      flexColumns: [
+        { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: 'Blinding Lights' }] } } },
+        {
+          musicResponsiveListItemFlexColumnRenderer: {
+            text: { runs: [{ text: 'Song • The Weeknd • After Hours • 3:20 • 2.4B plays' }] },
+          },
+        },
+      ],
+    })
+    expect(modernSongRow.duration).toBe(200)
+    expect(modernSongRow.artists).toEqual(['The Weeknd'])
+    expect(modernSongRow.album).toBe('After Hours')
+
+    const modernVideoRow = toResult({
+      playlistItemData: { videoId: '1F3hm6MfR1k' },
+      flexColumns: [
+        { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: 'Hukum - Lyric Video' }] } } },
+        {
+          musicResponsiveListItemFlexColumnRenderer: {
+            text: { runs: [{ text: 'Video • Sun TV • 452M views • 3:28' }] },
+          },
+        },
+      ],
+    })
+    expect(modernVideoRow.duration).toBe(208)
+    expect(modernVideoRow.artists).toEqual(['Sun TV'])
+    expect(modernVideoRow.album).toBeNull()
+  })
+
+  it('matches regional label-channel uploads with zero duration and romanization spelling differences', () => {
+    const labelUpload = {
+      name: 'Hukum',
+      artists: ['Sun TV'],
+      duration: 0,
+    }
+    const hukumStudio = studioCandidate({
+      id: 'saavn_hukum',
+      name: 'Hukum - Thalaivar Alappara (From "Jailer")',
+      artist: 'Anirudh Ravichander, Super Subu',
+      album: 'Jailer',
+      duration: 207,
+      streamUrl: 'https://aac.saavncdn.com/hukum_320.mp4',
+    })
+    expect(matchSaavnTrack(labelUpload, [hukumStudio])?.song?.id).toBe('saavn_hukum')
+
+    const translitYt = {
+      name: 'Manasilaayo (From "Vettaiyan")',
+      artists: ['Sony Music South'],
+      duration: 0,
+    }
+    const translitSaavn = studioCandidate({
+      id: 'saavn_manasilayo',
+      name: 'Manasilayo',
+      artist: 'Anirudh Ravichander, Malaysia Vasudevan',
+      album: 'Vettaiyan',
+      duration: 245,
+      streamUrl: 'https://aac.saavncdn.com/manasilayo_320.mp4',
+    })
+    expect(matchSaavnTrack(translitYt, [translitSaavn])?.song?.id).toBe('saavn_manasilayo')
+  })
 })
 
 describe('YouTube Music pure track playback in the UI', () => {
@@ -192,6 +257,7 @@ describe('YouTube Music pure track playback in the UI', () => {
   })
 
   afterEach(() => {
+    cleanup()
     vi.unstubAllGlobals()
   })
 
@@ -273,5 +339,93 @@ describe('YouTube Music pure track playback in the UI', () => {
     expect(container.querySelector('#pTitle').textContent).toContain('Blinding Lights')
     expect(playSpy).toHaveBeenCalled()
     playSpy.mockRestore()
+  })
+
+  it('syncs the bottom player bar controls and clock when playing an unmatched YouTube upload', async () => {
+    const jsonResponse = (payload) => ({ ok: true, status: 200, json: async () => payload })
+    const unmatchedYtBody = {
+      success: true,
+      data: {
+        source: 'ytmusic',
+        providerMode: 'ytmusic-catalog',
+        total: 1,
+        matchedCount: 0,
+        results: [
+          {
+            videoId: 'Unmatch99xZ',
+            title: 'Indie Rooftop Session #9',
+            artists: ['Bedroom Collective'],
+            subtitle: 'Bedroom Collective • 3:05',
+            duration: 185,
+            thumbnail: 'https://lh3.googleusercontent.com/thumb',
+          },
+        ],
+      },
+    }
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url) => {
+        const target = String(url)
+        if (target.includes('/api/ytmusic')) return jsonResponse(unmatchedYtBody)
+        for (const [prefix, body] of fixtures.routes.map((r) => [r.path, r.body])) {
+          if (target.includes(prefix)) return jsonResponse(body)
+        }
+        return jsonResponse(fixtures.routes[0].body)
+      })
+    )
+
+    const user = userEvent.setup()
+    const { container } = render(
+      <StatusProvider>
+        <SettingsProvider>
+          <LibraryProvider>
+            <PlayerProvider>
+              <UIProvider>
+                <App />
+              </UIProvider>
+            </PlayerProvider>
+          </LibraryProvider>
+        </SettingsProvider>
+      </StatusProvider>
+    )
+
+    await screen.findByText(/Featured playlist/i)
+    await user.click(screen.getByRole('button', { name: 'YT Music' }))
+    const input = container.querySelector('#searchInput')
+    await user.clear(input)
+    await user.type(input, 'rooftop{Enter}')
+    await waitFor(() => expect(container.querySelectorAll('.song-row').length).toBe(1))
+    await user.click(container.querySelector('.song-row'))
+
+    await waitFor(() => expect(document.querySelector('#ytEmbed.is-docked')).toBeTruthy())
+    const iframe = document.querySelector('#ytEmbedFrame')
+    const posted = []
+    Object.defineProperty(iframe, 'contentWindow', {
+      value: { postMessage: (msg) => posted.push(JSON.parse(msg)) },
+      configurable: true,
+    })
+
+    // Simulate YouTube IFrame API `infoDelivery` clock progress update.
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.youtube.com',
+          source: iframe.contentWindow,
+          data: JSON.stringify({
+            event: 'infoDelivery',
+            info: { currentTime: 65, duration: 185, playerState: 1 },
+          }),
+        })
+      )
+    })
+
+    await waitFor(() =>
+      expect(container.querySelector('#pTime')?.textContent).toBe('1:05 / 3:05')
+    )
+
+    // Clicking VIBEX's bottom-bar Pause button sends `pauseVideo` straight to the iframe.
+    await user.click(container.querySelector('#playerBar .cbtn.main'))
+    expect(posted.some((m) => m.func === 'pauseVideo')).toBe(true)
   })
 })

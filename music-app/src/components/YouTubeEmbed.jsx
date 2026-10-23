@@ -5,21 +5,34 @@ import { Icon } from './Icon.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 
 /**
- * YouTube's own player, for every YouTube item.
+ * YouTube's official IFrame player surface for unmatched YouTube items (e.g.
+ * mixes, concerts, covers, or tracks without a studio audio counterpart).
  *
- * The embed is a black box we deliberately do not drive, but it is not a silent
- * one: with `enablejsapi=1` and a matching `origin`, YouTube posts onReady,
- * onStateChange and onError to this window. onError is the only way a parent
- * can learn that the rights holder disabled embedding — the frame is
- * cross-origin and unreadable — and 101/150 is common enough on catalogue
- * items that pretending otherwise meant showing a black rectangle and blaming
- * nothing. It is surfaced now, with the way out attached.
+ * Docked compactly above VIBEX's bottom player bar by default (never blocking
+ * browsing or the main player controls) and synced bidirectionally over
+ * YouTube's official `enablejsapi=1` `postMessage` channel (`onReady`,
+ * `onStateChange`, `infoDelivery`, `onError`, plus `playVideo`, `pauseVideo`,
+ * `seekTo`, and `setVolume`).
  */
 export function YouTubeEmbed() {
-  const { embedTrack, closeEmbed, reportEmbed, nextTrack, prevTrack } = usePlayer()
+  const {
+    embedTrack,
+    closeEmbed,
+    reportEmbed,
+    registerEmbedCommand,
+    nextTrack,
+    prevTrack,
+    volume,
+  } = usePlayer()
   const open = Boolean(embedTrack)
   const frame = useRef(null)
+  const volRef = useRef(volume)
   const [failure, setFailure] = useState('')
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    volRef.current = volume
+  }, [volume])
 
   const src = useMemo(() => {
     if (!embedTrack) return null
@@ -34,6 +47,11 @@ export function YouTubeEmbed() {
       '*'
     )
   }, [])
+
+  useEffect(() => {
+    if (!open || !registerEmbedCommand) return undefined
+    return registerEmbedCommand(command)
+  }, [open, registerEmbedCommand, command])
 
   const onKey = useCallback(
     (e) => {
@@ -54,15 +72,23 @@ export function YouTubeEmbed() {
   }, [src])
 
   /**
-   * The JS API handshake, and the only channel that carries a refusal.
-   *
-   * The URL already opts in (`enablejsapi`, `origin`); what is missing is one
-   * message *to* the frame. It is repeated for a few seconds because the frame
-   * may not be listening yet when it first loads, and stopped afterwards so a
-   * closed player does not keep pinging YouTube.
+   * Official YouTube IFrame JS API handshake (`listening` + `infoDelivery` +
+   * `onStateChange` + `onError`).
    */
   useEffect(() => {
     if (!open || !src) return undefined
+
+    const handleStateCode = (code) => {
+      if (code === 1) reportEmbed('playing')
+      else if (code === 2) reportEmbed('paused')
+      else if (code === 3) reportEmbed('buffering')
+      else if (code === 0) {
+        if (reportEmbed('ended') === 'replay') {
+          command('seekTo', [0, true])
+          command('playVideo')
+        }
+      }
+    }
 
     const onMessage = (event) => {
       if (!/^https:\/\/www\.youtube(-nocookie)?\.com$/.test(String(event.origin))) return
@@ -78,28 +104,45 @@ export function YouTubeEmbed() {
         setFailure(embedErrorCopy(data.info))
         reportEmbed('error', data.info)
       }
-      if (data?.event === 'onReady') setFailure('')
+      if (data?.event === 'onReady') {
+        setFailure('')
+        if (Number.isFinite(volRef.current)) {
+          command('setVolume', [Math.round(volRef.current * 100)])
+        }
+      }
       if (data?.event === 'onStateChange') {
-        // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued.
-        const code = Number(data.info)
-        if (code === 1) reportEmbed('playing')
-        if (code === 2) reportEmbed('paused')
-        if (code === 3) reportEmbed('buffering')
-        if (code === 0) {
-          if (reportEmbed('ended') === 'replay') {
-            command('seekTo', [0, true])
-            command('playVideo')
-          }
+        handleStateCode(Number(data.info))
+      }
+      if (data?.event === 'infoDelivery' && data.info && typeof data.info === 'object') {
+        const cur = Number(data.info.currentTime)
+        const dur = Number(data.info.duration)
+        if (Number.isFinite(cur) || (Number.isFinite(dur) && dur > 0)) {
+          reportEmbed('progress', { cur, dur })
+        }
+        if (typeof data.info.playerState === 'number') {
+          handleStateCode(data.info.playerState)
         }
       }
     }
 
     window.addEventListener('message', onMessage)
-    const hello = () =>
-      frame.current?.contentWindow?.postMessage(
-        JSON.stringify({ event: 'listening', id: 1, channel: 'vibex' }),
+    const hello = () => {
+      const win = frame.current?.contentWindow
+      if (!win) return
+      win.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'vibex' }), '*')
+      win.postMessage(
+        JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onReady'], id: 1, channel: 'vibex' }),
         '*'
       )
+      win.postMessage(
+        JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'], id: 1, channel: 'vibex' }),
+        '*'
+      )
+      win.postMessage(
+        JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onError'], id: 1, channel: 'vibex' }),
+        '*'
+      )
+    }
     hello()
     const beat = setInterval(hello, 1200)
     const stop = setTimeout(() => clearInterval(beat), 9600)
@@ -109,7 +152,7 @@ export function YouTubeEmbed() {
       clearTimeout(stop)
       window.removeEventListener('message', onMessage)
     }
-  }, [open, src, reportEmbed])
+  }, [open, src, reportEmbed, command])
 
   if (!open || !src) return null
 
@@ -118,10 +161,16 @@ export function YouTubeEmbed() {
   const watchUrl = `https://www.youtube.com/watch?v=${embedTrack.videoId}`
 
   return (
-    <div id="ytEmbed" role="dialog" aria-modal="true" aria-label="YouTube player">
+    <div
+      id="ytEmbed"
+      className={expanded ? 'is-expanded' : 'is-docked'}
+      role="dialog"
+      aria-modal={expanded ? 'true' : 'false'}
+      aria-label="YouTube player"
+    >
       <div id="ytEmbedHead">
         <div id="ytEmbedMeta">
-          <Icon name="music" size={16} />
+          <Icon name="music" size={15} />
           <b>{title}</b>
           {artist && <span>{artist}</span>}
         </div>
@@ -135,7 +184,7 @@ export function YouTubeEmbed() {
               prevTrack()
             }}
           >
-            <Icon name="chevronLeft" size={18} />
+            <Icon name="chevronLeft" size={16} />
           </button>
           <button
             type="button"
@@ -146,7 +195,15 @@ export function YouTubeEmbed() {
               nextTrack()
             }}
           >
-            <Icon name="chevronRight" size={18} />
+            <Icon name="chevronRight" size={16} />
+          </button>
+          <button
+            type="button"
+            title={expanded ? 'Dock mini player' : 'Expand video'}
+            aria-label={expanded ? 'Dock mini player' : 'Expand video'}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            <Icon name={expanded ? 'chevronDown' : 'chevronUp'} size={16} />
           </button>
         </div>
         <button
@@ -156,7 +213,7 @@ export function YouTubeEmbed() {
           aria-label="Close YouTube player"
           onClick={closeEmbed}
         >
-          <Icon name="close" size={18} />
+          <Icon name="close" size={16} />
         </button>
       </div>
       <div id="ytEmbedStage">
@@ -179,8 +236,7 @@ export function YouTubeEmbed() {
         </p>
       ) : (
         <p id="ytEmbedNote">
-          YouTube items play here rather than as an audio stream. YouTube’s own controls and
-          its advertising apply.
+          Synced with player bar controls.
         </p>
       )}
     </div>

@@ -2,10 +2,10 @@
 // Cross-catalog studio track matcher (metadata-only, zero stream extraction).
 // --------------------------------------------------------------------------
 // Matches a catalog entry's `(title, artists, album, duration)` metadata
-// against licensed/authorized JioSaavn catalog candidates so tracks selected
-// while browsing YouTube Music play as native studio audio (`<audio>`) whenever
-// an exact studio recording exists, and fall back to YouTube's official embed
-// player otherwise.
+// against JioSaavn catalog candidates so tracks selected under YouTube Music
+// play natively as pure `<audio>` studio tracks whenever a matching studio
+// recording exists, falling back cleanly to YouTube's official IFrame player
+// otherwise.
 // ==========================================================================
 
 const EDITION_MODIFIERS = [
@@ -27,9 +27,16 @@ const EDITION_MODIFIERS = [
 const VIDEO_NOISE_RE =
   /\b(official\s+(music\s+|lyric\s+)?(video|audio|visualizer)|lyric(al)?(\s+video|\s+song)?|video\s+song|full\s+(video|audio|song)(\s+song)?|audio\s+song|4k|8k|uhd|hd\s+video|dolby\s+atmos|mv|m\/v)\b/gi
 
+const SUBTITLE_METADATA_RE =
+  /^(song|video|album|single|ep|episode|podcast|\d+(?:[.,]\d+)?\s*[kmb]?\s*(?:plays|views|subscribers|likes))$/i
+
 const GENERIC_LABELS = new Set([
   'unknown artist',
   'various artists',
+  'song',
+  'video',
+  'album',
+  'single',
   'sun tv',
   'sun pictures',
   'sony music south',
@@ -50,9 +57,11 @@ const GENERIC_LABELS = new Set([
   'junglee music',
   'mythri movie makers',
   'hombale films',
+  'divo music',
+  'ayngaran',
 ])
 
-const TITLE_STOPWORDS = new Set(['from', 'the', 'song', 'ost', 'motion', 'picture', 'soundtrack'])
+const TITLE_STOPWORDS = new Set(['from', 'the', 'song', 'ost', 'motion', 'picture', 'soundtrack', 'original'])
 
 /** Decode common HTML entities present in JioSaavn and YouTube snippets. */
 export function unescapeEntities(value) {
@@ -74,11 +83,16 @@ export function parseIsoDuration(iso) {
   return hours * 3600 + minutes * 60 + seconds
 }
 
+/** True when a subtitle chip is a YouTube type/view badge rather than an artist or album name. */
+export function isSubtitleMetadataChip(part) {
+  return SUBTITLE_METADATA_RE.test(String(part || '').trim())
+}
+
 /** Clean YouTube channel suffixes (`"Anirudh - Topic"` → `"Anirudh"`, `"TheWeekndVEVO"` → `"The Weeknd"`). */
 export function cleanChannelArtist(raw) {
   let s = unescapeEntities(raw).trim()
-  if (!s) return ''
-  s = s.replace(/\s*-\s*topic$/i, '').trim()
+  if (!s || isSubtitleMetadataChip(s)) return ''
+  s = s.replace(/\s*[-–—]\s*topic$/i, '').trim()
   if (/vevo$/i.test(s) && s.length > 4) {
     s = s
       .replace(/vevo$/i, '')
@@ -97,6 +111,29 @@ export function normalizeText(value) {
     .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/**
+ * Light romanization folding for Indian transliteration variants
+ * (`"Manasilaayo"` ↔ `"Manasilayo"`, `"Kanimaa"` ↔ `"Kanima"`, `"Thaensudare"` ↔ `"Thensudare"`).
+ */
+export function phoneticFoldToken(token) {
+  const t = String(token || '').toLowerCase()
+  if (t.length < 4 || !/^[a-z]+$/.test(t)) return t
+  return t
+    .replace(/th/g, 't')
+    .replace(/dh/g, 'd')
+    .replace(/zh/g, 'l')
+    .replace(/sh/g, 's')
+    .replace(/bh/g, 'b')
+    .replace(/kh/g, 'k')
+    .replace(/gh/g, 'g')
+    .replace(/ph/g, 'f')
+    .replace(/ae/g, 'e')
+    .replace(/aa/g, 'a')
+    .replace(/ee/g, 'i')
+    .replace(/oo/g, 'u')
+    .replace(/([a-z])\1+/g, '$1')
 }
 
 function significantTokens(value) {
@@ -119,18 +156,18 @@ function extractModifiers(text) {
 
 function stripMovieClause(segment) {
   return segment
-    .replace(/\(\s*from\s+["']?([^"')]+)["']?\s*\)/gi, ' ')
-    .replace(/\[\s*from\s+["']?([^"\]]+)["']?\s*\]/gi, ' ')
+    .replace(/\(\s*from\s+["'“”]?([^"'”)]+)["'”)]?\s*\)/gi, ' ')
+    .replace(/\[\s*from\s+["'“”]?([^"'”\]]+)["'”\]]?\s*\]/gi, ' ')
 }
 
 function stripNoise(segment) {
   return stripMovieClause(segment)
     .replace(/\([^)]*\)/g, (clause) => {
-      const cleaned = clause.replace(VIDEO_NOISE_RE, '').replace(/[()\s-]+/g, '')
+      const cleaned = clause.replace(VIDEO_NOISE_RE, '').replace(/[()\s-–—]+/g, '')
       return cleaned ? ` ${clause} ` : ' '
     })
     .replace(/\[[^\]]*\]/g, (clause) => {
-      const cleaned = clause.replace(VIDEO_NOISE_RE, '').replace(/[\[\]\s-]+/g, '')
+      const cleaned = clause.replace(VIDEO_NOISE_RE, '').replace(/[\[\]\s-–—]+/g, '')
       return cleaned ? ` ${clause} ` : ' '
     })
     .replace(VIDEO_NOISE_RE, ' ')
@@ -140,14 +177,23 @@ function stripNoise(segment) {
     .trim()
 }
 
+function splitArtistList(raw) {
+  return String(raw || '')
+    .split(/,|&|\bfeat\.?\b|\bft\.?\b/i)
+    .map((name) => cleanChannelArtist(name))
+    .filter((name) => name && !isSubtitleMetadataChip(name))
+}
+
 function extractArtistNames(track) {
   if (!track) return []
   if (Array.isArray(track.artists)) {
-    return track.artists.map((a) => cleanChannelArtist(typeof a === 'string' ? a : a?.name)).filter(Boolean)
+    return track.artists
+      .flatMap((a) => splitArtistList(typeof a === 'string' ? a : a?.name))
+      .filter(Boolean)
   }
   const primary = track.artists?.primary || track.artists?.all || []
   if (Array.isArray(primary) && primary.length) {
-    return primary.map((a) => cleanChannelArtist(a?.name || a)).filter(Boolean)
+    return primary.flatMap((a) => splitArtistList(a?.name || a)).filter(Boolean)
   }
   return []
 }
@@ -155,6 +201,7 @@ function extractArtistNames(track) {
 /**
  * Decompose a raw YouTube / catalog track into clean search components:
  * - `coreTitle`: primary song title stripped of video tags and pipe metadata
+ * - `altTitle`: secondary dash clause when both halves are song title phrases
  * - `artists`: non-label artist names
  * - `contextHints`: album / film / artist clues from pipe segments & subtitle
  * - `modifiers`: special edition tags (`remix`, `lofi`, `cover`, `live`, etc.)
@@ -163,9 +210,8 @@ export function extractTrackQueryParts(track) {
   const rawTitle = unescapeEntities(track?.name ?? track?.title ?? '').trim()
   const modifiers = extractModifiers(rawTitle)
 
-  // Capture `(From "Movie")` hints before stripping video clauses.
   const contextHints = []
-  for (const m of rawTitle.matchAll(/from\s+["']([^"']+)["']/gi)) {
+  for (const m of rawTitle.matchAll(/from\s+["'“”]([^"'”]+)["'”]/gi)) {
     if (m[1]) contextHints.push(m[1].trim())
   }
 
@@ -173,14 +219,14 @@ export function extractTrackQueryParts(track) {
   let head = pipeParts[0] || rawTitle
   for (const extra of pipeParts.slice(1)) {
     const cleaned = stripNoise(extra)
-    if (cleaned) contextHints.push(cleaned)
+    if (cleaned && !isSubtitleMetadataChip(cleaned)) contextHints.push(cleaned)
   }
 
   const rawArtists = extractArtistNames(track)
   const realArtists = rawArtists.filter((a) => !GENERIC_LABELS.has(normalizeText(a)))
 
-  // If title is written `"Artist - Song Title"`, peel off the leading artist prefix.
-  const dashParts = head.split(/\s+[-–—]\s+/).map((p) => stripNoise(p)).filter(Boolean)
+  let altTitle = ''
+  const dashParts = head.split(/\s*[-–—]\s*/).map((p) => stripNoise(p)).filter(Boolean)
   if (dashParts.length >= 2) {
     const firstNorm = normalizeText(dashParts[0])
     const matchesKnownArtist = realArtists.some((a) => {
@@ -188,10 +234,10 @@ export function extractTrackQueryParts(track) {
       return an && (an === firstNorm || firstNorm.includes(an) || an.includes(firstNorm))
     })
     if (matchesKnownArtist) {
-      head = dashParts.slice(1).join(' - ')
+      head = dashParts.slice(1).join(' ')
     } else {
-      // Drop trailing `" - Video Song"` style empty remnants after `stripNoise`.
       head = dashParts[0]
+      altTitle = dashParts.join(' ')
       for (const rest of dashParts.slice(1)) contextHints.push(rest)
     }
   } else {
@@ -200,30 +246,52 @@ export function extractTrackQueryParts(track) {
 
   const albumName =
     typeof track?.album === 'string' ? track.album : track?.album?.name || ''
-  if (albumName) contextHints.push(unescapeEntities(albumName))
-  if (track?.subtitle) contextHints.push(unescapeEntities(track.subtitle))
+  if (albumName && !isSubtitleMetadataChip(albumName)) {
+    contextHints.push(unescapeEntities(albumName))
+  }
+  if (track?.subtitle) {
+    for (const part of unescapeEntities(track.subtitle).split('•')) {
+      const trimmed = part.trim()
+      if (trimmed && !isSubtitleMetadataChip(trimmed) && !/^\d{1,2}:\d{2}(?::\d{2})?$/.test(trimmed)) {
+        contextHints.push(trimmed)
+      }
+    }
+  }
 
   const coreTitle = head || stripNoise(rawTitle) || rawTitle
   return {
     coreTitle,
+    altTitle: altTitle && altTitle !== coreTitle ? altTitle : '',
     artists: realArtists,
     contextHints,
     modifiers,
   }
 }
 
-/** Build up to 2 crisp search queries for resolving a track in JioSaavn's catalog. */
+/** Build crisp search queries for resolving a track in JioSaavn's catalog. */
 export function buildMatchQueries(track) {
-  const { coreTitle, artists, contextHints } = extractTrackQueryParts(track)
+  const { coreTitle, altTitle, artists, contextHints } = extractTrackQueryParts(track)
   const queries = []
-  const primary = artists[0] || contextHints[0] || ''
-  const combined = `${coreTitle} ${primary}`.replace(/\s+/g, ' ').trim()
-  if (combined) queries.push(combined)
-  const titleOnly = coreTitle.replace(/\s+/g, ' ').trim()
-  if (titleOnly && !queries.some((q) => q.toLowerCase() === titleOnly.toLowerCase())) {
-    queries.push(titleOnly)
+  const pushUnique = (q) => {
+    const clean = String(q || '').replace(/\s+/g, ' ').trim()
+    if (clean && !queries.some((existing) => existing.toLowerCase() === clean.toLowerCase())) {
+      queries.push(clean)
+    }
   }
-  return queries
+
+  const primary = artists[0] || contextHints[0] || ''
+  if (primary) pushUnique(`${coreTitle} ${primary}`)
+  pushUnique(coreTitle)
+  if (altTitle) pushUnique(altTitle)
+  return queries.slice(0, 3)
+}
+
+function tokensMatch(a, b) {
+  if (a === b) return 1
+  if (a.length >= 4 && b.length >= 4 && phoneticFoldToken(a) === phoneticFoldToken(b)) {
+    return 0.92
+  }
+  return 0
 }
 
 function computeTitleSimilarity(targetTitle, candidateTitle) {
@@ -236,28 +304,41 @@ function computeTitleSimilarity(targetTitle, candidateTitle) {
   const bTokens = significantTokens(candidateTitle)
   if (!aTokens.length || !bTokens.length) return 0
 
-  const aSet = new Set(aTokens)
-  const bSet = new Set(bTokens)
-  let shared = 0
-  for (const t of aSet) {
-    if (bSet.has(t)) shared += 1
-  }
-  if (shared === 0) return 0
+  const aUnique = [...new Set(aTokens)]
+  const bUnique = [...new Set(bTokens)]
 
-  // Every significant token of the requested title appears in the studio title
-  // (e.g. `"Arabic Kuthu"` ↔ `"Arabic Kuthu - Halamithi Habibo"`, `"Kesariya"` ↔ `"Kesariya (From Brahmastra)"`).
-  if (shared === aSet.size) {
-    const extraRatio = Math.min(1, aSet.size / bSet.size)
-    return 0.84 + 0.16 * extraRatio
+  let matchedWeight = 0
+  for (const at of aUnique) {
+    let bestToken = 0
+    for (const bt of bUnique) {
+      const w = tokensMatch(at, bt)
+      if (w > bestToken) bestToken = w
+    }
+    matchedWeight += bestToken
   }
-  // Reverse containment when YouTube included subtitle words (`"Hukum Thalaivar Alappara"` ↔ `"Hukum"`).
-  if (shared === bSet.size && bSet.size >= 1) {
-    const extraRatio = Math.min(1, bSet.size / aSet.size)
-    return 0.78 + 0.16 * extraRatio
+  if (matchedWeight === 0) return 0
+
+  if (matchedWeight >= aUnique.length * 0.92) {
+    const extraRatio = Math.min(1, aUnique.length / bUnique.length)
+    return 0.84 + 0.16 * extraRatio * (matchedWeight / aUnique.length)
   }
 
-  const union = new Set([...aSet, ...bSet]).size
-  return shared / union
+  let reverseWeight = 0
+  for (const bt of bUnique) {
+    let bestToken = 0
+    for (const at of aUnique) {
+      const w = tokensMatch(bt, at)
+      if (w > bestToken) bestToken = w
+    }
+    reverseWeight += bestToken
+  }
+  if (reverseWeight >= bUnique.length * 0.92 && bUnique.length >= 1) {
+    const extraRatio = Math.min(1, bUnique.length / aUnique.length)
+    return 0.8 + 0.16 * extraRatio * (reverseWeight / bUnique.length)
+  }
+
+  const unionApprox = aUnique.length + bUnique.length - matchedWeight
+  return unionApprox > 0 ? matchedWeight / unionApprox : 0
 }
 
 /** Score a JioSaavn candidate against a source track (`0` = incompatible). */
@@ -268,18 +349,24 @@ export function scoreSaavnCandidate(sourceTrack, candidate) {
 
   const target = extractTrackQueryParts(sourceTrack)
   const candParts = extractTrackQueryParts(candidate)
+  const candRawName = unescapeEntities(candidate.name || candidate.title || '')
 
-  const titleScore = Math.max(
+  const titleCandidates = [
     computeTitleSimilarity(target.coreTitle, candParts.coreTitle),
-    computeTitleSimilarity(target.coreTitle, unescapeEntities(candidate.name || candidate.title || ''))
-  )
+    computeTitleSimilarity(target.coreTitle, candRawName),
+  ]
+  if (target.altTitle) {
+    titleCandidates.push(computeTitleSimilarity(target.altTitle, candParts.coreTitle))
+    titleCandidates.push(computeTitleSimilarity(target.altTitle, candRawName))
+  }
+  const titleScore = Math.max(...titleCandidates)
 
   // Hard gate: never match an unrelated song purely because artist + duration match.
   if (titleScore < 0.55) {
     return { score: 0, titleScore }
   }
 
-  // Artist / film / album corroboration.
+  // Artist / film / album corroboration (neutral `0` when a label channel carries no singer name).
   const targetContextTokens = new Set(
     [...target.artists, ...target.contextHints]
       .flatMap((s) => significantTokens(s))
@@ -295,14 +382,7 @@ export function scoreSaavnCandidate(sourceTrack, candidate) {
   for (const t of targetContextTokens) {
     if (candContextTokens.has(t)) contextOverlap += 1
   }
-  const hasContextExpectation = targetContextTokens.size > 0
-  const contextBonus = !hasContextExpectation
-    ? 0.06
-    : contextOverlap >= 2
-      ? 0.18
-      : contextOverlap === 1
-        ? 0.12
-        : -0.06
+  const contextBonus = contextOverlap >= 2 ? 0.16 : contextOverlap === 1 ? 0.11 : 0
 
   // Duration corroboration when both sides report non-zero seconds.
   const srcDur = Number(sourceTrack?.duration) || 0
@@ -310,23 +390,23 @@ export function scoreSaavnCandidate(sourceTrack, candidate) {
   let durationAdj = 0
   if (srcDur > 0 && candDur > 0) {
     const diff = Math.abs(srcDur - candDur)
-    if (diff <= 6) durationAdj = 0.14
-    else if (diff <= 20) durationAdj = 0.08
-    else if (diff <= 45) durationAdj = 0.02
-    else if (diff > 95) durationAdj = -0.25
+    if (diff <= 8) durationAdj = 0.14
+    else if (diff <= 25) durationAdj = 0.08
+    else if (diff <= 60) durationAdj = 0.02
+    else if (diff > 110) durationAdj = -0.25
   }
 
   // Edition guardrail: don't replace an explicit remix/cover/lofi/karaoke request
   // with an unrelated studio cut (or vice versa) unless the edition matches.
   let editionAdj = 0
   for (const mod of target.modifiers) {
-    if (!candParts.modifiers.has(mod)) editionAdj -= 0.25
+    if (!candParts.modifiers.has(mod)) editionAdj -= 0.28
   }
   for (const mod of candParts.modifiers) {
     if (!target.modifiers.has(mod)) editionAdj -= 0.18
   }
 
-  const total = Math.max(0, Math.min(1, titleScore * 0.8 + contextBonus + durationAdj + editionAdj))
+  const total = Math.max(0, Math.min(1, titleScore * 0.85 + contextBonus + durationAdj + editionAdj))
   return { score: total, titleScore }
 }
 

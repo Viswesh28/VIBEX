@@ -8,30 +8,32 @@
  *
  * Raw YouTube media streams are NEVER extracted or decrypted here. Instead,
  * non-long-form results are matched by `(title, artist, album, duration)` metadata
- * against JioSaavn's studio catalogue so matched songs play natively as pure
- * `<audio>` tracks just like JioSaavn, while unmatched YouTube-only uploads play
- * in YouTube's official IFrame Player.
+ * against JioSaavn's studio catalogue via top-level bundled `saavnApp.fetch(...)`
+ * so matched songs play natively as pure `<audio>` tracks identically to JioSaavn.
  */
 
+import saavnApp from '../jiosaavn-api/src/server.js'
 import {
   buildMatchQueries,
   cleanChannelArtist,
+  isSubtitleMetadataChip,
   matchSaavnTrack,
   parseIsoDuration,
   unescapeEntities,
 } from './_lib/trackMatch.mjs'
 
 const SEARCH_TIMEOUT = 6000
-const ENRICH_BUDGET_MS = 3800
-const ENRICH_CONCURRENCY = 6
+const ENRICH_BUDGET_MS = 8500
+const ENRICH_CONCURRENCY = 8
 const LONG_FORM_SEC = 20 * 60
+const DURATION_SEGMENT_RE = /^\d{1,2}:\d{2}(?::\d{2})?$/
 
 const WEB_REMIX = {
-  client: { clientName: 'WEB_REMIX', clientVersion: '1.20240701.00.00', hl: 'en', gl: 'US' },
+  client: { clientName: 'WEB_REMIX', clientVersion: '1.20241118.01.00', hl: 'en', gl: 'IN' },
 }
 
 const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 
 /** The music-videos-and-songs filter the YouTube Music search box uses. */
 const SONGS_PARAMS = 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D'
@@ -160,19 +162,33 @@ function isExplicitRenderer(renderer) {
   )
 }
 
-/** Pull one renderer apart into the flat shape the client maps. */
+/**
+ * Pull one renderer apart into the flat shape the client maps.
+ *
+ * Handles both classic `"Artist • Album • 3:42"` and modern YouTube Music
+ * `"Song • Artist • Album • 3:28 • 196M plays"` / `"Video • Channel • 452M views • 4:42"`.
+ */
 export function toResult(renderer) {
   if (!renderer || typeof renderer !== 'object') return null
   const cols = renderer.flexColumns || []
   const title = runsText(cols[0]?.musicResponsiveListItemFlexColumnRenderer?.text)
   const subtitleText = runsText(cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text)
 
-  // The subtitle is "Artist • Album • 3:42"; the tail is the duration when it
-  // parses, and the first segment is the artist.
-  const parts = subtitleText.split('•').map((p) => p.trim()).filter(Boolean)
-  const duration = seconds(parts[parts.length - 1])
-  const artists = parts.filter((p) => p && !/^\d{1,2}:\d{2}(:\d{2})?$/.test(p))
-  const album = artists.length > 1 ? artists[artists.length - 1] : null
+  const rawParts = subtitleText.split('•').map((p) => p.trim()).filter(Boolean)
+  let duration = 0
+  const cleanParts = []
+  for (let i = rawParts.length - 1; i >= 0; i -= 1) {
+    const part = rawParts[i]
+    if (!duration && DURATION_SEGMENT_RE.test(part)) {
+      duration = seconds(part)
+      continue
+    }
+    if (isSubtitleMetadataChip(part)) continue
+    cleanParts.unshift(part)
+  }
+
+  const album = cleanParts.length > 1 ? cleanParts[cleanParts.length - 1] : null
+  const artistSegments = cleanParts.slice(0, -1).length ? cleanParts.slice(0, -1) : cleanParts
 
   const videoId =
     renderer.playlistItemData?.videoId ||
@@ -190,8 +206,8 @@ export function toResult(renderer) {
   return {
     videoId,
     title,
-    artists: artists.slice(0, -1).length ? artists.slice(0, -1) : artists,
-    album: album && artists.length > 1 ? album : null,
+    artists: artistSegments,
+    album,
     subtitle: subtitleText,
     duration,
     thumbnail: biggestThumb(thumbnails),
@@ -272,7 +288,7 @@ async function searchViaOfficialDataApi({ query, pageToken, limit, apiKey }) {
   if (!searchRes.ok) return null
 
   const ids = (searchRes.json?.items || [])
-    .map((it) => (typeof it?.id === 'string' ? it.id : it?.id?.videoId))
+    .map((it) => (typeof it?.id === 'string' ? it?.id : it?.id?.videoId))
     .filter(Boolean)
 
   let videosJson = null
@@ -292,16 +308,6 @@ async function searchViaOfficialDataApi({ query, pageToken, limit, apiKey }) {
   return parseYtDataApiResponse(searchRes.json, videosJson, limit)
 }
 
-let cachedSaavnAppPromise = null
-function loadSaavnApp() {
-  if (!cachedSaavnAppPromise) {
-    cachedSaavnAppPromise = import('../jiosaavn-api/src/server.js')
-      .then((m) => m.default)
-      .catch(() => null)
-  }
-  return cachedSaavnAppPromise
-}
-
 async function defaultSaavnSearch(query, signal) {
   const path = `/api/search/songs?query=${encodeURIComponent(query)}&limit=8`
   if (process.env.API_TARGET) {
@@ -314,9 +320,8 @@ async function defaultSaavnSearch(query, signal) {
     return Array.isArray(payload?.data?.results) ? payload.data.results : []
   }
 
-  const app = await loadSaavnApp()
-  if (!app) return []
-  const r = await app.fetch(
+  if (!saavnApp?.fetch) return []
+  const r = await saavnApp.fetch(
     new Request(`https://vibex.internal${path}`, {
       headers: { accept: 'application/json' },
       signal,
@@ -400,7 +405,9 @@ export default async function handler(req, res) {
   const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 40)
   const shouldEnrich = q.enrich !== '0'
   const headerKey = String(req.headers?.['x-youtube-api-key'] || '').trim()
-  const apiKey = headerKey || String(process.env.YOUTUBE_API_KEY || '').trim()
+  const apiKey =
+    headerKey ||
+    String(process.env.YOUTUBE_API_KEY || process.env.YT_API_KEY || '').trim()
 
   if (!query && !pageToken) {
     res.status(400).json({ success: false, code: 'bad_request', message: 'A query is required.' })
@@ -445,10 +452,11 @@ export default async function handler(req, res) {
   const results = shouldEnrich
     ? await enrichResultsWithSaavnAudio(parsed.results)
     : parsed.results
+  const matchedCount = results.reduce((acc, item) => acc + (item?.matchedAudio ? 1 : 0), 0)
 
   res.setHeader(
     'Cache-Control',
-    headerKey ? 'private, max-age=120' : 'public, s-maxage=300, stale-while-revalidate=900'
+    headerKey ? 'private, max-age=60' : 'public, s-maxage=60, stale-while-revalidate=120'
   )
   res.status(200).json({
     success: true,
@@ -456,6 +464,7 @@ export default async function handler(req, res) {
       source: 'ytmusic',
       providerMode,
       total: results.length,
+      matchedCount,
       results,
       nextPageToken: parsed.nextPageToken,
     },
