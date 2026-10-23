@@ -148,6 +148,14 @@ export function YouTubeEmbed() {
       clearInterval(beat)
       clearTimeout(stop)
       window.removeEventListener('message', onMessage)
+      try {
+        frame.current?.contentWindow?.postMessage(
+          JSON.stringify({ event: 'command', func: 'stopVideo', args: [], id: 1, channel: 'vibex' }),
+          '*'
+        )
+      } catch {
+        /* frame already detached */
+      }
     }
   }, [open, src, reportEmbed, command])
 
