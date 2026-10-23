@@ -24,7 +24,7 @@ import {
 
 const SEARCH_TIMEOUT = 6000
 const ENRICH_BUDGET_MS = 8500
-const ENRICH_CONCURRENCY = 8
+const ENRICH_CONCURRENCY = 4
 const LONG_FORM_SEC = 20 * 60
 const DURATION_SEGMENT_RE = /^\d{1,2}:\d{2}(?::\d{2})?$/
 
@@ -308,8 +308,8 @@ async function searchViaOfficialDataApi({ query, pageToken, limit, apiKey }) {
   return parseYtDataApiResponse(searchRes.json, videosJson, limit)
 }
 
-async function defaultSaavnSearch(query, signal) {
-  const path = `/api/search/songs?query=${encodeURIComponent(query)}&limit=8`
+async function defaultSaavnSearch(query, signal, limit = 8) {
+  const path = `/api/search/songs?query=${encodeURIComponent(query)}&limit=${limit}`
   if (process.env.API_TARGET) {
     const r = await fetch(`${process.env.API_TARGET}${path}`, {
       headers: { accept: 'application/json' },
@@ -332,13 +332,29 @@ async function defaultSaavnSearch(query, signal) {
   return Array.isArray(payload?.data?.results) ? payload.data.results : []
 }
 
+function toMatchedAudioPayload(song) {
+  return {
+    provider: 'jiosaavn',
+    songId: song.id,
+    album: song.album || null,
+    artists: song.artists || null,
+    duration: Number(song.duration) || 0,
+    image: Array.isArray(song.image) ? song.image : [],
+    downloadUrl: song.downloadUrl,
+  }
+}
+
 /**
  * Enrich YouTube catalog rows in parallel with matched JioSaavn studio audio
  * metadata + CDN URLs so tracks play natively as pure `<audio>` in the app.
  */
 export async function enrichResultsWithSaavnAudio(
   results,
-  { saavnSearchFn = defaultSaavnSearch, budgetMs = ENRICH_BUDGET_MS } = {}
+  {
+    saavnSearchFn = defaultSaavnSearch,
+    seedCandidates = [],
+    budgetMs = ENRICH_BUDGET_MS,
+  } = {}
 ) {
   if (!Array.isArray(results) || !results.length) return results
   const out = results.map((item) => ({ ...item }))
@@ -364,24 +380,23 @@ export async function enrichResultsWithSaavnAudio(
       cursor += 1
       const item = out[idx]
       if (!item || (Number(item.duration) > 0 && Number(item.duration) >= LONG_FORM_SEC)) continue
+
+      // Fast path: match immediately against the parallel query-wide studio pool (`0` extra requests).
+      if (seedCandidates.length) {
+        const directHit = matchSaavnTrack(item, seedCandidates)
+        if (directHit?.song) {
+          out[idx] = { ...item, matchedAudio: toMatchedAudioPayload(directHit.song) }
+          continue
+        }
+      }
+
       const queries = buildMatchQueries(item)
       for (const q of queries) {
         if (ctl.signal.aborted) break
         const candidates = await cachedSearch(q)
         const hit = matchSaavnTrack(item, candidates)
         if (hit?.song) {
-          out[idx] = {
-            ...item,
-            matchedAudio: {
-              provider: 'jiosaavn',
-              songId: hit.song.id,
-              album: hit.song.album || null,
-              artists: hit.song.artists || null,
-              duration: Number(hit.song.duration) || 0,
-              image: Array.isArray(hit.song.image) ? hit.song.image : [],
-              downloadUrl: hit.song.downloadUrl,
-            },
-          }
+          out[idx] = { ...item, matchedAudio: toMatchedAudioPayload(hit.song) }
           break
         }
       }
@@ -413,6 +428,13 @@ export default async function handler(req, res) {
     res.status(400).json({ success: false, code: 'bad_request', message: 'A query is required.' })
     return
   }
+
+  // Prefetch a broad studio pool for `query` concurrently with YouTube discovery
+  // so most tracks resolve in 0ms without burst upstream calls.
+  const seedPoolPromise =
+    shouldEnrich && query
+      ? defaultSaavnSearch(query, undefined, 25).catch(() => [])
+      : Promise.resolve([])
 
   let parsed = null
   let providerMode = 'ytmusic-catalog'
@@ -449,8 +471,9 @@ export default async function handler(req, res) {
     parsed = parseYtSearchResponse(r.json, limit)
   }
 
+  const seedCandidates = await seedPoolPromise
   const results = shouldEnrich
-    ? await enrichResultsWithSaavnAudio(parsed.results)
+    ? await enrichResultsWithSaavnAudio(parsed.results, { seedCandidates })
     : parsed.results
   const matchedCount = results.reduce((acc, item) => acc + (item?.matchedAudio ? 1 : 0), 0)
 

@@ -167,6 +167,15 @@ describe('cross-catalog studio audio matching', () => {
     expect(enriched[0].matchedAudio?.downloadUrl).toHaveLength(2)
     expect(enriched[1].matchedAudio).toBeUndefined()
 
+    // Seed pool fast path resolves matching tracks with zero per-row search calls.
+    const spySearch = vi.fn(async () => [])
+    const seeded = await enrichResultsWithSaavnAudio([rawResults[0]], {
+      saavnSearchFn: spySearch,
+      seedCandidates: [studioCandidate()],
+    })
+    expect(seeded[0].matchedAudio?.songId).toBe('saavn_blinding')
+    expect(spySearch).not.toHaveBeenCalled()
+
     const resolver = createYtMusicStreamResolver({
       apiFn: async () => ({ results: [studioCandidate()] }),
       apiFetchFn: async () => ({ ok: false, status: 404, json: async () => ({}) }),
