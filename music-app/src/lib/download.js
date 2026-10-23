@@ -1,14 +1,13 @@
 /**
- * Tagged downloads, performed entirely on the device.
+ * Tagged on-device audio downloads for Android (`Music/VIBEX` via `window.VibexAndroid`
+ * with MediaStore indexing, falling back to `@capacitor/filesystem` `Documents/VIBEX`).
  *
- * This is the native counterpart to the gateway's `/dl` endpoint, and it runs
- * the *same* `tagger.mjs` the server does — that module is plain Uint8Array,
- * so one implementation covers both. Steps mirror the server exactly:
- * re-resolve the CDN link (JioSaavn's links rotate and expire), fetch the
- * audio, fetch cover art and LRCLIB lyrics, write the metadata in, save.
+ * Supports BOTH JioSaavn studio tracks (embedded with cover art + synced LRCLIB lyrics
+ * via `tagger.mjs`) AND YouTube / YT Music tracks (`yt:<videoId>` pure audio `.m4a`).
  */
 import { addTags } from '../../tagger.mjs'
 import { apiFetch } from './api.js'
+import { apiUrl, hasAndroidBridge } from './config.js'
 
 const CDN_HOSTS = ['saavncdn.com', 'jiosaavn.com', 'akamaized.net', 'akamaihd.net']
 
@@ -23,14 +22,12 @@ const hostOK = (t) => {
   }
 }
 
-const safeName = (s) => String(s || 'song').replace(/[\\/:*?"<>|\r\n]/g, '').trim().slice(0, 120) || 'song'
+const safeName = (s) =>
+  String(s || 'song')
+    .replace(/[\\/:*?"<>|\r\n]/g, '')
+    .trim()
+    .slice(0, 120) || 'song'
 
-/**
- * Uint8Array -> base64, via the platform's own encoder.
- *
- * A hand-rolled `btoa(String.fromCharCode(...))` blows the argument limit on a
- * 13 MB file; FileReader does the conversion off-thread instead.
- */
 function toBase64(bytes, mime) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -43,14 +40,62 @@ function toBase64(bytes, mime) {
   })
 }
 
+async function persistBytes(out, ct, name) {
+  const data = await toBase64(out, ct)
+  if (hasAndroidBridge() && window.VibexAndroid?.saveAudioBase64) {
+    const savedUri = window.VibexAndroid.saveAudioBase64(name, ct || 'audio/mp4', data)
+    if (!savedUri) throw new Error('Android storage refused to write the file.')
+    return { uri: savedUri, folder: 'Music/VIBEX' }
+  }
+  const { Filesystem, Directory } = await import('@capacitor/filesystem')
+  const { uri } = await Filesystem.writeFile({
+    path: `VIBEX/${name}`,
+    data,
+    directory: Directory.Documents,
+    recursive: true,
+  })
+  return { uri, folder: 'Documents/VIBEX' }
+}
+
 /**
- * @returns {Promise<{ name: string, bytes: number, uri: string, tagged: boolean }>}
+ * @returns {Promise<{ name: string, bytes: number, uri: string, tagged: boolean, folder?: string }>}
  */
 export async function downloadSongNative(song, quality, onStage = () => {}) {
-  const id = song?.id
+  const id = String(song?.id || '')
   if (!id) throw new Error('This song has no id to resolve.')
 
-  // Always re-resolve: a link held in memory since app start may have expired.
+  // Pure-audio YouTube / YT Music track (`yt:<videoId>`)
+  if (id.startsWith('yt:')) {
+    const videoId = id.slice(3).trim()
+    if (!videoId) throw new Error('Invalid track identifier.')
+    onStage('Downloading…')
+    const streamEndpoint = apiUrl(`/ytaudio?id=${encodeURIComponent(videoId)}`)
+    const res = await fetch(streamEndpoint, { redirect: 'follow' })
+    const ct = (res.headers.get('content-type') || '').split(';')[0] || 'audio/mp4'
+    if (!res.ok || ct.includes('application/json') || ct.includes('text/html')) {
+      throw new Error(`Could not fetch audio stream (${res.status}).`)
+    }
+    const raw = new Uint8Array(await res.arrayBuffer())
+    if (!raw.length) throw new Error('The audio stream came back empty.')
+
+    onStage('Tagging…')
+    let out = raw
+    let tagged = false
+    try {
+      out = await addTags(raw, ct, song)
+      tagged = out !== raw && out.length > 0
+    } catch {
+      out = raw
+    }
+
+    onStage('Saving…')
+    const ext = /mp4|m4a|aac/i.test(ct) ? 'm4a' : 'webm'
+    const name = `${safeName(song?.name)}.${ext}`
+    const { uri, folder } = await persistBytes(out, ct, name)
+    return { name, bytes: out.length, uri, tagged, folder }
+  }
+
+  // Always re-resolve JioSaavn CDN URLs in case the in-memory link expired.
   onStage('Resolving…')
   let fresh = null
   try {
@@ -67,11 +112,10 @@ export async function downloadSongNative(song, quality, onStage = () => {}) {
   if (!urls.length) throw new Error('No downloadable link for this song.')
   const hit = urls.find((x) => x.quality === quality) || urls[urls.length - 1]
   const target = hit?.url
-  if (!target || !hostOK(target)) throw new Error('The download link looked wrong; try replaying it.')
+  if (!target || !hostOK(target))
+    throw new Error('The download link looked wrong; try replaying it.')
 
   onStage('Downloading…')
-  // The CDN sends Access-Control-Allow-Origin: *, so the WebView's own fetch
-  // handles this — no need to drag megabytes across the native bridge.
   const res = await fetch(target, { redirect: 'follow' })
   const ct = (res.headers.get('content-type') || '').split(';')[0] || 'audio/mp4'
   if (!res.ok || ct.includes('application/json') || ct.includes('text/html')) {
@@ -87,20 +131,13 @@ export async function downloadSongNative(song, quality, onStage = () => {}) {
     out = await addTags(raw, ct, meta)
     tagged = out !== raw && out.length > 0
   } catch {
-    out = raw // never let a metadata failure cost the user the audio
+    out = raw
   }
 
   onStage('Saving…')
   const ext = /mp4|m4a|aac/i.test(ct) ? 'm4a' : 'mp3'
   const name = `${safeName(meta?.name)}.${ext}`
-  const { Filesystem, Directory } = await import('@capacitor/filesystem')
-  const data = await toBase64(out, ct)
-  const { uri } = await Filesystem.writeFile({
-    path: `VIBEX/${name}`,
-    data,
-    directory: Directory.Documents,
-    recursive: true,
-  })
+  const { uri, folder } = await persistBytes(out, ct, name)
 
-  return { name, bytes: out.length, uri, tagged }
+  return { name, bytes: out.length, uri, tagged, folder }
 }

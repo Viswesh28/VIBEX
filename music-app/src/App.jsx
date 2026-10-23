@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, probeApi } from './lib/api.js'
 import { dlUrlFor } from './lib/song.js'
-import { isNative } from './lib/config.js'
+import { isNative, isNativeApp } from './lib/config.js'
 import { decodeHtml } from './lib/format.js'
 import { isLocalOrigin } from './lib/platform.js'
 
@@ -183,19 +183,51 @@ export default function App() {
     () => ({
       play: () => resumeFromSystem(),
       pause,
+      toggle: togglePlay,
       next: nextTrack,
       prev: prevTrack,
       seekBy,
       seekTo,
+      setDucking: (duck) => setSleepGain?.(duck ? 0.25 : 1),
     }),
-    [resumeFromSystem, pause, nextTrack, prevTrack, seekBy, seekTo]
+    [resumeFromSystem, pause, togglePlay, nextTrack, prevTrack, seekBy, seekTo, setSleepGain]
   )
 
   const backActions = useMemo(
-    () => ({ closeDrawer: () => setDrawer(false), closePlaylistModal, setLyricsOpen, setFullOpen, back }),
-    [closePlaylistModal, setLyricsOpen, setFullOpen, back]
+    () => ({
+      closeDrawer: () => setDrawer(false),
+      closeCmd: () => setCmdOpen(false),
+      closeShare: () => closeShareToVibex(),
+      closeDsp: () => setDspOpen(false),
+      closeImport: () => setImportModalOpen(false),
+      closePlaylistModal,
+      setLyricsOpen,
+      setFullOpen,
+      back,
+    }),
+    [
+      setCmdOpen,
+      closeShareToVibex,
+      setDspOpen,
+      setImportModalOpen,
+      closePlaylistModal,
+      setLyricsOpen,
+      setFullOpen,
+      back,
+    ]
   )
-  useAndroidBack({ drawer, plModal, lyricsOpen, fullOpen, canGoBack, actions: backActions })
+  useAndroidBack({
+    drawer,
+    cmdOpen,
+    shareOpen: Boolean(shareTargetState?.open),
+    dspOpen,
+    importModalOpen,
+    plModal,
+    lyricsOpen,
+    fullOpen,
+    canGoBack,
+    actions: backActions,
+  })
 
   useKeyboardShortcuts({
     onToggle: togglePlay,
@@ -233,14 +265,16 @@ export default function App() {
         setStatus('No downloadable link for this song — replay it and retry.', true)
         return
       }
-      if (isNative()) {
+      if (isNativeApp()) {
         try {
           const { downloadSongNative } = await import('./lib/download.js')
           const r = await downloadSongNative(current, currentQuality, (stage) =>
             setStatus(`${stage} ${decodeHtml(current.name)}`)
           )
           const mb = (r.bytes / 1048576).toFixed(1)
-          setStatus(`Saved ${r.name} (${mb} MB${r.tagged ? ', tagged' : ''}) to Documents/VIBEX`)
+          setStatus(
+            `Saved ${r.name} (${mb} MB${r.tagged ? ', tagged' : ''}) to ${r.folder || 'Music/VIBEX'}`
+          )
         } catch (err) {
           setStatus(err?.message || 'Download failed.', true)
         }

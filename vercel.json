@@ -33,9 +33,16 @@
     },
     "api/import-playlist.mjs": {
       "maxDuration": 60
+    },
+    "api/apk.mjs": {
+      "maxDuration": 30
     }
   },
   "rewrites": [
+    {
+      "source": "/download/vibex.apk",
+      "destination": "/api/apk"
+    },
     {
       "source": "/dl",
       "destination": "/api/dl"

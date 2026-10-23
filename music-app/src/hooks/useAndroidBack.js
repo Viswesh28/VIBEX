@@ -2,19 +2,40 @@ import { useEffect, useRef } from 'react'
 import { onBackButton } from '../lib/native.js'
 
 /**
- * Maps Android's hardware/gesture back to the app's own navigation stack.
+ * Maps Android's hardware/gesture back to VIBEX's layered UI & navigation stack.
  *
- * Order matters and mirrors what's visually on top: dismiss the drawer, then
- * the modal, then the lyrics overlay, then the full player, then pop a view. Only when nothing
- * is left do we report "not consumed" so the app minimises instead of exiting
- * — backgrounding keeps audio alive, closing would kill it mid-song.
- *
- * The handler is held in a ref because the Capacitor listener is registered
- * once; re-registering on every state change would race with in-flight presses.
+ * Dismisses the topmost visible sheet/modal first:
+ *   drawer -> command palette -> share modal -> DSP rack -> import modal
+ *   -> playlist modal -> lyrics overlay -> full player -> view history back.
+ * Only at the root view with nothing open do we return `false`, allowing
+ * `native.js` to call `minimizeApp()` (`moveTaskToBack(true)`) so music continues
+ * streaming uninterrupted in the background.
  */
-export function useAndroidBack({ drawer, plModal, lyricsOpen, fullOpen, canGoBack, actions }) {
+export function useAndroidBack({
+  drawer,
+  cmdOpen,
+  shareOpen,
+  dspOpen,
+  importModalOpen,
+  plModal,
+  lyricsOpen,
+  fullOpen,
+  canGoBack,
+  actions,
+}) {
   const stateRef = useRef({})
-  stateRef.current = { drawer, plModal, lyricsOpen, fullOpen, canGoBack, actions }
+  stateRef.current = {
+    drawer,
+    cmdOpen,
+    shareOpen,
+    dspOpen,
+    importModalOpen,
+    plModal,
+    lyricsOpen,
+    fullOpen,
+    canGoBack,
+    actions,
+  }
 
   useEffect(() => {
     let dispose = () => {}
@@ -23,23 +44,40 @@ export function useAndroidBack({ drawer, plModal, lyricsOpen, fullOpen, canGoBac
     onBackButton(() => {
       const s = stateRef.current
       if (s.drawer) {
-        s.actions.closeDrawer()
+        s.actions.closeDrawer?.()
+        return true
+      }
+      if (s.cmdOpen) {
+        s.actions.closeCmd?.()
+        return true
+      }
+      if (s.shareOpen) {
+        s.actions.closeShare?.()
+        return true
+      }
+      if (s.dspOpen) {
+        s.actions.closeDsp?.()
+        return true
+      }
+      if (s.importModalOpen) {
+        s.actions.closeImport?.()
         return true
       }
       if (s.plModal) {
-        s.actions.closePlaylistModal()
+        s.actions.closePlaylistModal?.()
         return true
       }
       if (s.lyricsOpen) {
-        s.actions.setLyricsOpen(false)
+        s.actions.setLyricsOpen?.(false)
         return true
       }
       if (s.fullOpen) {
-        s.actions.setFullOpen(false)
+        s.actions.setFullOpen?.(false)
         return true
       }
-      if (s.canGoBack) {
-        s.actions.back()
+      const hasBack = typeof s.canGoBack === 'function' ? s.canGoBack() : Boolean(s.canGoBack)
+      if (hasBack) {
+        s.actions.back?.()
         return true
       }
       return false

@@ -116,7 +116,9 @@ describe('Share to VIBEX — Cross-Device OS Share Sheet, PWA, Native Android, i
       ),
       'utf8'
     )
-    expect(mainActivity).toContain('registerPlugin(ShareIntentPlugin.class)')
+    expect(mainActivity).toContain('Intent.ACTION_SEND')
+    expect(mainActivity).toContain('Intent.ACTION_VIEW')
+    expect(mainActivity).toContain('VibexBridge')
 
     const sharePlugin = readFileSync(
       path.join(
