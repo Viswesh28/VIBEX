@@ -1372,14 +1372,38 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   #nowplaying { display: none; }
 }
 
-/* Tablets: icon rail. Labels live in the drawer's tooltips and tab bar. */
+/* Tablets: icon rail when closed + full slide-over playlist drawer when opened via `#menuBtn`! */
 @media (min-width: 901px) and (max-width: 1080px), (min-width: 641px) and (max-width: 900px) {
   #app { grid-template-columns: 76px minmax(0, 1fr); }
-  #sidebar { padding: 20px 9px; align-items: center; }
-  .brand { padding: 0 0 18px; }
-  .brand-text, .side-label, .nav-label, .side-extra, #apiUrl, .side-div, #plNav { display: none; }
-  .nav-item { justify-content: center; padding: 11px; min-height: 44px; }
-  #libCount { position: absolute; margin: -26px -30px 0 0; }
+  #menuBtn { display: inline-flex; order: 0; }
+  #sidebar:not(.open) { padding: 20px 9px; align-items: center; }
+  #sidebar:not(.open) .brand { padding: 0 0 18px; }
+  #sidebar:not(.open) .brand-text,
+  #sidebar:not(.open) .side-label,
+  #sidebar:not(.open) .nav-label,
+  #sidebar:not(.open) .side-extra,
+  #sidebar:not(.open) #apiUrl,
+  #sidebar:not(.open) .side-div,
+  #sidebar:not(.open) #plNav { display: none; }
+  #sidebar:not(.open) .nav-item { justify-content: center; padding: 11px; min-height: 44px; }
+  #sidebar:not(.open) #libCount { position: absolute; margin: -26px -30px 0 0; }
+
+  /* Expanded drawer state on Tablet (`#sidebar.open`) for full Saved Playlists, Link & Import access */
+  #sidebar.open {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: 280px; height: auto; max-height: none;
+    z-index: 320; align-items: stretch;
+    padding: calc(20px + var(--safe-t)) 16px calc(var(--player-h) + 24px);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    background: var(--rail); border-right: 1px solid var(--line);
+    box-shadow: var(--shadow);
+  }
+  #sidebar.open ~ * .drawer-scrim,
+  .drawer-scrim {
+    display: block; position: fixed; inset: 0; z-index: 310;
+    background: rgba(0, 0, 0, 0.52); animation: fadeIn 0.2s ease;
+  }
+
   #content { padding: 22px 22px 40px; }
   #topbar { padding: 12px 20px; gap: 10px; }
   .search-wrap { flex: 1 1 auto; }
@@ -1389,6 +1413,17 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   .song-row.with-exclude { grid-template-columns: 46px minmax(0, 1fr) 34px 34px 34px 34px 46px; }
 }
 
+/* Portrait Tablets & Foldables (`641px – 820px`): give search its own full row & stack FullPlayer smoothly */
+@media (min-width: 641px) and (max-width: 820px) {
+  .search-wrap { order: 2; flex: 1 1 100%; min-width: 0; }
+  .topbar-src { order: 1; }
+  .top-actions { order: 1; margin-left: auto; }
+  #fpMain { flex-direction: column; gap: 22px; align-items: center; }
+  #fpCover { width: min(56vw, 320px); height: min(56vw, 320px); }
+  #fpSide { width: 100%; }
+  #fpTitle, #fpArtist, #fpAlbum { text-align: center; }
+}
+
 @media (max-width: 1080px) {
   .tabs { order: 3; flex-basis: 100%; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
@@ -1396,16 +1431,16 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   #vol { display: none; }
 }
 
-/* The tab bar and the drawer scrim are phone-only; wider screens navigate
-   from the rail, so neither may take part in the desktop layout. */
-.mobile-nav, #mobileNav, .drawer-scrim { display: none; }
+/* The bottom tab bar is phone-only; drawer scrim only renders when `drawerOpen` mounts it in JSX. */
+.mobile-nav, #mobileNav { display: none; }
 
-/* Touch devices cannot hover: every hover-gated action must be visible. */
+/* Touch devices (`iPhone`, `Android`, `iPadOS`) cannot hover & require >=16px inputs to prevent Safari zoom! */
 @media (hover: none), (pointer: coarse) {
   .like-btn, .pl-btn, .radio-btn, .rm-btn, .excl-btn { opacity: 1; }
   .card-play { opacity: 1; transform: none; }
   /* Queue reordering is hover-revealed on a mouse; a finger cannot hover. */
   .q-acts { display: flex; }
+  #searchInput { font-size: 16px; }
 }
 
 /* ======================================================================

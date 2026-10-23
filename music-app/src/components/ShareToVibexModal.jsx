@@ -78,12 +78,12 @@ export function ShareToVibexModal() {
           const isYt = rawId.startsWith('yt:')
           const cleanId = isYt ? rawId.slice(3) : rawId
           const endpoint = isYt
-            ? `/ytmusic?op=song&id=${encodeURIComponent(cleanId)}`
+            ? `/import-playlist?sourceUrl=${encodeURIComponent(`https://www.youtube.com/watch?v=${cleanId}`)}`
             : `/songs?ids=${encodeURIComponent(cleanId)}`
           const res = await fetch(apiUrl(endpoint))
           const json = await res.json()
           const song = isYt
-            ? json?.data?.song || json?.data
+            ? json?.data?.tracks?.[0] || null
             : json?.data?.[0] || json?.[0] || null
           if (!song?.id) throw new Error('Shared VIBEX track could not be loaded.')
           const data = {

@@ -237,6 +237,15 @@ export function extractTrackQueryParts(track) {
   const rawArtists = extractArtistNames(track)
   const realArtists = rawArtists.filter((a) => !GENERIC_LABELS.has(normalizeText(a)))
 
+  // Detect instrumental / karaoke releases tagged only in artwork CDN URLs (e.g. JioSaavn
+  // cover albums whose `name` matches the original song verbatim without `(Instrumental)`).
+  const imgUrls = Array.isArray(track?.image)
+    ? track.image.map((img) => String(typeof img === 'string' ? img : img?.url || '')).join(' ')
+    : String(track?.thumbnail || '')
+  if (/\b(instrumental|karaoke)\b|-(?:instrumental|karaoke)-/i.test(imgUrls)) {
+    modifiers.add('instrumental')
+  }
+
   let altTitle = ''
   const dashParts = head.split(/\s*[-–—]\s*/).map((p) => stripNoise(p)).filter(Boolean)
   if (dashParts.length >= 2) {
@@ -422,6 +431,31 @@ export function scoreSaavnCandidate(sourceTrack, candidate) {
     if (candContextTokens.has(t)) contextOverlap += 1
   }
   const contextBonus = contextOverlap >= 2 ? 0.16 : contextOverlap === 1 ? 0.11 : 0
+
+  // Strict 1:1 performer guard: when the source names a real non-label performer
+  // (e.g. "The Weeknd", "Rick Astley") AND the candidate names real performers,
+  // never match a cover/tribute act that shares zero performer/album context tokens.
+  const targetArtistTokens = target.artists
+    .flatMap((s) => significantTokens(s))
+    .filter((t) => t.length >= 2)
+  const candPrimaryNames = Array.isArray(candidate?.artists?.primary)
+    ? candidate.artists.primary
+        .flatMap((a) => splitArtistList(a?.name || a))
+        .filter((a) => !GENERIC_LABELS.has(normalizeText(a)))
+    : candParts.artists
+  const candPerformerAndAlbumTokens = new Set(
+    [...candPrimaryNames, ...candParts.contextHints]
+      .flatMap((s) => significantTokens(s))
+      .filter((t) => t.length >= 2)
+  )
+  if (
+    targetArtistTokens.length > 0 &&
+    candPerformerAndAlbumTokens.size > 0 &&
+    contextOverlap === 0 &&
+    !targetArtistTokens.some((t) => candPerformerAndAlbumTokens.has(t))
+  ) {
+    return { score: 0, titleScore }
+  }
 
   let durationAdj = 0
   if (srcDur > 0 && candDur > 0) {
