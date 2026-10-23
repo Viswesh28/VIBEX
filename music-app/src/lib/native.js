@@ -7,6 +7,7 @@
 import { isNative } from './config.js'
 
 let appMod = null
+let coreMod = null
 
 /**
  * Returns the *module namespace*, never the plugin object itself.
@@ -20,6 +21,11 @@ let appMod = null
 async function loadApp() {
   if (!appMod) appMod = await import('@capacitor/app')
   return appMod
+}
+
+async function loadCore() {
+  if (!coreMod) coreMod = await import('@capacitor/core')
+  return coreMod
 }
 
 /**
@@ -41,5 +47,56 @@ export async function onBackButton(handler) {
     return () => sub.remove()
   } catch {
     return () => {}
+  }
+}
+
+/**
+ * Subscribe to native Android Share Sheet intents (`ACTION_SEND` `text/plain`)
+ * and App-Link deep links (`appUrlOpen`), both on cold launch and warm resume.
+ */
+export async function subscribeNativeShare(onPayload) {
+  if (!isNative() || typeof onPayload !== 'function') return () => {}
+  const subs = []
+  try {
+    const { App } = await loadApp()
+    const urlSub = await App.addListener('appUrlOpen', (event) => {
+      if (event?.url) onPayload({ url: event.url, text: '', title: '' })
+    })
+    subs.push(urlSub)
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { registerPlugin } = await loadCore()
+    const ShareIntent = registerPlugin('ShareIntent')
+    const shareSub = await ShareIntent.addListener('shareReceived', (data) => {
+      if (data && (data.url || data.text || data.title)) {
+        onPayload({
+          url: data.url || '',
+          text: data.text || '',
+          title: data.title || '',
+        })
+      }
+    })
+    subs.push(shareSub)
+    const initial = await ShareIntent.getInitialShare?.().catch(() => null)
+    if (initial && (initial.url || initial.text || initial.title)) {
+      onPayload({
+        url: initial.url || '',
+        text: initial.text || '',
+        title: initial.title || '',
+      })
+    }
+  } catch {
+    /* ignore */
+  }
+  return () => {
+    subs.forEach((s) => {
+      try {
+        s?.remove?.()
+      } catch {
+        /* ignore */
+      }
+    })
   }
 }

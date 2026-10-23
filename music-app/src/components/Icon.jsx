@@ -306,6 +306,13 @@ const STROKE = {
       <circle cx="9.2" cy="16.2" r="1.2" fill="currentColor" stroke="none" />
     </>
   ),
+  link: (
+    <>
+      <path d="M9.8 14.2 14.2 9.8" />
+      <path d="m7.4 11.4-2.1 2.1a3.8 3.8 0 0 0 5.4 5.4l2.1-2.1" />
+      <path d="m16.6 12.6 2.1-2.1a3.8 3.8 0 0 0-5.4-5.4l-2.1 2.1" />
+    </>
+  ),
 }
 
 const FILLED = new Set(['play', 'pause', 'prev', 'next', 'heartFilled'])

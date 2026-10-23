@@ -9,7 +9,15 @@ import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
 export function CommandPalette() {
-  const { cmdOpen, setCmdOpen, navigate, search, setDspOpen, setImportModalOpen } = useUI()
+  const {
+    cmdOpen,
+    setCmdOpen,
+    navigate,
+    search,
+    setDspOpen,
+    setImportModalOpen,
+    openShareToVibex,
+  } = useUI()
   const { togglePlay, nextTrack, prevTrack, current, togglePip, pipSupported } = usePlayerTransport()
   const { theme, toggleTheme, dsp, updateDsp } = useSettings()
   const { playlists } = useLibrary()
@@ -81,6 +89,13 @@ export function CommandPalette() {
         label: dsp.slowedReverb ? 'Disable Slowed + Reverb' : 'Enable Slowed + Reverb',
         hint: '0.84x tape speed + lush hall reverb',
         run: () => updateDsp({ slowedReverb: !dsp.slowedReverb }),
+      },
+      {
+        id: 'open-share-link',
+        icon: 'link',
+        label: 'Share to VIBEX — Open Song or Playlist Link',
+        hint: 'YouTube · YT Music · Spotify · JioSaavn',
+        run: () => openShareToVibex(),
       },
       {
         id: 'open-import',

@@ -1,6 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { store } from '../lib/storage.js'
 import { buildPathForView, parseRouteFromLocation } from '../lib/shareUrl.js'
+import {
+  isSupportedMusicUrl,
+  parseSharedInput,
+  readIncomingShareFromLocation,
+  stripConsumedShareParams,
+  subscribeLaunchQueueShare,
+} from '../lib/shareTarget.js'
+import { subscribeNativeShare } from '../lib/native.js'
 
 const Ctx = createContext(null)
 export const useUI = () => useContext(Ctx)
@@ -9,6 +17,8 @@ const RECENT_SEARCH_KEY = 'svRecentSearches'
 
 export function UIProvider({ children }) {
   const initialRoute = useMemo(() => parseRouteFromLocation(), [])
+  const initialShare = useMemo(() => readIncomingShareFromLocation(), [])
+
   const [view, setView] = useState(() => initialRoute.view)
   const [deepLinkPlay] = useState(() =>
     initialRoute.playTrackId ? { id: initialRoute.playTrackId, sec: initialRoute.seekSec } : null
@@ -25,11 +35,77 @@ export function UIProvider({ children }) {
   })
   const [plModal, setPlModal] = useState(null)
   const [importModalOpen, setImportModalOpen] = useState(false)
+  const [shareTargetState, setShareTargetState] = useState(() =>
+    initialShare
+      ? { open: true, payload: initialShare.openLauncherOnly ? null : initialShare.parsed }
+      : { open: false, payload: null }
+  )
   const [cmdOpen, setCmdOpen] = useState(false)
   const [dspOpen, setDspOpen] = useState(false)
   const [fullOpen, setFullOpen] = useState(false)
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const history = useRef([])
+
+  const openShareToVibex = useCallback((payload = null) => {
+    setShareTargetState({ open: true, payload })
+  }, [])
+
+  const closeShareToVibex = useCallback(() => {
+    setShareTargetState({ open: false, payload: null })
+  }, [])
+
+  // Strip transient `?vibex_share=1&share_url=...` after cold-launch intake and subscribe to
+  // live zero-reload cross-device intake channels (`window.launchQueue`, Native Android Intent,
+  // and Global Smart Music-Link Paste `Ctrl+V` / `Cmd+V`).
+  useEffect(() => {
+    if (initialShare) {
+      stripConsumedShareParams()
+    }
+
+    const unsubLaunchQueue = subscribeLaunchQueueShare((hit) => {
+      openShareToVibex(hit.openLauncherOnly ? null : hit.parsed)
+      stripConsumedShareParams()
+    })
+
+    let unsubNative = () => {}
+    subscribeNativeShare((rawPayload) => {
+      const parsed = parseSharedInput(rawPayload)
+      if (parsed) openShareToVibex(parsed)
+    }).then((fn) => {
+      unsubNative = fn
+    })
+
+    const onGlobalPaste = (event) => {
+      const target = event.target
+      const tag = target?.tagName
+      const isEditable =
+        target?.isContentEditable ||
+        tag === 'TEXTAREA' ||
+        (tag === 'INPUT' && target.id !== 'searchInput')
+      if (isEditable) return
+
+      const pasted = event.clipboardData?.getData?.('text/plain')?.trim() || ''
+      if (!pasted || !isSupportedMusicUrl(pasted)) return
+
+      const parsed = parseSharedInput({ url: pasted, text: pasted })
+      if (!parsed) return
+      event.preventDefault()
+      if (target?.id === 'searchInput') setSearchQuery('')
+      openShareToVibex(parsed)
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('paste', onGlobalPaste)
+    }
+
+    return () => {
+      unsubLaunchQueue()
+      unsubNative()
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('paste', onGlobalPaste)
+      }
+    }
+  }, [initialShare, openShareToVibex])
 
   const syncBrowserUrl = useCallback((nextView, replace = false) => {
     if (typeof window === 'undefined' || !window.history?.pushState) return
@@ -106,6 +182,16 @@ export function UIProvider({ children }) {
   const search = useCallback(
     (query, tab) => {
       const q = (query ?? '').trim()
+      // Smart cross-device UX: submitting any Spotify / YouTube / YT Music / JioSaavn link in
+      // Search opens Share-to-VIBEX resolution directly instead of searching literal URL text.
+      if (q && isSupportedMusicUrl(q)) {
+        const parsed = parseSharedInput({ url: q, text: q })
+        if (parsed) {
+          setSearchQuery('')
+          openShareToVibex(parsed)
+          return
+        }
+      }
       if (q) {
         setSearchQuery(q)
         addRecentSearch(q)
@@ -114,7 +200,7 @@ export function UIProvider({ children }) {
       if (tab) setSearchTab(tab)
       navigate({ kind: 'search', query: q || 'anirudh hits', tab: nextTab })
     },
-    [addRecentSearch, navigate, searchTab]
+    [addRecentSearch, navigate, openShareToVibex, searchTab]
   )
 
   const openPlaylistModal = useCallback((song) => {
@@ -136,6 +222,7 @@ export function UIProvider({ children }) {
       recentSearches, addRecentSearch, removeRecentSearch, clearRecentSearches,
       plModal, openPlaylistModal, openNewPlaylistModal, openRenameModal, closePlaylistModal,
       importModalOpen, setImportModalOpen,
+      shareTargetState, openShareToVibex, closeShareToVibex,
       cmdOpen, setCmdOpen,
       dspOpen, setDspOpen,
       fullOpen, setFullOpen,
@@ -145,7 +232,8 @@ export function UIProvider({ children }) {
       view, navigate, back, deepLinkPlay, searchQuery, searchTab, search,
       recentSearches, addRecentSearch, removeRecentSearch, clearRecentSearches,
       plModal, openPlaylistModal, openNewPlaylistModal, openRenameModal, closePlaylistModal,
-      importModalOpen, cmdOpen, dspOpen, fullOpen, lyricsOpen,
+      importModalOpen, shareTargetState, openShareToVibex, closeShareToVibex,
+      cmdOpen, dspOpen, fullOpen, lyricsOpen,
     ]
   )
 

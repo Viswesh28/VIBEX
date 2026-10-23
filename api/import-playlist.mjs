@@ -1,23 +1,81 @@
 /**
- * /api/import-playlist  --  Universal Playlist & Tracklist Importer.
+ * /api/import-playlist  --  Universal Share-to-VIBEX & Playlist / Track Resolver.
  *
- * Accepts:
- *  - JioSaavn playlist / album URLs (`https://www.jiosaavn.com/s/playlist/...`, `/featured/...`, `/album/...`)
- *  - YouTube / YouTube Music playlist URLs (`?list=PL...` / `music.youtube.com/playlist?list=...`)
- *  - Spotify public playlist URLs (`https://open.spotify.com/playlist/<id>` via public embed JSON)
- *  - Plain pasted text tracklists (`1. Artist - Song`, `Song — Artist`, etc.)
+ * Resolves BOTH single shared songs/videos AND full playlists/albums/artists from:
+ *  - YouTube & YouTube Music single videos/songs/shorts (`watch?v=...`, `youtu.be/...`, `/shorts/...`)
+ *  - YouTube & YouTube Music playlists & albums (`?list=PL...`, `/browse/MPREb_...`, `OLAK5uy_...`)
+ *  - Spotify single tracks, albums, playlists, artists & mobile short links (`spotify.link`, `spoti.fi`)
+ *    with triple-redundant metadata extraction (`embed __NEXT_DATA__` -> `oEmbed` -> OpenGraph tags)
+ *  - JioSaavn single songs, albums, playlists/charts & artists
+ *  - Apple Music song / album share links & plain pasted text (`Artist - Song`, Shazam shares)
  *
- * Resolves every entry into playable VIBEX song objects backed by 320kbps studio
- * streams where available (falling back cleanly to YouTube audio entries).
+ * Every resolved track is mapped into a playable VIBEX song object backed by `320kbps`
+ * studio audio where available (with pure-audio `/api/ytaudio` fallback for YT exclusives).
  */
 
 import saavnApp from '../jiosaavn-api/src/server.js'
-import { enrichResultsWithSaavnAudio, listItemRenderers, toResult } from './ytmusic.mjs'
+import ytmusicHandler, { enrichResultsWithSaavnAudio, listItemRenderers, toResult } from './ytmusic.mjs'
 import { unescapeEntities } from './_lib/trackMatch.mjs'
 
 const MAX_IMPORT_TRACKS = 100
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
+
+const ALLOWED_REDIRECT_HOSTS = new Set([
+  'spotify.com',
+  'open.spotify.com',
+  'play.spotify.com',
+  'spotify.link',
+  'spoti.fi',
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+  'youtu.be',
+  'youtube-nocookie.com',
+  'www.youtube-nocookie.com',
+  'jiosaavn.com',
+  'www.jiosaavn.com',
+  'saavn.com',
+  'www.saavn.com',
+  'music.apple.com',
+  'geo.music.apple.com',
+])
+
+function isAllowedExternalHost(hostname = '') {
+  return ALLOWED_REDIRECT_HOSTS.has(String(hostname || '').toLowerCase())
+}
+
+async function unwrapRedirectIfNeeded(rawUrl, fetchImpl = fetch) {
+  let current = String(rawUrl || '').trim()
+  for (let hop = 0; hop < 4; hop++) {
+    let parsed
+    try {
+      parsed = new URL(current)
+    } catch {
+      break
+    }
+    if (parsed.protocol !== 'https:' || !isAllowedExternalHost(parsed.hostname)) break
+    const host = parsed.hostname.toLowerCase()
+    const needsUnwrap = host === 'spotify.link' || host === 'spoti.fi'
+    if (!needsUnwrap) return current
+
+    const res = await fetchImpl(current, {
+      method: 'GET',
+      redirect: 'manual',
+      headers: { 'user-agent': UA, accept: 'text/html' },
+      signal: AbortSignal.timeout(6000),
+    }).catch(() => null)
+    if (!res) break
+    const loc = res.headers?.get?.('location')
+    if (!loc) {
+      if (res.url && res.url !== current) current = res.url
+      break
+    }
+    current = new URL(loc, current).toString()
+  }
+  return current
+}
 
 async function callSaavn(path, customFetch = null) {
   if (customFetch) {
@@ -82,97 +140,6 @@ export function parseTextTracklist(rawText = '') {
     })
 }
 
-async function importFromJioSaavnUrl(sourceUrl) {
-  const isAlbum = /\/album\//i.test(sourceUrl)
-  const endpoint = isAlbum
-    ? `/albums?link=${encodeURIComponent(sourceUrl)}`
-    : `/playlists?link=${encodeURIComponent(sourceUrl)}&limit=${MAX_IMPORT_TRACKS}`
-  const data = await callSaavn(endpoint)
-  if (!data?.songs?.length) {
-    throw new Error('Could not find playable songs at that JioSaavn link.')
-  }
-  return {
-    name: unescapeEntities(data.name || 'Imported JioSaavn Playlist'),
-    sourceType: 'jiosaavn',
-    tracks: data.songs.slice(0, MAX_IMPORT_TRACKS),
-  }
-}
-
-async function importFromYouTubePlaylist(listId, fetchImpl = fetch) {
-  const browseId = listId.startsWith('VL') ? listId : `VL${listId}`
-  const res = await fetchImpl('https://music.youtube.com/youtubei/v1/browse?prettyPrint=false', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'user-agent': UA,
-      origin: 'https://music.youtube.com',
-    },
-    body: JSON.stringify({
-      context: {
-        client: { clientName: 'WEB_REMIX', clientVersion: '1.20241118.01.00', hl: 'en', gl: 'IN' },
-      },
-      browseId,
-    }),
-    signal: AbortSignal.timeout(9000),
-  })
-  if (!res.ok) throw new Error(`YouTube playlist lookup failed (${res.status}).`)
-  const json = await res.json()
-
-  const titleMatch =
-    json?.header?.musicResponsiveHeaderRenderer?.title?.runs?.[0]?.text ||
-    json?.header?.musicDetailHeaderRenderer?.title?.runs?.[0]?.text ||
-    'Imported YouTube Playlist'
-
-  const rawItems = []
-  const seen = new Set()
-  for (const renderer of listItemRenderers(json)) {
-    const item = toResult(renderer)
-    if (!item || seen.has(item.videoId)) continue
-    seen.add(item.videoId)
-    rawItems.push(item)
-    if (rawItems.length >= MAX_IMPORT_TRACKS) break
-  }
-
-  if (!rawItems.length) {
-    throw new Error('No public tracks found in that YouTube playlist (make sure it is Public or Unlisted).')
-  }
-
-  const enriched = await enrichResultsWithSaavnAudio(rawItems)
-  const tracks = enriched.map((item) => {
-    const matched = item.matchedAudio
-    const thumb = item.thumbnail || ''
-    return {
-      id: `yt:${item.videoId}`,
-      videoId: item.videoId,
-      source: 'ytmusic',
-      name: item.title,
-      subtitle: item.subtitle || '',
-      duration: matched?.duration || item.duration || 0,
-      album: matched?.album || (item.album ? { id: null, name: item.album, url: null } : null),
-      artists: {
-        primary: (item.artists || []).map((n) => ({ id: null, name: n, role: 'primary_artists' })),
-        featured: [],
-        all: [],
-      },
-      image: thumb
-        ? [
-            { quality: '50x50', url: thumb },
-            { quality: '150x150', url: thumb },
-            { quality: '500x500', url: thumb },
-          ]
-        : matched?.image || [],
-      downloadUrl: matched?.downloadUrl || [],
-      ...(matched?.songId ? { _matchedSaavnId: matched.songId } : {}),
-    }
-  })
-
-  return {
-    name: unescapeEntities(titleMatch),
-    sourceType: 'youtube',
-    tracks,
-  }
-}
-
 async function resolveTextQueriesToSaavn(entries, fetchImpl = null) {
   const out = new Array(entries.length).fill(null)
   let cursor = 0
@@ -192,31 +159,304 @@ async function resolveTextQueriesToSaavn(entries, fetchImpl = null) {
   return out.filter(Boolean)
 }
 
-async function importFromSpotifyPlaylist(playlistId, fetchImpl = fetch) {
-  const embedRes = await fetchImpl(`https://open.spotify.com/embed/playlist/${encodeURIComponent(playlistId)}`, {
-    headers: { 'user-agent': UA, accept: 'text/html' },
+async function importFromJioSaavnUrl(sourceUrl, fetchImpl = null) {
+  const isSong = /\/song\//i.test(sourceUrl)
+  const isAlbum = /\/album\//i.test(sourceUrl)
+  const isArtist = /\/artist\//i.test(sourceUrl)
+
+  if (isSong) {
+    const data = await callSaavn(`/songs?link=${encodeURIComponent(sourceUrl)}`, fetchImpl)
+    const songs = Array.isArray(data) ? data : data?.songs || []
+    if (!songs.length) throw new Error('Could not resolve that JioSaavn song.')
+    return {
+      kind: 'track',
+      name: unescapeEntities(songs[0].name || 'Shared JioSaavn Song'),
+      sourceType: 'jiosaavn',
+      requestedCount: 1,
+      tracks: [songs[0]],
+    }
+  }
+
+  if (isArtist) {
+    const data = await callSaavn(`/artists?link=${encodeURIComponent(sourceUrl)}`, fetchImpl)
+    const topSongs = data?.topSongs || []
+    if (!topSongs.length) throw new Error('Could not find playable top tracks for that JioSaavn artist.')
+    return {
+      kind: 'collection',
+      name: unescapeEntities(data.name || 'Artist Top Songs'),
+      sourceType: 'jiosaavn',
+      requestedCount: topSongs.length,
+      tracks: topSongs.slice(0, MAX_IMPORT_TRACKS),
+    }
+  }
+
+  const endpoint = isAlbum
+    ? `/albums?link=${encodeURIComponent(sourceUrl)}`
+    : `/playlists?link=${encodeURIComponent(sourceUrl)}&limit=${MAX_IMPORT_TRACKS}`
+  const data = await callSaavn(endpoint, fetchImpl)
+  if (!data?.songs?.length) {
+    throw new Error('Could not find playable songs at that JioSaavn link.')
+  }
+  return {
+    kind: 'collection',
+    name: unescapeEntities(data.name || 'Imported JioSaavn Playlist'),
+    sourceType: 'jiosaavn',
+    requestedCount: data.songs.length,
+    tracks: data.songs.slice(0, MAX_IMPORT_TRACKS),
+  }
+}
+
+async function importSingleYouTubeVideo(videoId, hintTitle = '', fetchImpl = fetch) {
+  // Call in-process ytmusic single-song lookup (already matches 320kbps studio audio + `/api/ytaudio` fallback!)
+  let songPayload = null
+  const mockRes = {
+    statusCode: 200,
+    setHeader: () => {},
+    end: (raw) => {
+      try {
+        songPayload = JSON.parse(raw)
+      } catch {
+        songPayload = null
+      }
+    },
+  }
+  await ytmusicHandler(
+    {
+      method: 'GET',
+      url: `/api/ytmusic?op=song&id=${encodeURIComponent(videoId)}`,
+      headers: { host: 'vibex.internal' },
+    },
+    mockRes,
+    fetchImpl === fetch ? {} : { fetchImpl }
+  ).catch(() => {})
+
+  const resolvedSong = songPayload?.data?.song || songPayload?.data
+  if (resolvedSong?.id) {
+    return {
+      kind: 'track',
+      name: unescapeEntities(resolvedSong.name || hintTitle || 'YouTube Track'),
+      sourceType: 'youtube',
+      requestedCount: 1,
+      tracks: [resolvedSong],
+    }
+  }
+
+  // Fallback direct YouTube audio track descriptor if metadata lookup was minimal
+  const cleanTitle = unescapeEntities(hintTitle || 'YouTube Audio Track')
+  return {
+    kind: 'track',
+    name: cleanTitle,
+    sourceType: 'youtube',
+    requestedCount: 1,
+    tracks: [
+      {
+        id: `yt:${videoId}`,
+        name: cleanTitle,
+        type: 'song',
+        duration: 0,
+        artists: { primary: [{ id: '', name: 'YouTube Music' }], featured: [], all: [] },
+        image: [
+          { quality: '500x500', url: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` },
+        ],
+        downloadUrl: [{ quality: '160kbps', url: `/api/ytaudio?id=${videoId}` }],
+      },
+    ],
+  }
+}
+
+async function importFromYouTubePlaylist(listId, fetchImpl = fetch) {
+  const browseId = /^(?:VL|MPREb_)/i.test(listId) ? listId : `VL${listId}`
+  const res = await fetchImpl('https://music.youtube.com/youtubei/v1/browse?prettyPrint=false', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'user-agent': UA,
+      origin: 'https://music.youtube.com',
+      referer: 'https://music.youtube.com/',
+    },
+    body: JSON.stringify({
+      context: {
+        client: {
+          clientName: 'WEB_REMIX',
+          clientVersion: '1.20250312.01.00',
+          hl: 'en',
+          gl: 'IN',
+        },
+      },
+      browseId,
+    }),
     signal: AbortSignal.timeout(9000),
   })
-  if (!embedRes.ok) throw new Error('Could not read that Spotify playlist.')
-  const html = await embedRes.text()
-  const nextDataMatch = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i.exec(html)
-  if (!nextDataMatch) throw new Error('Spotify playlist metadata unavailable — paste its tracklist text instead.')
+  if (!res.ok) throw new Error('YouTube Music declined the playlist request.')
+  const raw = await res.json()
 
-  const parsed = JSON.parse(nextDataMatch[1])
-  const entity = parsed?.props?.pageProps?.state?.data?.entity
+  const titleMatch =
+    raw?.header?.musicResponsiveHeaderRenderer?.title?.runs?.map((r) => r.text).join('') ||
+    raw?.header?.musicDetailHeaderRenderer?.title?.runs?.map((r) => r.text).join('') ||
+    'Imported YouTube Playlist'
+
+  const ytItems = listItemRenderers(raw).map(toResult).filter(Boolean).slice(0, MAX_IMPORT_TRACKS)
+  if (!ytItems.length) throw new Error('No playable tracks found in that YouTube playlist.')
+
+  const enriched = await enrichResultsWithSaavnAudio(ytItems, { concurrency: 6 })
+  const tracks = enriched.map((item) => {
+    const matched = item.matchedAudio
+    const vid = item.id
+    return {
+      id: matched?.songId || `yt:${vid}`,
+      name: unescapeEntities(item.title || matched?.name || 'Track'),
+      duration: Number(matched?.duration || item.duration) || 0,
+      language: matched?.language || '',
+      hasLyrics: Boolean(matched?.hasLyrics),
+      lyricsId: matched?.lyricsId || null,
+      album: {
+        id: matched?.album?.id || '',
+        name: unescapeEntities(matched?.album?.name || item.album || ''),
+      },
+      artists: {
+        primary: (item.artists?.length ? item.artists : [{ name: 'YouTube Music' }]).map((a) => ({
+          id: a.id || '',
+          name: unescapeEntities(a.name || ''),
+        })),
+      },
+      image: matched?.image?.length
+        ? matched.image
+        : [{ quality: '500x500', url: item.thumbnail || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` }],
+      downloadUrl: matched?.downloadUrl?.length
+        ? matched.downloadUrl
+        : [{ quality: '160kbps', url: `/api/ytaudio?id=${vid}` }],
+      ...(matched?.songId ? { _matchedSaavnId: matched.songId } : {}),
+    }
+  })
+
+  return {
+    kind: 'collection',
+    name: unescapeEntities(titleMatch),
+    sourceType: 'youtube',
+    requestedCount: ytItems.length,
+    tracks,
+  }
+}
+
+function extractMetaTag(html, prop) {
+  const re = new RegExp(
+    `<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']|<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`,
+    'i'
+  )
+  const m = re.exec(html)
+  return unescapeEntities(m?.[1] || m?.[2] || '').trim()
+}
+
+async function importFromSpotifyEntity(entityType, entityId, hintTitle = '', fetchImpl = fetch) {
+  const canonicalUrl = `https://open.spotify.com/${entityType}/${encodeURIComponent(entityId)}`
+  let entity = null
+  let html = ''
+
+  const embedRes = await fetchImpl(
+    `https://open.spotify.com/embed/${entityType}/${encodeURIComponent(entityId)}`,
+    {
+      headers: { 'user-agent': UA, accept: 'text/html' },
+      signal: AbortSignal.timeout(9000),
+    }
+  ).catch(() => null)
+
+  if (embedRes?.ok) {
+    html = await embedRes.text().catch(() => '')
+    const nextDataMatch = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i.exec(html)
+    if (nextDataMatch) {
+      try {
+        const parsed = JSON.parse(nextDataMatch[1])
+        entity = parsed?.props?.pageProps?.state?.data?.entity || null
+      } catch {
+        entity = null
+      }
+    }
+  }
+
+  // Single-track Spotify resolution (`open.spotify.com/track/<id>`)
+  if (entityType === 'track') {
+    let title = unescapeEntities(entity?.title || entity?.name || '')
+    let artist = unescapeEntities(
+      entity?.artists?.map((a) => a.name).join(', ') || entity?.subtitle || ''
+    )
+
+    if (!title) {
+      const oembedRes = await fetchImpl(
+        `https://open.spotify.com/oembed?url=${encodeURIComponent(canonicalUrl)}`,
+        { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(6000) }
+      ).catch(() => null)
+      if (oembedRes?.ok) {
+        const oe = await oembedRes.json().catch(() => null)
+        title = unescapeEntities(oe?.title || '')
+      }
+    }
+    if (!title && html) {
+      title = extractMetaTag(html, 'og:title')
+      const desc = extractMetaTag(html, 'og:description')
+      if (desc && !artist) artist = desc.split('·')[0].trim()
+    }
+    if (!title && hintTitle) title = hintTitle
+    if (!title) throw new Error('Could not read track metadata from that Spotify link.')
+
+    const query = [title, artist].filter(Boolean).join(' ').trim()
+    const resolved = await resolveTextQueriesToSaavn([{ artist, title, query }], fetchImpl)
+    if (!resolved.length) {
+      throw new Error(`Could not find a playable stream for “${title}”.`)
+    }
+    return {
+      kind: 'track',
+      name: title,
+      sourceType: 'spotify',
+      requestedCount: 1,
+      tracks: [resolved[0]],
+    }
+  }
+
+  // Spotify Playlist / Album / Artist collection
   const trackList = entity?.trackList || []
-  if (!trackList.length) throw new Error('No tracks found in that Spotify playlist.')
+  if (!trackList.length) {
+    throw new Error('Spotify collection metadata unavailable — try pasting its tracklist lines.')
+  }
 
   const entries = trackList.slice(0, MAX_IMPORT_TRACKS).map((t) => ({
     artist: t.subtitle || '',
     title: t.title || '',
     query: `${t.title || ''} ${t.subtitle || ''}`.trim(),
   }))
-  const tracks = await resolveTextQueriesToSaavn(entries)
+  const tracks = await resolveTextQueriesToSaavn(entries, fetchImpl)
   return {
-    name: unescapeEntities(entity?.name || entity?.title || 'Imported Spotify Playlist'),
+    kind: 'collection',
+    name: unescapeEntities(entity?.name || entity?.title || `Imported Spotify ${entityType}`),
     sourceType: 'spotify',
+    requestedCount: entries.length,
     tracks,
+  }
+}
+
+async function importFromAppleMusicUrl(sourceUrl, hintTitle = '', fetchImpl = fetch) {
+  let query = hintTitle
+  if (!query) {
+    const pageRes = await fetchImpl(sourceUrl, {
+      headers: { 'user-agent': UA, accept: 'text/html' },
+      signal: AbortSignal.timeout(6500),
+    }).catch(() => null)
+    if (pageRes?.ok) {
+      const html = await pageRes.text().catch(() => '')
+      query = extractMetaTag(html, 'og:title').replace(/\s+on Apple Music$/i, '').trim()
+    }
+  }
+  if (!query) throw new Error('Could not read song details from that Apple Music link.')
+  const tracks = await resolveTextQueriesToSaavn(
+    [{ artist: '', title: query, query }],
+    fetchImpl
+  )
+  if (!tracks.length) throw new Error(`No playable match found for “${query}”.`)
+  return {
+    kind: 'track',
+    name: query,
+    sourceType: 'apple',
+    requestedCount: 1,
+    tracks: [tracks[0]],
   }
 }
 
@@ -245,53 +485,93 @@ export default async function handler(req, res, deps = {}) {
   }
 
   try {
-    const body = req.method === 'POST' ? await readJsonBody(req) : req.query || {}
-    const sourceUrl = String(body.sourceUrl || body.url || '').trim()
+    let body = req.query || {}
+    if (req.method === 'POST') {
+      body = await readJsonBody(req)
+    } else if (!Object.keys(body).length && req.url) {
+      const parsedReqUrl = new URL(req.url, `http://${req.headers?.host || 'localhost'}`)
+      body = Object.fromEntries(parsedReqUrl.searchParams.entries())
+    }
+
+    const rawSourceUrl = String(body.sourceUrl || body.url || '').trim()
     const rawText = String(body.text || '').trim()
     const customName = String(body.name || '').trim()
+    const hintTitle = String(body.hintTitle || body.title || '').trim()
     const fetchImpl = deps.fetchImpl || globalThis.fetch
 
     let imported = null
-    if (sourceUrl) {
+    if (rawSourceUrl) {
+      const unwrappedUrl = await unwrapRedirectIfNeeded(rawSourceUrl, fetchImpl)
       let parsedUrl = null
       try {
-        parsedUrl = new URL(sourceUrl)
+        parsedUrl = new URL(unwrappedUrl)
       } catch {
-        sendJson(res, 400, { success: false, message: 'Enter a valid playlist URL or paste a tracklist.' })
+        sendJson(res, 400, { success: false, message: 'Enter a valid song or playlist URL.' })
         return
       }
-      const host = parsedUrl.hostname.toLowerCase()
-      const ytList = parsedUrl.searchParams.get('list')
-      const spotifyMatch = /\/playlist\/([A-Za-z0-9]+)/i.exec(parsedUrl.pathname)
+      const host = parsedUrl.hostname.toLowerCase().replace(/^www\./, '')
+      const path = parsedUrl.pathname || '/'
 
-      if (host.includes('jiosaavn.com') || host.includes('saavn.com')) {
-        imported = await importFromJioSaavnUrl(sourceUrl)
-      } else if (ytList && (host.includes('youtube.com') || host.includes('youtu.be'))) {
+      // Extract YouTube single video ID (`watch?v=...`, `youtu.be/...`, `/shorts/...`) BEFORE `?list=...`!
+      let ytVideoId = ''
+      if (host === 'youtu.be') {
+        ytVideoId = path.split('/').filter(Boolean)[0] || ''
+      } else if (path === '/watch') {
+        ytVideoId = parsedUrl.searchParams.get('v') || ''
+      } else {
+        const seg = /^\/(?:shorts|live|embed|v)\/([A-Za-z0-9_-]{11})/i.exec(path)
+        if (seg) ytVideoId = seg[1]
+      }
+      const ytBrowse = /^\/browse\/(MPREb_[A-Za-z0-9_-]+|VL[A-Za-z0-9_-]+)/i.exec(path)
+      const ytList = ytBrowse ? ytBrowse[1] : parsedUrl.searchParams.get('list')
+      const spotifyEntity =
+        /\/(?:intl-[a-z-]+|embed|user\/[^/]+)?\/?(track|album|playlist|artist)\/([A-Za-z0-9]{15,32})/i.exec(
+          path
+        )
+
+      if (host === 'jiosaavn.com' || host === 'saavn.com') {
+        imported = await importFromJioSaavnUrl(unwrappedUrl, deps.fetchImpl || null)
+      } else if (
+        /^[A-Za-z0-9_-]{11}$/.test(ytVideoId) &&
+        path !== '/playlist' &&
+        (host.includes('youtube.com') || host === 'youtu.be' || host.includes('youtube-nocookie.com'))
+      ) {
+        imported = await importSingleYouTubeVideo(ytVideoId, hintTitle, fetchImpl)
+      } else if (ytList && (host.includes('youtube.com') || host === 'youtu.be')) {
         imported = await importFromYouTubePlaylist(ytList, fetchImpl)
-      } else if (spotifyMatch && host.includes('spotify.com')) {
-        imported = await importFromSpotifyPlaylist(spotifyMatch[1], fetchImpl)
+      } else if (spotifyEntity && host.includes('spotify.com')) {
+        imported = await importFromSpotifyEntity(
+          spotifyEntity[1].toLowerCase(),
+          spotifyEntity[2],
+          hintTitle,
+          fetchImpl
+        )
+      } else if (host.includes('apple.com')) {
+        imported = await importFromAppleMusicUrl(unwrappedUrl, hintTitle, fetchImpl)
       } else {
         sendJson(res, 400, {
           success: false,
-          message: 'Supported URLs: JioSaavn playlist/album, YouTube playlist (?list=...), or Spotify playlist.',
+          message:
+            'Supported links: YouTube / YT Music, Spotify (song, album, playlist, artist), JioSaavn, or Apple Music.',
         })
         return
       }
     } else if (rawText) {
       const entries = parseTextTracklist(rawText)
       if (!entries.length) {
-        sendJson(res, 400, { success: false, message: 'Paste at least one "Artist - Song" line.' })
+        sendJson(res, 400, { success: false, message: 'Paste at least one song link or "Artist - Song" line.' })
         return
       }
       const tracks = await resolveTextQueriesToSaavn(entries, deps.fetchImpl || null)
       imported = {
-        name: customName || 'Imported Tracklist',
+        kind: entries.length === 1 ? 'track' : 'collection',
+        name: customName || (entries.length === 1 ? entries[0].query : 'Imported Tracklist'),
         sourceType: 'text',
         requestedCount: entries.length,
         tracks,
       }
     } else {
-      sendJson(res, 400, { success: false, message: 'Provide a playlist URL or a text tracklist.' })
+      sendJson(res, 400, { success: false, message: 'Provide a song/playlist link or text tracklist.' })
       return
     }
 
@@ -300,6 +580,7 @@ export default async function handler(req, res, deps = {}) {
     sendJson(res, 200, {
       success: true,
       data: {
+        kind: imported.kind || (imported.tracks.length === 1 ? 'track' : 'collection'),
         name: imported.name,
         source: imported.sourceType,
         sourceType: imported.sourceType,
@@ -312,7 +593,7 @@ export default async function handler(req, res, deps = {}) {
   } catch (err) {
     sendJson(res, 422, {
       success: false,
-      message: err?.message || 'Playlist import failed.',
+      message: err?.message || 'Share / playlist resolution failed.',
     })
   }
 }

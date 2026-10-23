@@ -75,7 +75,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS' && (url.pathname === '/dl' || url.pathname.startsWith('/api'))) {
       res.writeHead(204, {
         'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+        'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS',
         'access-control-allow-headers': 'accept, content-type, range',
         'access-control-expose-headers': 'content-disposition, content-length',
         'access-control-max-age': '86400',
