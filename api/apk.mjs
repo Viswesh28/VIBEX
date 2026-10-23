@@ -59,7 +59,7 @@ export default async function handler(req, res) {
           minSdk: 26,
           targetSdk: 34,
           bytes: localBytes,
-          downloadPath: '/download/vibex.apk',
+          downloadPath: `/downloads/${APK_FILENAME}`,
           releaseUrl: GITHUB_RELEASE_APK_URL,
         },
       })
