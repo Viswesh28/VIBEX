@@ -24,13 +24,15 @@ export async function apiFetch(path, init) {
 
 export async function api(path) {
   const headers = { accept: 'application/json' }
+  let effectivePath = path
   if (typeof path === 'string' && path.startsWith('/ytmusic')) {
     const customYtKey = String(store.get('svYtApiKey', '') || '').trim()
     if (customYtKey) headers['x-youtube-api-key'] = customYtKey
+    effectivePath = `${path}${path.includes('?') ? '&' : '?'}v=3`
   }
   let response
   try {
-    response = await apiFetch(path, { headers })
+    response = await apiFetch(effectivePath, { headers })
   } catch {
     throw new Error('Cannot reach the music API. Check your connection and try again.')
   }

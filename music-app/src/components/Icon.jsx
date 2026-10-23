@@ -66,6 +66,7 @@ const STROKE = {
   chevronLeft: <path d="m14.4 5.6-6.4 6.4 6.4 6.4" />,
   chevronRight: <path d="m9.6 5.6 6.4 6.4-6.4 6.4" />,
   chevronDown: <path d="m5.6 9.6 6.4 6.4 6.4-6.4" />,
+  chevronUp: <path d="m5.6 14.4 6.4-6.4 6.4 6.4" />,
   close: <path d="m6.2 6.2 11.6 11.6M17.8 6.2 6.2 17.8" />,
   plus: <path d="M12 5.2v13.6M5.2 12h13.6" />,
   check: <path d="m5.2 12.6 4.4 4.4L18.8 7.4" />,

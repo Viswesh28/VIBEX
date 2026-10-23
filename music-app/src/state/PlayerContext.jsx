@@ -789,12 +789,33 @@ export function PlayerProvider({ children, streamResolver = null }) {
       dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'embed' })
       dispatchMachine({ type: 'RESOLVE_READY', mode: 'embed' })
       dispatchMachine({ type: 'PLAYING' })
+      playingRef.current = true
       setIsPlaying(true)
+      setClock({ cur: 0, dur: Number(song.duration) || 0 })
       setLongForm({ id: song.id, name: song.name, subtitle: song.subtitle || '', videoId })
       setStatus(EMBED_NOTE)
     },
     [afterStart, cancelFade, dispatchMachine, setStatus, unplayableCopy]
   )
+
+  const embedCmdRef = useRef(null)
+  const embedOpenRef = useRef(false)
+  const clockRef = useRef({ cur: 0, dur: 0 })
+
+  useEffect(() => {
+    embedOpenRef.current = Boolean(embedTrack)
+  }, [embedTrack])
+
+  useEffect(() => {
+    clockRef.current = clock
+  }, [clock])
+
+  const registerEmbedCommand = useCallback((fn) => {
+    embedCmdRef.current = typeof fn === 'function' ? fn : null
+    return () => {
+      if (embedCmdRef.current === fn) embedCmdRef.current = null
+    }
+  }, [])
 
   /**
    * What YouTube's player reports, in this app's terms.
@@ -806,27 +827,38 @@ export function PlayerProvider({ children, streamResolver = null }) {
    * same video restarts instead of reloading.
    */
   const reportEmbed = useCallback((state, detail) => {
+    if (state === 'progress' && detail && typeof detail === 'object') {
+      setClock((prev) => ({
+        cur: Number.isFinite(detail.cur) ? detail.cur : prev.cur,
+        dur: Number.isFinite(detail.dur) && detail.dur > 0 ? detail.dur : prev.dur,
+      }))
+      return ''
+    }
     if (state === 'buffering') {
       dispatchMachine({ type: 'BUFFERING' })
       return ''
     }
     if (state === 'playing') {
+      playingRef.current = true
       dispatchMachine({ type: 'PLAYING' })
       setIsPlaying(true)
       return ''
     }
     if (state === 'paused') {
+      playingRef.current = false
       dispatchMachine({ type: 'PAUSED' })
       setIsPlaying(false)
       return ''
     }
     if (state === 'error') {
+      playingRef.current = false
       setIsPlaying(false)
       const category = classifyPlaybackFailure({ embedCode: detail })
       dispatchMachine({ type: 'FAILED', category })
       return ''
     }
     if (state === 'ended') {
+      playingRef.current = false
       setIsPlaying(false)
       dispatchMachine({ type: 'ENDED' })
       if (setRef.current.repeat === 'one') return 'replay'
@@ -839,6 +871,8 @@ export function PlayerProvider({ children, streamResolver = null }) {
   }, [dispatchMachine])
 
   const closeEmbed = useCallback(() => {
+    playingRef.current = false
+    setIsPlaying(false)
     setLongForm(null)
     setStatus('Closed YouTube’s player.')
   }, [setStatus])
@@ -1199,6 +1233,15 @@ export function PlayerProvider({ children, streamResolver = null }) {
   const prevTrack = useCallback(() => {
     const q = queueRef.current
     if (!q.length) return
+    if (embedOpenRef.current && embedCmdRef.current) {
+      if ((clockRef.current.cur || 0) > 3) {
+        embedCmdRef.current('seekTo', [0, true])
+        setClock((c) => ({ ...c, cur: 0 }))
+        return
+      }
+      playTrack(idxRef.current - 1)
+      return
+    }
     const el = active()
     // Mirrors every other player: a second press within 3s goes back a track.
     if (el.currentTime > 3) {
@@ -1255,6 +1298,18 @@ export function PlayerProvider({ children, streamResolver = null }) {
       if (queueRef.current.length) playTrack(0)
       return
     }
+    if (embedOpenRef.current && embedCmdRef.current) {
+      if (playingRef.current) {
+        embedCmdRef.current('pauseVideo')
+        playingRef.current = false
+        setIsPlaying(false)
+      } else {
+        embedCmdRef.current('playVideo')
+        playingRef.current = true
+        setIsPlaying(true)
+      }
+      return
+    }
     const el = active()
     if (el.paused) {
       // Restored from the last session: the deck has no source yet, so load
@@ -1276,6 +1331,12 @@ export function PlayerProvider({ children, streamResolver = null }) {
       if (queueRef.current.length) playTrack(0)
       return
     }
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('playVideo')
+      playingRef.current = true
+      setIsPlaying(true)
+      return
+    }
     const el = active()
     if (!el.src) {
       playTrack(idxRef.current)
@@ -1287,10 +1348,16 @@ export function PlayerProvider({ children, streamResolver = null }) {
 
   const seekTo = useCallback((seconds) => {
     cancelFade()
-    const el = active()
     if (idxRef.current < 0) return
+    const target = Math.max(0, seconds)
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('seekTo', [target, true])
+      setClock((c) => ({ ...c, cur: target }))
+      return
+    }
+    const el = active()
     try {
-      el.currentTime = Math.max(0, seconds)
+      el.currentTime = target
     } catch {
       /* ignore */
     }
@@ -1298,6 +1365,12 @@ export function PlayerProvider({ children, streamResolver = null }) {
 
   const pause = useCallback(() => {
     cancelFade()
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('pauseVideo')
+      playingRef.current = false
+      setIsPlaying(false)
+      return
+    }
     try {
       active().pause()
     } catch {
@@ -1309,10 +1382,20 @@ export function PlayerProvider({ children, streamResolver = null }) {
     cancelFade()
     const el = active()
     const q = queueRef.current
+    const clamped = Math.min(1, Math.max(0, frac))
+    if (embedOpenRef.current && embedCmdRef.current) {
+      const tot = clockRef.current.dur || q[idxRef.current]?.duration || 0
+      if (tot > 0 && idxRef.current >= 0) {
+        const target = tot * clamped
+        embedCmdRef.current('seekTo', [target, true])
+        setClock((c) => ({ ...c, cur: target }))
+      }
+      return
+    }
     const tot = (isFinite(el.duration) && el.duration) || q[idxRef.current]?.duration
     if (tot && idxRef.current >= 0) {
       try {
-        el.currentTime = tot * Math.min(1, Math.max(0, frac))
+        el.currentTime = tot * clamped
       } catch {
         /* ignore */
       }
@@ -1320,8 +1403,15 @@ export function PlayerProvider({ children, streamResolver = null }) {
   }, [cancelFade])
 
   const seekBy = useCallback((delta) => {
-    const el = active()
     if (idxRef.current < 0) return
+    if (embedOpenRef.current && embedCmdRef.current) {
+      const upper = clockRef.current.dur || 1e9
+      const target = Math.max(0, Math.min(upper, (clockRef.current.cur || 0) + delta))
+      embedCmdRef.current('seekTo', [target, true])
+      setClock((c) => ({ ...c, cur: target }))
+      return
+    }
+    const el = active()
     try {
       el.currentTime = Math.max(0, Math.min(el.duration || 1e9, el.currentTime + delta))
     } catch {
@@ -1378,6 +1468,9 @@ export function PlayerProvider({ children, streamResolver = null }) {
   const setSleepGain = useCallback((g) => {
     const mul = Number.isFinite(g) ? Math.max(0, Math.min(1, g)) : 1
     sleepMul.current = mul
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('setVolume', [Math.round(baseVol.current * mul * 100)])
+    }
     // Mid-crossfade the tick owns the writes; it reads sleepMul on each frame.
     if (!fadeTimer.current) {
       writeVol(active(), baseVol.current, mul)
@@ -1393,6 +1486,9 @@ export function PlayerProvider({ children, streamResolver = null }) {
   const setVolume = useCallback((v) => {
     baseVol.current = v
     setVolumeState(v)
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('setVolume', [Math.round(v * sleepMul.current * 100)])
+    }
     if (!fadeTimer.current) {
       try {
         writeVol(active(), v, sleepMul.current)
@@ -1807,7 +1903,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       // The long-form embed: open, and this is what is open. Null otherwise.
-      embedTrack, closeEmbed, reportEmbed,
+      embedTrack, closeEmbed, reportEmbed, registerEmbedCommand,
       // Transition truth for the "Mixing" badge, plus typed stop reasons so the
       // UI can offer the right recovery instead of one generic error.
       transition,
@@ -1829,7 +1925,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       transition, stopReason, playbackMachine, dismissRecommendation, clearForcedQuality,
-      embedTrack, closeEmbed, reportEmbed,
+      embedTrack, closeEmbed, reportEmbed, registerEmbedCommand,
     ]
   )
 
