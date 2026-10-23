@@ -11,7 +11,7 @@
  */
 export const API_ORIGIN = (import.meta.env?.VITE_API_ORIGIN || '').replace(/\/+$/, '')
 
-export const ANDROID_APK_URL = '/downloads/VIBEX-v3.2.0-universal.apk'
+export const ANDROID_APK_URL = '/api/apk'
 export const ANDROID_APP_VERSION = '3.2.0'
 export const ANDROID_PACKAGE_ID = 'dev.viswesh.vibex'
 

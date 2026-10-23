@@ -16,8 +16,11 @@ export const GITHUB_RELEASE_APK_URL =
   `https://vibex-music-pi.vercel.app/downloads/${APK_FILENAME}`
 
 const CANDIDATE_PATHS = [
+  path.resolve(__dirname, '_assets', APK_FILENAME),
+  path.resolve(__dirname, '../VIBEX.apk'),
   path.resolve(__dirname, '../music-app/dist/downloads', APK_FILENAME),
   path.resolve(__dirname, '../music-app/public/downloads', APK_FILENAME),
+  path.resolve(process.cwd(), 'api/_assets', APK_FILENAME),
   path.resolve(process.cwd(), 'music-app/dist/downloads', APK_FILENAME),
   path.resolve(process.cwd(), 'music-app/public/downloads', APK_FILENAME),
 ]
@@ -59,7 +62,7 @@ export default async function handler(req, res) {
           minSdk: 26,
           targetSdk: 34,
           bytes: localBytes,
-          downloadPath: `/downloads/${APK_FILENAME}`,
+          downloadPath: '/api/apk',
           releaseUrl: GITHUB_RELEASE_APK_URL,
         },
       })
