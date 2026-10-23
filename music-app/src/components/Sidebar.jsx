@@ -1,4 +1,6 @@
 import { decodeHtml } from '../lib/format.js'
+import { ANDROID_APK_URL, ANDROID_APP_VERSION } from '../lib/config.js'
+import { isNativeShell } from '../lib/platform.js'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
@@ -138,6 +140,26 @@ export function Sidebar({ apiOnline, open = false, onClose }) {
           {account ? `Synced: ${account.displayName}` : 'Local-first + optional Cloud Sync'}
         </span>
       </div>
+
+      {!isNativeShell() && (
+        <a
+          href={ANDROID_APK_URL}
+          download={`VIBEX-v${ANDROID_APP_VERSION}-universal.apk`}
+          className="nav-item side-apk-btn"
+          style={{
+            margin: '8px 10px 2px',
+            textDecoration: 'none',
+            border: '1px solid rgba(168,85,247,0.32)',
+            background: 'linear-gradient(135deg, rgba(168,85,247,0.14), rgba(59,130,246,0.1))',
+            fontSize: 12.5,
+            fontWeight: 600,
+          }}
+          title="Download signed Android app (.apk)"
+        >
+          <Icon name="download" size={16} />
+          <span className="nav-label">Android App (.apk)</span>
+        </a>
+      )}
 
       <div className="side-foot side-extra">
         VIBEX · studio streaming

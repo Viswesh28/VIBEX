@@ -1,32 +1,34 @@
 /**
- * Where the backend lives — on the web only.
+ * Backend origin & native shell detection.
  *
- * The web build is served by the gateway, which also proxies /api, so this
- * stays empty and relative URLs do the right thing. Override it at build time
- * if you ever serve the UI from somewhere other than the gateway:
- *
- *   VITE_API_ORIGIN=https://api.example.com npm run build
- *
- * The Android build ignores all of this: it embeds the API and downloads
- * in-process, so it has no backend to address. See src/lib/embedded-api.js.
+ * - Web deployments serve `/api/*` on the same origin (`API_ORIGIN = ""`).
+ * - The native Android APK (`window.VibexAndroid`) intercepts `/api/*` natively on
+ *   same-origin `https://appassets.androidplatform.net/api/*`, executing YouTube
+ *   InnerTube pure-audio extraction directly on the phone's residential IP and
+ *   proxying catalog calls seamlessly to `https://vibex-music-pi.vercel.app`.
+ * - `window.__VIBEX_NATIVE = true` activates the pure-JS embedded JioSaavn harness
+ *   used by unit tests (`test/embedded-api*.spec.js`).
  */
 export const API_ORIGIN = (import.meta.env?.VITE_API_ORIGIN || '').replace(/\/+$/, '')
 
+export const ANDROID_APK_URL = '/download/vibex.apk'
+export const ANDROID_APP_VERSION = '3.2.0'
+export const ANDROID_PACKAGE_ID = 'dev.viswesh.vibex'
+
 export const apiUrl = (path) => `${API_ORIGIN}/api${path}`
-// Downloads hit the tagger function directly. It used to be reachable as /dl
-// through a hosting rewrite, but a deployment that carries only the app build
-// has no rewrite table, so the path the function actually owns is the safe one.
 export const dlUrl = (query) => `${API_ORIGIN}/api/dl?${query}`
 
+/** True when running inside the compiled VIBEX Android native WebView bridge. */
+export const hasAndroidBridge = () =>
+  typeof window !== 'undefined' && Boolean(window.VibexAndroid)
+
 /**
- * True when running inside the native shell rather than a browser tab.
- *
- * `window.__VIBEX_NATIVE = true` forces the native code path on in a desktop
- * browser. Debugging inside a WebView is painful, and without this there is no
- * way to exercise the embedded API from devtools — or from a test. It must be
- * set before the app's scripts run, and a browser will still be CORS-blocked
- * talking to JioSaavn, so it proves routing rather than end-to-end success.
+ * True when running inside Capacitor or test-forced native mode.
+ * Kept distinct from `hasAndroidBridge()` so `api.js` unit tests stay 100% deterministic.
  */
 export const isNative = () =>
   typeof window !== 'undefined' &&
   (!!window.Capacitor?.isNativePlatform?.() || window.__VIBEX_NATIVE === true)
+
+/** True inside any native Android / mobile app container. */
+export const isNativeApp = () => hasAndroidBridge() || isNative()

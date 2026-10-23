@@ -24,8 +24,10 @@ import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
-import { needsIOSInstallHint, isStandalone } from '../lib/platform.js'
+import { needsIOSInstallHint, isStandalone, isNativeShell } from '../lib/platform.js'
 import { promptInstall, subscribeInstall } from '../lib/install.js'
+import { ANDROID_APK_URL, ANDROID_APP_VERSION } from '../lib/config.js'
+import { requestNativeNotificationPermission } from '../lib/native.js'
 
 const SLEEP_OPTIONS = [0, 15, 30, 60]
 const CAP_ICONS = {
@@ -41,6 +43,7 @@ function InstallSection() {
   const [canPrompt, setCanPrompt] = useState(false)
   const [installed, setInstalled] = useState(false)
   const [note, setNote] = useState('')
+  const nativeApp = isNativeShell()
   const standalone = isStandalone()
   const iosHint = needsIOSInstallHint()
 
@@ -67,35 +70,68 @@ function InstallSection() {
         <Icon name="download" size={16} />
         <span>Install VIBEX</span>
       </div>
-      {standalone || installed ? (
-        <p className="set-note">
-          Installed. VIBEX opens full screen and keeps playing with the screen locked.
-        </p>
+      {nativeApp ? (
+        <>
+          <p className="set-note">
+            VIBEX Android App v{ANDROID_APP_VERSION} active — foreground lock-screen media controls,
+            Bluetooth earbuds, Share Sheet &amp; tagged Music/VIBEX downloads enabled.
+          </p>
+          <button
+            type="button"
+            className="set-install-btn"
+            onClick={() => {
+              requestNativeNotificationPermission()
+              setNote('Notification & lock-screen media controls enabled.')
+            }}
+          >
+            <Icon name="check" size={15} />
+            Verify Lock-Screen Controls
+          </button>
+          {note && <p className="set-note">{note}</p>}
+        </>
       ) : (
         <>
-          {canPrompt && (
-            <button type="button" className="set-install-btn" onClick={install}>
-              <Icon name="download" size={15} />
-              Install app
-            </button>
-          )}
-          {iosHint && (
-            <button
-              type="button"
-              className="set-install-btn"
-              aria-expanded={!!note}
-              onClick={() => setNote(note ? '' : IOS_STEPS)}
-            >
-              <Icon name="share" size={15} />
-              How to install on iPhone
-            </button>
-          )}
-          {!canPrompt && !iosHint && (
-            <p className="set-note">Open this page in Safari, then Share → Add to Home Screen.</p>
+          <a
+            href={ANDROID_APK_URL}
+            download={`VIBEX-v${ANDROID_APP_VERSION}-universal.apk`}
+            className="set-install-btn"
+            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          >
+            <Icon name="download" size={15} />
+            Download Android App (.apk)
+          </a>
+          {standalone || installed ? (
+            <p className="set-note">
+              Installed. VIBEX opens full screen and keeps playing with the screen locked.
+            </p>
+          ) : (
+            <>
+              {canPrompt && (
+                <button type="button" className="set-install-btn" onClick={install}>
+                  <Icon name="download" size={15} />
+                  Install app
+                </button>
+              )}
+              {iosHint && (
+                <button
+                  type="button"
+                  className="set-install-btn"
+                  aria-expanded={!!note}
+                  onClick={() => setNote(note ? '' : IOS_STEPS)}
+                >
+                  <Icon name="share" size={15} />
+                  How to install on iPhone
+                </button>
+              )}
+              {!canPrompt && !iosHint && (
+                <p className="set-note">Open this page in Safari, then Share → Add to Home Screen.</p>
+              )}
+            </>
           )}
           {note && <p className="set-note">{note}</p>}
           <p className="set-note">
-            Full screen, a home-screen icon, launch screen and lock-screen controls.
+            Native Android APK includes background screen-off streaming, lock-screen seek bar,
+            Bluetooth headphone controls, OS Share Sheet &amp; Music/VIBEX downloads.
           </p>
         </>
       )}

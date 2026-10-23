@@ -1,21 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.viswesh.vibex"
+    android:versionCode="30200"
+    android:versionName="3.2.0">
+
+    <uses-sdk
+        android:minSdkVersion="26"
+        android:targetSdkVersion="34" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <application
         android:allowBackup="true"
+        android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
         <activity
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
             android:name=".MainActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
+            android:exported="true"
             android:label="@string/title_activity_main"
-            android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
-            android:exported="true">
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:windowSoftInputMode="adjustResize">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -45,21 +66,13 @@
                     android:scheme="https"
                     android:host="vibex-music-pi.vercel.app" />
             </intent-filter>
-
         </activity>
 
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
+        <!-- Foreground Media Playback Service for screen-off streaming, lock screen & Bluetooth -->
+        <service
+            android:name=".PlaybackService"
+            android:enabled="true"
             android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths"></meta-data>
-        </provider>
+            android:foregroundServiceType="mediaPlayback" />
     </application>
-
-    <!-- Permissions -->
-
-    <uses-permission android:name="android.permission.INTERNET" />
 </manifest>
