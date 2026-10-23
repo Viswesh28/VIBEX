@@ -69,7 +69,8 @@ visualizer, the LRC parser and lyrics sync, and the ID3/MP4 tag writer in
 
 | Service | What is fetched | Note |
 |---|---|---|
-| **JioSaavn** (`www.jiosaavn.com`) | Audio stream URLs, song/album/artist/playlist metadata, album artwork | Accessed via the unofficial wrapper above. JioSaavn is a service of Reliance Industries / JioSaavn Media Pvt. Ltd. **This project is not affiliated with, endorsed by, or sponsored by JioSaavn.** |
+| **JioSaavn** (`www.jiosaavn.com`) | Audio stream URLs, song/album/artist/playlist metadata, album artwork | Accessed via the unofficial wrapper above (`CatalogProvider` + `StreamResolver`). JioSaavn is a service of Reliance Industries / JioSaavn Media Pvt. Ltd. **This project is not affiliated with, endorsed by, or sponsored by JioSaavn.** |
+| **YouTube Music / YouTube** (`music.youtube.com`, `www.youtube.com/embed`) | Public song search metadata (`api/ytmusic.mjs`) and official embedded video playback (`YouTubeEmbed.jsx`) | **No audio streams or browser cookies are extracted.** YouTube items open exclusively in YouTube's official IFrame player subject to YouTube's controls, ads, and rights-holder embed restrictions (ADR 0007 / ADR 0008). **Not affiliated with, endorsed by, or sponsored by Google LLC or YouTube.** |
 | **saavn.dev** | Nothing — see note | The public hosted instance of the same wrapper. It is **not** called by VIBEX; the name appears only inside the vendored fork's own documentation strings (`jiosaavn-api/src/app.js`, `src/pages/home.js`). There is no cloud fallback: if the local API is unreachable the UI shows its offline screen. |
 | **LRCLIB** (`lrclib.net`) | Synced and plain-text song lyrics | Community-maintained, keyless lyrics database. Displayed with on-screen credit ("Lyrics by LRCLIB"). **Lyrics remain the property of their publishers and rights holders.** |
 
@@ -101,4 +102,21 @@ audio, artwork catalogue, lyrics, or other streaming media.
 
 If you are a rights holder and believe any component above is attributed
 incorrectly, or that content associated with this project infringes your
-rights, please see **[DMCA.md](DMCA.md)**.
+rights, please see **[DMCA.md](DMCA.md)** and **[docs/PARTNER_INQUIRY.md](docs/PARTNER_INQUIRY.md)**.
+
+---
+
+## 7. Independent Service Notice (Draft)
+
+VIBEX is an independent application and is not affiliated with, endorsed by, or
+sponsored by Google, YouTube, YouTube Music, JioSaavn, or any music provider
+unless a written agreement expressly says otherwise. Provider names and marks
+belong to their respective owners.
+
+Catalog access and playback are provided only through services and content for
+which the app has authorization. Availability depends on provider, territory,
+account entitlements, and rights. Users must follow applicable service terms
+and copyright law. Account linking is optional, disabled by default unless an
+authorized OAuth provider adapter is configured, and never collects passwords
+or browser cookies.
+

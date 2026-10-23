@@ -1,6 +1,6 @@
 {
   "name": "vibex-music-app",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
   "description": "VIBEX music player \u2014 React front-end and the Node gateway that serves it.",

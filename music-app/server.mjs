@@ -1,4 +1,6 @@
-// Gateway: serves the built React app + proxies /api/* to the local JioSaavn API.
+// Gateway: serves the built React app + proxies /api/* to the local JioSaavn API,
+// while handling /api/ytmusic, /api/canvas, and /api/dl in-process so local runs
+// behave identically to Vercel production.
 // Run: npm run build && PORT=8000 API_TARGET=http://127.0.0.1:3001 node server.mjs
 // (or `npm start`, which does both).
 import http from 'node:http'
@@ -6,6 +8,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { addTags } from './tagger.mjs'
+import ytmusicHandler from '../api/ytmusic.mjs'
+import canvasHandler from '../api/canvas.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 8000)
@@ -39,6 +43,24 @@ const MIME = {
   '.webp': 'image/webp',
   '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
+}
+
+/** Adapt a Vercel-style (req, res) handler to Node's bare ServerResponse. */
+function runFunctionHandler(handler, req, res, url) {
+  req.query = Object.fromEntries(url.searchParams.entries())
+  res.status = (code) => {
+    res.statusCode = code
+    return res
+  }
+  res.json = (payload) => {
+    if (!res.headersSent) {
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.setHeader('access-control-allow-origin', '*')
+    }
+    res.end(JSON.stringify(payload))
+    return res
+  }
+  return handler(req, res)
 }
 
 const server = http.createServer(async (req, res) => {
@@ -87,34 +109,19 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
-    // --- Proxy API to JioSaavn backend ---
-    if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
-      const target = API_TARGET + url.pathname + url.search
-      try {
-        const r = await fetch(target, {
-          headers: { accept: 'application/json' },
-          signal: AbortSignal.timeout(API_TIMEOUT_MS),
-        })
-        const buf = Buffer.from(await r.arrayBuffer())
-        res.writeHead(r.status, {
-          'content-type': r.headers.get('content-type') || 'application/json',
-          'access-control-allow-origin': '*',
-          'cache-control': 'no-store',
-        })
-        res.end(buf)
-      } catch (e) {
-        // Backend down -> 502 JSON (NOT 404). The client's probeApi() treats any
-        // non-success as "API unavailable" and swaps in the offline screen, and a
-        // 404 here would be indistinguishable from a genuinely missing route.
-        res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
-        res.end(JSON.stringify({ success: false, message: 'Local JioSaavn backend unreachable at ' + API_TARGET }))
-      }
+    // --- Serverless function routes owned directly by VIBEX ---
+    if (url.pathname === '/api/ytmusic') {
+      await runFunctionHandler(ytmusicHandler, req, res, url)
+      return
+    }
+    if (url.pathname === '/api/canvas') {
+      await runFunctionHandler(canvasHandler, req, res, url)
       return
     }
 
     // --- Download proxy: same-origin streaming, forces "save file" dialog ---
-    // Accepts songId (fresh API-resolved URL + server-side retry) and/or url (direct).
-    if (url.pathname === '/dl') {
+    // Serves both /api/dl (used by client since ADR 0007) and legacy /dl.
+    if (url.pathname === '/dl' || url.pathname === '/api/dl') {
       const songId = url.searchParams.get('songId') || ''
       let target = url.searchParams.get('url') || ''
       const wantQ = url.searchParams.get('q') || '320kbps'
@@ -222,6 +229,31 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         if (!res.headersSent) deny(502, 'Download proxy failed')
         else { try { res.end() } catch {} }
+      }
+      return
+    }
+
+    // --- Proxy remaining /api/* routes to JioSaavn backend ---
+    if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+      const target = API_TARGET + url.pathname + url.search
+      try {
+        const r = await fetch(target, {
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        })
+        const buf = Buffer.from(await r.arrayBuffer())
+        res.writeHead(r.status, {
+          'content-type': r.headers.get('content-type') || 'application/json',
+          'access-control-allow-origin': '*',
+          'cache-control': 'no-store',
+        })
+        res.end(buf)
+      } catch (e) {
+        // Backend down -> 502 JSON (NOT 404). The client's probeApi() treats any
+        // non-success as "API unavailable" and swaps in the offline screen, and a
+        // 404 here would be indistinguishable from a genuinely missing route.
+        res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
+        res.end(JSON.stringify({ success: false, message: 'Local JioSaavn backend unreachable at ' + API_TARGET }))
       }
       return
     }
