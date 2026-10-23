@@ -22,6 +22,18 @@ const EDITION_MODIFIERS = [
   'acoustic',
   'mashup',
   '8d',
+  'jukebox',
+  'nonstop',
+  'non-stop',
+  'medley',
+  'bgm',
+  'ringtone',
+  'teaser',
+  'trailer',
+  'glimpse',
+  'reprise',
+  'female',
+  'male',
 ]
 
 const VIDEO_NOISE_RE =
@@ -306,6 +318,7 @@ function computeTitleSimilarity(targetTitle, candidateTitle) {
 
   const aUnique = [...new Set(aTokens)]
   const bUnique = [...new Set(bTokens)]
+  const leadingMatches = tokensMatch(aUnique[0], bUnique[0]) >= 0.9
 
   let matchedWeight = 0
   for (const at of aUnique) {
@@ -318,7 +331,7 @@ function computeTitleSimilarity(targetTitle, candidateTitle) {
   }
   if (matchedWeight === 0) return 0
 
-  if (matchedWeight >= aUnique.length * 0.92) {
+  if (matchedWeight >= aUnique.length * 0.92 && leadingMatches) {
     const extraRatio = Math.min(1, aUnique.length / bUnique.length)
     return 0.84 + 0.16 * extraRatio * (matchedWeight / aUnique.length)
   }
@@ -332,7 +345,7 @@ function computeTitleSimilarity(targetTitle, candidateTitle) {
     }
     reverseWeight += bestToken
   }
-  if (reverseWeight >= bUnique.length * 0.92 && bUnique.length >= 1) {
+  if (reverseWeight >= bUnique.length * 0.92 && bUnique.length >= 1 && leadingMatches) {
     const extraRatio = Math.min(1, bUnique.length / aUnique.length)
     return 0.8 + 0.16 * extraRatio * (reverseWeight / bUnique.length)
   }
@@ -342,8 +355,20 @@ function computeTitleSimilarity(targetTitle, candidateTitle) {
 }
 
 /** Score a JioSaavn candidate against a source track (`0` = incompatible). */
-export function scoreSaavnCandidate(sourceTrack, candidate, { allowVideoToTrack = false } = {}) {
+export function scoreSaavnCandidate(sourceTrack, candidate) {
   if (!candidate?.id || !Array.isArray(candidate.downloadUrl) || !candidate.downloadUrl.length) {
+    return { score: 0, titleScore: 0 }
+  }
+
+  // Never match long-form mixes, jukeboxes, or concerts (>= 10 min) against single studio cuts.
+  const srcDur = Number(sourceTrack?.duration) || 0
+  const candDur = Number(candidate?.duration) || 0
+  if (srcDur >= 600 && (!candDur || Math.abs(srcDur - candDur) > 30)) {
+    return { score: 0, titleScore: 0 }
+  }
+  // Hard gate on runtime drift whenever both sides report non-zero duration:
+  // prevents extended scenes, trailers, or same-album tracks from swapping audio.
+  if (srcDur > 0 && candDur > 0 && Math.abs(srcDur - candDur) > 35) {
     return { score: 0, titleScore: 0 }
   }
 
@@ -351,19 +376,33 @@ export function scoreSaavnCandidate(sourceTrack, candidate, { allowVideoToTrack 
   const candParts = extractTrackQueryParts(candidate)
   const candRawName = unescapeEntities(candidate.name || candidate.title || '')
 
-  const titleCandidates = [
+  const coreSim = Math.max(
     computeTitleSimilarity(target.coreTitle, candParts.coreTitle),
-    computeTitleSimilarity(target.coreTitle, candRawName),
-  ]
-  if (target.altTitle) {
-    titleCandidates.push(computeTitleSimilarity(target.altTitle, candParts.coreTitle))
-    titleCandidates.push(computeTitleSimilarity(target.altTitle, candRawName))
-  }
-  const titleScore = Math.max(...titleCandidates)
+    computeTitleSimilarity(target.coreTitle, candRawName)
+  )
+  // Only consult `altTitle` when `coreTitle` itself already matches the song title
+  // (never allowing `- Movie Name` in `altTitle` to match another track from that movie).
+  const titleScore =
+    coreSim >= 0.6 && target.altTitle
+      ? Math.max(
+          coreSim,
+          computeTitleSimilarity(target.altTitle, candParts.coreTitle),
+          computeTitleSimilarity(target.altTitle, candRawName)
+        )
+      : coreSim
 
   // Hard gate: never match an unrelated song purely because artist + duration match.
-  if (titleScore < 0.55) {
+  if (titleScore < 0.72) {
     return { score: 0, titleScore }
+  }
+
+  // Strict edition guardrail: never swap a remix / lofi / cover / live / unplugged /
+  // jukebox / reprise / female / male version with a plain studio cut (or vice versa).
+  for (const mod of target.modifiers) {
+    if (!candParts.modifiers.has(mod)) return { score: 0, titleScore }
+  }
+  for (const mod of candParts.modifiers) {
+    if (!target.modifiers.has(mod)) return { score: 0, titleScore }
   }
 
   // Artist / film / album corroboration (neutral `0` when a label channel carries no singer name).
@@ -384,45 +423,25 @@ export function scoreSaavnCandidate(sourceTrack, candidate, { allowVideoToTrack 
   }
   const contextBonus = contextOverlap >= 2 ? 0.16 : contextOverlap === 1 ? 0.11 : 0
 
-  // Duration corroboration when both sides report non-zero seconds.
-  const srcDur = Number(sourceTrack?.duration) || 0
-  const candDur = Number(candidate?.duration) || 0
   let durationAdj = 0
   if (srcDur > 0 && candDur > 0) {
     const diff = Math.abs(srcDur - candDur)
     if (diff <= 8) durationAdj = 0.14
-    else if (diff <= 25) durationAdj = 0.08
-    else if (diff <= 60) durationAdj = 0.02
-    else if (!allowVideoToTrack && diff > 110) durationAdj = -0.25
+    else if (diff <= 20) durationAdj = 0.08
+    else durationAdj = 0.02
   }
 
-  // Edition guardrail: in strict Pass 1, keep exact editions separate;
-  // in Pass 2 (`allowVideoToTrack: true`), convert music videos / live / lofi /
-  // acoustic uploads cleanly to the studio audio track when no exact cut exists.
-  let editionAdj = 0
-  if (!allowVideoToTrack) {
-    for (const mod of target.modifiers) {
-      if (!candParts.modifiers.has(mod)) editionAdj -= 0.28
-    }
-    for (const mod of candParts.modifiers) {
-      if (!target.modifiers.has(mod)) editionAdj -= 0.18
-    }
-  } else if (titleScore < 0.72 && contextOverlap === 0) {
-    return { score: 0, titleScore }
-  }
-
-  const total = Math.max(0, Math.min(1, titleScore * 0.85 + contextBonus + durationAdj + editionAdj))
+  const total = Math.max(0, Math.min(1, titleScore * 0.85 + contextBonus + durationAdj))
   return { score: total, titleScore }
 }
 
-/** Return the best confident studio audio match (`score >= 0.68`) or `null`. */
-export function matchSaavnTrack(sourceTrack, candidates, { minScore = 0.68, allowVideoToTrack = false } = {}) {
+/** Return the best verified identical studio audio match (`score >= 0.72`) or `null`. */
+export function matchSaavnTrack(sourceTrack, candidates, { minScore = 0.72 } = {}) {
   if (!sourceTrack || !Array.isArray(candidates) || !candidates.length) return null
-  const threshold = allowVideoToTrack ? Math.min(minScore, 0.62) : minScore
   let best = null
   for (const candidate of candidates) {
-    const { score, titleScore } = scoreSaavnCandidate(sourceTrack, candidate, { allowVideoToTrack })
-    if (score >= threshold && (!best || score > best.score)) {
+    const { score, titleScore } = scoreSaavnCandidate(sourceTrack, candidate)
+    if (score >= minScore && (!best || score > best.score)) {
       best = { song: candidate, score, titleScore }
     }
   }

@@ -177,7 +177,9 @@ export function mapYtResult(raw) {
     ? raw.matchedAudio
     : null
   const ytImages = raw.thumbnail ? [{ quality: '500x500', url: raw.thumbnail }] : []
-  const images = matched?.image?.length ? matched.image : ytImages
+  // Always keep YouTube's own thumbnail when available so search rows, queue,
+  // player bar, and full-screen cover always show the exact item selected.
+  const images = ytImages.length ? ytImages : matched?.image || []
   const primaryArtists = matched?.artists?.primary?.length
     ? artists.length
       ? artists.map((name, i) => ({

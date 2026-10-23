@@ -767,6 +767,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
         return
       }
       cancelFade()
+      loadSeqRef.current += 1
       playingRef.current = false
       for (const el of [deckA.current, deckB.current]) {
         try {
@@ -801,6 +802,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
   const embedCmdRef = useRef(null)
   const embedOpenRef = useRef(false)
   const clockRef = useRef({ cur: 0, dur: 0 })
+  const loadSeqRef = useRef(0)
 
   useEffect(() => {
     embedOpenRef.current = Boolean(embedTrack)
@@ -889,18 +891,19 @@ export function PlayerProvider({ children, streamResolver = null }) {
     resolveQualityRef.current = resolveQuality
   }, [resolveQuality])
 
-  const hydrateMatchedQueueItem = useCallback((idx, matchedSong) => {
+  const hydrateMatchedQueueItem = useCallback((idx, matchedSong, expectedId) => {
     if (!matchedSong?.downloadUrl?.length) return
     setQueueState((prev) => {
       if (!prev[idx]) return prev
       const existing = prev[idx]
+      if (expectedId && existing.id !== expectedId) return prev
       const updated = {
         ...existing,
         downloadUrl: matchedSong.downloadUrl,
         _matchedSaavnId: matchedSong.id || existing._matchedSaavnId,
         duration: Number(existing.duration) || Number(matchedSong.duration) || 0,
-        image: matchedSong.image?.length ? matchedSong.image : existing.image,
-        artists: matchedSong.artists?.primary?.length ? matchedSong.artists : existing.artists,
+        image: existing.image?.length ? existing.image : matchedSong.image,
+        artists: existing.artists?.primary?.length ? existing.artists : matchedSong.artists,
       }
       const next = [...prev]
       next[idx] = updated
@@ -920,6 +923,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       if (!nextSong || !isYtTrack(nextSong) || nextSong.downloadUrl?.length) {
         return
       }
+      const expectedId = nextSong.id
       const key = trackKey(nextSong) || nextSong.id
       defaultYtResolver
         .resolve(key, resolveQuality(nextSong), {
@@ -927,7 +931,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
           dataSaver: setRef.current.dataSaver,
         })
         .then((res) => {
-          if (res?.matchedSong) hydrateMatchedQueueItem(nextIdx, res.matchedSong)
+          if (res?.matchedSong) hydrateMatchedQueueItem(nextIdx, res.matchedSong, expectedId)
         })
         .catch(() => {})
     },
@@ -937,17 +941,32 @@ export function PlayerProvider({ children, streamResolver = null }) {
   /** Resolve a stream via `StreamResolver` when a custom resolver is active or URLs expired/stripped. */
   const resolveViaAdapter = useCallback(
     async (song, idx, { isReResolve = false, onResolved }) => {
+      const seq = ++loadSeqRef.current
       const key = trackKey(song) || song?.id
+      // Immediately silence all prior audio/embed transports so old audio can
+      // never bleed under the newly selected track's thumbnail while resolving.
+      cancelFade()
+      setLongForm(null)
+      for (const deckEl of [deckA.current, deckB.current]) {
+        try {
+          deckEl?.pause()
+        } catch {
+          /* ignore */
+        }
+      }
       dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream', isReResolve })
       setCurrentIndex(idx)
       idxRef.current = idx
+      setClock({ cur: 0, dur: Number(song?.duration) || 0 })
       try {
         const resolved = await resolverFor(song).resolve(key, resolveQuality(song), {
           track: song,
           forceRefresh: isReResolve,
           dataSaver: setRef.current.dataSaver,
         })
-        if (idxRef.current !== idx) return
+        if (loadSeqRef.current !== seq || idxRef.current !== idx || queueRef.current[idx]?.id !== song?.id) {
+          return
+        }
         if (resolved?.mode === 'embed') {
           openEmbed(song, idx)
           return
@@ -957,13 +976,18 @@ export function PlayerProvider({ children, streamResolver = null }) {
         }
         setLongForm(null)
         if (resolved.matchedSong) {
-          hydrateMatchedQueueItem(idx, resolved.matchedSong)
+          hydrateMatchedQueueItem(idx, resolved.matchedSong, song?.id)
         }
         prewarmNextTrack(idx)
         dispatchMachine({ type: 'RESOLVE_READY', mode: 'stream' })
         dispatchMachine({ type: 'BUFFERING' })
         onResolved(resolved.uri)
       } catch (err) {
+        if (loadSeqRef.current !== seq) return
+        if (isYtTrack(song) && videoIdOf(song)) {
+          openEmbed(song, idx)
+          return
+        }
         const category = classifyPlaybackFailure(err)
         const msg = err?.message || playbackFailureCopy(category)
         dispatchMachine({ type: 'FAILED', category, message: msg })
@@ -971,7 +995,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
         setStatus(msg, true)
       }
     },
-    [dispatchMachine, hydrateMatchedQueueItem, openEmbed, prewarmNextTrack, resolveQuality, resolverFor, setStatus]
+    [cancelFade, dispatchMachine, hydrateMatchedQueueItem, openEmbed, prewarmNextTrack, resolveQuality, resolverFor, setStatus]
   )
 
   /** Load track `i` onto the idle deck and crossfade into it. */
@@ -1006,6 +1030,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
 
       const direct = streamOf(s, resolveQuality(s))
       if (!streamResolver && direct && !isExpired(direct)) {
+        loadSeqRef.current += 1
         dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream' })
         finishSwap(direct)
         return
@@ -1054,6 +1079,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
 
       const direct = streamOf(s, resolveQuality(s))
       if (!streamResolver && direct && !isExpired(direct)) {
+        loadSeqRef.current += 1
         dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream' })
         start(direct)
         return
@@ -1652,6 +1678,15 @@ export function PlayerProvider({ children, streamResolver = null }) {
         return
       }
 
+      // If an `<audio>` stream for a YouTube item fails, recover on the SAME
+      // track's own YouTube audio transport instead of skipping to a different
+      // song in the queue (keeping thumbnail, title, and audio 100% synced).
+      if (!streamResolver && isYtTrack(song) && videoIdOf(song)) {
+        openEmbed(song, idxRef.current)
+        return
+      }
+
+      const errSeq = loadSeqRef.current
       dispatchMachine({ type: 'FAILED', category, message: playbackFailureCopy(category) })
       setStatus(failureMessage(reason), true)
       // Do not silently substitute another track when authorization, region, or
@@ -1663,7 +1698,9 @@ export function PlayerProvider({ children, streamResolver = null }) {
         !streamResolver
       ) {
         setTimeout(() => {
-          if (active() === el) advanceRef.current?.({ manual: false })
+          if (loadSeqRef.current === errSeq && !embedOpenRef.current && active() === el) {
+            advanceRef.current?.({ manual: false })
+          }
         }, 900)
       }
     }
@@ -1768,7 +1805,9 @@ export function PlayerProvider({ children, streamResolver = null }) {
   )
 
   const resetNowPlaying = useCallback(() => {
+    loadSeqRef.current += 1
     playingRef.current = false
+    setLongForm(null)
     cancelFade()
     try {
       const el = active()

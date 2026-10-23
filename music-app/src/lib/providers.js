@@ -537,30 +537,18 @@ export function createYtMusicStreamResolver({
 
       if (track && (track.name || track.title)) {
         const queries = buildMatchQueries(track)
-        const collected = []
         for (const q of queries) {
           try {
             const data = await apiFn(`/search/songs?query=${encodeURIComponent(q)}&limit=10`)
             const candidates = Array.isArray(data?.results) ? data.results : []
-            if (candidates.length) {
-              collected.push(...candidates)
-              const hit = matchSaavnTrack(track, candidates)
-              if (hit?.song) {
-                if (cacheKey) cache.set(cacheKey, { songId: hit.song.id })
-                const resolved = buildStreamResult(hit.song, quality, dataSaver)
-                if (resolved) return resolved
-              }
+            const hit = matchSaavnTrack(track, candidates)
+            if (hit?.song) {
+              if (cacheKey) cache.set(cacheKey, { songId: hit.song.id })
+              const resolved = buildStreamResult(hit.song, quality, dataSaver)
+              if (resolved) return resolved
             }
           } catch {
             /* try next candidate query */
-          }
-        }
-        if (collected.length) {
-          const videoTrackHit = matchSaavnTrack(track, collected, { allowVideoToTrack: true })
-          if (videoTrackHit?.song) {
-            if (cacheKey) cache.set(cacheKey, { songId: videoTrackHit.song.id })
-            const resolved = buildStreamResult(videoTrackHit.song, quality, dataSaver)
-            if (resolved) return resolved
           }
         }
       }

@@ -1,30 +1,17 @@
 /**
- * /api/ytaudio  --  YouTube Video -> Pure Audio Track Stream Resolver & Proxy.
+ * /api/ytaudio  --  Byte-Verified YouTube Video -> Pure Audio Stream Proxy.
  *
- * Converts any YouTube video ID (`11` chars) into a pure audio stream (`audio/mp4`
- * AAC or `audio/webm` Opus) playable directly inside HTML5 `<audio>` elements
- * with full HTTP `Range` (`206 Partial Content`) seeking and optional `.m4a`
- * attachment download (`?download=1`), racing multiple independent audio
- * extractors concurrently so unmatched videos start playing in ~300ms:
- *
- *   1. Parallel race (`Promise.any`) across:
- *      - Direct YouTube InnerTube `player` audio-only adaptive formats
- *        (`ANDROID_VR`, `IOS`, `TVHTML5_SIMPLY_EMBEDDED_PLAYER`)
- *      - Public Piped & Invidious audio-stream mirrors
- *   2. YouTube `oEmbed` (`title` + `author_name`) -> bundled JioSaavn `320kbps`
- *      studio audio stream fallback.
+ * Extracts only genuine audio streams belonging strictly to the requested 11-char
+ * `videoId` (NEVER substituting a different catalog track) AND verifies with a
+ * lightweight `Range: bytes=0-1` probe that this server's egress IP can actually
+ * read bytes (`200` / `206` non-HTML response) before reporting `playable: true`.
  */
 
-import saavnApp from '../jiosaavn-api/src/server.js'
-import {
-  buildMatchQueries,
-  cleanChannelArtist,
-  matchSaavnTrack,
-  unescapeEntities,
-} from './_lib/trackMatch.mjs'
+import { cleanChannelArtist } from './_lib/trackMatch.mjs'
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/
-const RACE_TIMEOUT_MS = 4500
+const RACE_TIMEOUT_MS = 1800
+const VERIFY_TIMEOUT_MS = 1200
 const STREAM_TIMEOUT_MS = 55_000
 
 const INNERTUBE_CLIENTS = [
@@ -88,16 +75,14 @@ const PIPED_INSTANCES = [
   'https://pipedapi.adminforge.de',
   'https://api.piped.private.coffee',
   'https://pipedapi.reallyaweso.me',
-  'https://pipedapi.smnz.de',
 ]
 
 const INVIDIOUS_INSTANCES = [
   'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
-  'https://invidious.jing.rocks',
 ]
 
-// Short in-memory stream cache per warm Lambda instance (90s TTL).
+// Short in-memory stream cache per warm Lambda instance (60s TTL).
 const streamMemo = new Map()
 
 function safeFilename(value) {
@@ -144,6 +129,41 @@ export function pickBestAudioFormat(formats = []) {
   return candidates[0] || null
 }
 
+/**
+ * Confirm this server egress IP can actually stream bytes from `candidate.url`
+ * (`200` / `206` non-HTML response). Prevents IP-bound Piped/googlevideo URLs
+ * from falsely advertising `playable: true` on `?meta=1` and 502-ing on `<audio>`.
+ */
+async function verifyStreamReachable(candidate, fetchImpl, parentSignal) {
+  const ctl = new AbortController()
+  const onParentAbort = () => ctl.abort()
+  parentSignal?.addEventListener?.('abort', onParentAbort, { once: true })
+  const timer = setTimeout(() => ctl.abort(), VERIFY_TIMEOUT_MS)
+  try {
+    const probe = await fetchImpl(candidate.url, {
+      method: 'GET',
+      headers: {
+        'user-agent': candidate.userAgent || 'Mozilla/5.0',
+        accept: '*/*',
+        range: 'bytes=0-1',
+      },
+      redirect: 'follow',
+      signal: ctl.signal,
+    })
+    if (!probe?.ok && probe?.status !== 206) {
+      throw new Error(`stream_probe_${probe?.status || 0}`)
+    }
+    const ct = String(probe.headers?.get?.('content-type') || '').toLowerCase()
+    if (ct.includes('text/html') || ct.includes('application/json')) {
+      throw new Error('stream_probe_not_media')
+    }
+    return candidate
+  } finally {
+    clearTimeout(timer)
+    parentSignal?.removeEventListener?.('abort', onParentAbort)
+  }
+}
+
 async function tryInnerTubeClient(videoId, client, fetchImpl, signal) {
   const res = await fetchImpl('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
     method: 'POST',
@@ -172,14 +192,18 @@ async function tryInnerTubeClient(videoId, client, fetchImpl, signal) {
   ]
   const picked = pickBestAudioFormat(allFormats)
   if (!picked) throw new Error(`no_audio_${client.name}`)
-  return {
-    ...picked,
-    userAgent: client.userAgent,
-    source: `innertube:${client.name.toLowerCase()}`,
-    title: data?.videoDetails?.title || '',
-    artist: cleanChannelArtist(data?.videoDetails?.author || ''),
-    duration: Number(data?.videoDetails?.lengthSeconds || 0),
-  }
+  return verifyStreamReachable(
+    {
+      ...picked,
+      userAgent: client.userAgent,
+      source: `innertube:${client.name.toLowerCase()}`,
+      title: data?.videoDetails?.title || '',
+      artist: cleanChannelArtist(data?.videoDetails?.author || ''),
+      duration: Number(data?.videoDetails?.lengthSeconds || 0),
+    },
+    fetchImpl,
+    signal
+  )
 }
 
 async function tryPipedMirror(videoId, base, fetchImpl, signal) {
@@ -196,14 +220,18 @@ async function tryPipedMirror(videoId, base, fetchImpl, signal) {
   }))
   const picked = pickBestAudioFormat(streams)
   if (!picked) throw new Error('piped_no_audio')
-  return {
-    ...picked,
-    userAgent: 'Mozilla/5.0',
-    source: 'piped',
-    title: json?.title || '',
-    artist: cleanChannelArtist(json?.uploader || ''),
-    duration: Number(json?.duration || 0),
-  }
+  return verifyStreamReachable(
+    {
+      ...picked,
+      userAgent: 'Mozilla/5.0',
+      source: 'piped',
+      title: json?.title || '',
+      artist: cleanChannelArtist(json?.uploader || ''),
+      duration: Number(json?.duration || 0),
+    },
+    fetchImpl,
+    signal
+  )
 }
 
 async function tryInvidiousMirror(videoId, base, fetchImpl, signal) {
@@ -218,14 +246,18 @@ async function tryInvidiousMirror(videoId, base, fetchImpl, signal) {
   const json = await res.json()
   const picked = pickBestAudioFormat(json?.adaptiveFormats || [])
   if (!picked) throw new Error('invidious_no_audio')
-  return {
-    ...picked,
-    userAgent: 'Mozilla/5.0',
-    source: 'invidious',
-    title: json?.title || '',
-    artist: cleanChannelArtist(json?.author || ''),
-    duration: Number(json?.lengthSeconds || 0),
-  }
+  return verifyStreamReachable(
+    {
+      ...picked,
+      userAgent: 'Mozilla/5.0',
+      source: 'invidious',
+      title: json?.title || '',
+      artist: cleanChannelArtist(json?.author || ''),
+      duration: Number(json?.lengthSeconds || 0),
+    },
+    fetchImpl,
+    signal
+  )
 }
 
 async function raceDirectAudioExtractors(videoId, fetchImpl = fetch) {
@@ -247,94 +279,10 @@ async function raceDirectAudioExtractors(videoId, fetchImpl = fetch) {
   }
 }
 
-async function fetchOembedMeta(videoId, fetchImpl = fetch) {
-  try {
-    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(
-      `https://www.youtube.com/watch?v=${videoId}`
-    )}&format=json`
-    const res = await fetchImpl(oembedUrl, {
-      headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
-      signal: AbortSignal.timeout(3000),
-    })
-    if (!res?.ok) return null
-    const json = await res.json().catch(() => null)
-    if (!json?.title) return null
-    return {
-      title: unescapeEntities(json.title),
-      artist: cleanChannelArtist(json.author_name || ''),
-    }
-  } catch {
-    return null
-  }
-}
-
-async function resolveViaSaavnCatalog(
-  videoId,
-  { titleHint = '', artistHint = '', fetchImpl = fetch, saavnSearchFn = null } = {}
-) {
-  let title = String(titleHint || '').trim()
-  let artist = String(artistHint || '').trim()
-
-  if (!title) {
-    const meta = await fetchOembedMeta(videoId, fetchImpl)
-    if (meta) {
-      title = meta.title
-      artist = artist || meta.artist
-    }
-  }
-  if (!title) return null
-
-  const search =
-    typeof saavnSearchFn === 'function'
-      ? saavnSearchFn
-      : async (q) => {
-          if (!saavnApp?.fetch) return []
-          const r = await saavnApp.fetch(
-            new Request(`https://vibex.internal/api/search/songs?query=${encodeURIComponent(q)}&limit=10`, {
-              headers: { accept: 'application/json' },
-            })
-          )
-          if (!r.ok) return []
-          const body = await r.json().catch(() => null)
-          return Array.isArray(body?.data?.results) ? body.data.results : []
-        }
-
-  const probeTrack = {
-    videoId,
-    title,
-    artists: artist ? [artist] : [],
-    duration: 0,
-  }
-  const queries = buildMatchQueries(probeTrack)
-  for (const q of queries) {
-    const candidates = await search(q).catch(() => [])
-    const hit =
-      matchSaavnTrack(probeTrack, candidates) ||
-      matchSaavnTrack(probeTrack, candidates, { allowVideoToTrack: true })
-    if (hit?.song?.downloadUrl?.length) {
-      const best = hit.song.downloadUrl.at(-1)
-      if (best?.url) {
-        return {
-          url: best.url,
-          mimeType: 'audio/mp4',
-          bitrate: 320_000,
-          quality: best.quality || '320kbps',
-          userAgent: 'Mozilla/5.0',
-          source: 'jiosaavn',
-          title: hit.song.name || title,
-          artist: artist,
-          duration: Number(hit.song.duration || 0),
-        }
-      }
-    }
-  }
-  return null
-}
-
-/** Resolve any YouTube `videoId` to an audio-only stream descriptor. */
+/** Resolve a YouTube `videoId` strictly to its own verified audio stream (never another song). */
 export async function resolveYoutubeAudioStream(
   videoId,
-  { titleHint = '', artistHint = '', fetchImpl = fetch, saavnSearchFn = null, useCache = true } = {}
+  { fetchImpl = fetch, useCache = true } = {}
 ) {
   if (!VIDEO_ID_RE.test(String(videoId || ''))) return null
 
@@ -343,12 +291,10 @@ export async function resolveYoutubeAudioStream(
     if (hit && hit.expiresAt > Date.now()) return hit.value
   }
 
-  const resolved =
-    (await raceDirectAudioExtractors(videoId, fetchImpl)) ||
-    (await resolveViaSaavnCatalog(videoId, { titleHint, artistHint, fetchImpl, saavnSearchFn }))
+  const resolved = await raceDirectAudioExtractors(videoId, fetchImpl)
 
   if (resolved && useCache) {
-    streamMemo.set(videoId, { value: resolved, expiresAt: Date.now() + 90_000 })
+    streamMemo.set(videoId, { value: resolved, expiresAt: Date.now() + 60_000 })
   }
   return resolved
 }
@@ -372,8 +318,6 @@ export default async function handler(req, res, deps = {}) {
   const rawId = (url.searchParams.get('id') || url.searchParams.get('v') || '').replace(/^yt:/, '')
   const metaOnly = url.searchParams.get('meta') === '1'
   const isDownload = url.searchParams.get('download') === '1'
-  const titleHint = url.searchParams.get('title') || ''
-  const artistHint = url.searchParams.get('artist') || ''
   const fetchImpl = deps.fetchImpl || fetch
 
   if (!VIDEO_ID_RE.test(rawId)) {
@@ -384,10 +328,7 @@ export default async function handler(req, res, deps = {}) {
   }
 
   const resolved = await resolveYoutubeAudioStream(rawId, {
-    titleHint,
-    artistHint,
     fetchImpl,
-    saavnSearchFn: deps.saavnSearchFn || null,
     useCache: !deps.fetchImpl,
   })
 
