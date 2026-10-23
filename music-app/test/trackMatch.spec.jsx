@@ -12,7 +12,9 @@ import {
   parseYtDataApiResponse,
   toResult,
 } from '../../api/ytmusic.mjs'
+import ytaudioHandler, { pickBestAudioFormat } from '../../api/ytaudio.mjs'
 import { createYtMusicStreamResolver } from '../src/lib/providers.js'
+import { dlUrlFor } from '../src/lib/song.js'
 import App from '../src/App.jsx'
 import { LibraryProvider } from '../src/state/LibraryContext.jsx'
 import { PlayerProvider } from '../src/state/PlayerContext.jsx'
@@ -407,7 +409,7 @@ describe('YouTube Music pure track playback in the UI', () => {
     await waitFor(() => expect(container.querySelectorAll('.song-row').length).toBe(1))
     await user.click(container.querySelector('.song-row'))
 
-    await waitFor(() => expect(document.querySelector('#ytEmbed.is-docked')).toBeTruthy())
+    await waitFor(() => expect(document.querySelector('#ytEmbed.is-audio-only')).toBeTruthy())
     const iframe = document.querySelector('#ytEmbedFrame')
     const posted = []
     Object.defineProperty(iframe, 'contentWindow', {
@@ -436,5 +438,194 @@ describe('YouTube Music pure track playback in the UI', () => {
     // Clicking VIBEX's bottom-bar Pause button sends `pauseVideo` straight to the iframe.
     await user.click(container.querySelector('#playerBar .cbtn.main'))
     expect(posted.some((m) => m.func === 'pauseVideo')).toBe(true)
+  })
+
+  it('streams YouTube-exclusive videos directly inside <audio> via /api/ytaudio with zero embed frame', async () => {
+    const playSpy = vi
+      .spyOn(window.HTMLMediaElement.prototype, 'play')
+      .mockImplementation(() => Promise.resolve())
+
+    const jsonResponse = (payload) => ({ ok: true, status: 200, json: async () => payload })
+    const exclusiveVideoBody = {
+      success: true,
+      data: {
+        source: 'ytmusic',
+        providerMode: 'ytmusic-catalog',
+        total: 1,
+        matchedCount: 0,
+        results: [
+          {
+            videoId: 'ExclVid991A',
+            title: 'Tiny Desk Concert Video Session',
+            artists: ['NPR Music'],
+            subtitle: 'NPR Music • 24:10',
+            duration: 1450,
+            thumbnail: 'https://lh3.googleusercontent.com/thumb',
+          },
+        ],
+      },
+    }
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url) => {
+        const target = String(url)
+        if (target.includes('/api/ytmusic')) return jsonResponse(exclusiveVideoBody)
+        if (target.includes('/api/ytaudio') && target.includes('meta=1')) {
+          return jsonResponse({
+            success: true,
+            data: {
+              playable: true,
+              videoId: 'ExclVid991A',
+              mimeType: 'audio/mp4',
+              quality: '160kbps',
+              source: 'innertube:android_vr',
+            },
+          })
+        }
+        for (const [prefix, body] of fixtures.routes.map((r) => [r.path, r.body])) {
+          if (target.includes(prefix)) return jsonResponse(body)
+        }
+        return jsonResponse(fixtures.routes[0].body)
+      })
+    )
+
+    const user = userEvent.setup()
+    const { container } = render(
+      <StatusProvider>
+        <SettingsProvider>
+          <LibraryProvider>
+            <PlayerProvider>
+              <UIProvider>
+                <App />
+              </UIProvider>
+            </PlayerProvider>
+          </LibraryProvider>
+        </SettingsProvider>
+      </StatusProvider>
+    )
+
+    await screen.findByText(/Featured playlist/i)
+    await user.click(screen.getByRole('button', { name: 'YT Music' }))
+    const input = container.querySelector('#searchInput')
+    await user.clear(input)
+    await user.type(input, 'tinydesk{Enter}')
+    await waitFor(() => expect(container.querySelectorAll('.song-row').length).toBe(1))
+    await user.click(container.querySelector('.song-row'))
+
+    await waitFor(() => {
+      const decks = [...container.querySelectorAll('audio')]
+      expect(decks.some((el) => el.src.includes('/api/ytaudio?id=ExclVid991A'))).toBe(true)
+    })
+    expect(document.querySelector('#ytEmbed')).toBeNull()
+    expect(playSpy).toHaveBeenCalled()
+    playSpy.mockRestore()
+  })
+})
+
+describe('/api/ytaudio & two-pass Video-to-Audio Track conversion', () => {
+  it('converts Lofi / Acoustic / Extended YouTube music videos cleanly into studio <audio> tracks on Pass 2', async () => {
+    const videoRows = [
+      {
+        videoId: 'VidSong0001',
+        title: 'Kesariya (Lofi Flip Full Video) | Brahmastra | Arijit Singh',
+        artists: ['Sony Music India'],
+        duration: 420,
+      },
+    ]
+    const enriched = await enrichResultsWithSaavnAudio(videoRows, {
+      saavnSearchFn: async () => [
+        studioCandidate({
+          id: 'saavn_kesariya',
+          name: 'Kesariya',
+          artist: 'Arijit Singh, Pritam',
+          album: 'Brahmastra',
+          duration: 268,
+          streamUrl: 'https://aac.saavncdn.com/kesariya_320.mp4',
+        }),
+      ],
+    })
+    expect(enriched[0].matchedAudio?.songId).toBe('saavn_kesariya')
+    expect(enriched[0].matchedAudio?.downloadUrl.at(-1).url).toContain('kesariya_320.mp4')
+  })
+
+  it('picks audio/mp4 formats first and streams range/download bytes via /api/ytaudio', async () => {
+    const picked = pickBestAudioFormat([
+      { url: 'https://video.example/v.mp4', mimeType: 'video/mp4; codecs="avc1"', bitrate: 900_000 },
+      { url: 'https://audio.example/a.webm', mimeType: 'audio/webm; codecs="opus"', bitrate: 155_000 },
+      { url: 'https://audio.example/a.m4a', mimeType: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 132_000 },
+    ])
+    expect(picked?.url).toBe('https://audio.example/a.m4a')
+    expect(picked?.mimeType).toBe('audio/mp4')
+
+    const audioBytes = new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70])
+    const mockFetch = vi.fn(async (url) => {
+      const target = String(url)
+      if (target.includes('youtubei/v1/player')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            playabilityStatus: { status: 'OK' },
+            videoDetails: { title: 'Chaiyya Chaiyya', author: 'A.R. Rahman', lengthSeconds: '412' },
+            streamingData: {
+              adaptiveFormats: [
+                {
+                  url: 'https://rr1.googlevideo.com/videoplayback?itag=140',
+                  mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                  bitrate: 131_072,
+                },
+              ],
+            },
+          }),
+        }
+      }
+      return {
+        ok: true,
+        status: 206,
+        headers: new Headers({
+          'content-type': 'audio/mp4',
+          'content-range': 'bytes 0-7/1024',
+          'content-length': '8',
+        }),
+        arrayBuffer: async () => audioBytes.buffer,
+      }
+    })
+
+    const headers = {}
+    let bodyBuf = null
+    const res = {
+      statusCode: 200,
+      headersSent: false,
+      setHeader: (k, v) => {
+        headers[k.toLowerCase()] = v
+      },
+      end: (chunk) => {
+        bodyBuf = chunk
+      },
+    }
+
+    await ytaudioHandler(
+      {
+        method: 'GET',
+        url: '/api/ytaudio?id=Chaiyya11AB&download=1&name=AR%20Rahman%20-%20Chaiyya',
+        headers: { host: 'vibex-music-pi.vercel.app' },
+      },
+      res,
+      { fetchImpl: mockFetch }
+    )
+
+    expect(res.statusCode).toBe(206)
+    expect(headers['content-type']).toBe('audio/mp4')
+    expect(headers['content-disposition']).toContain('attachment; filename="AR Rahman - Chaiyya.m4a"')
+    expect(Buffer.isBuffer(bodyBuf)).toBe(true)
+    expect(bodyBuf.length).toBe(8)
+
+    const dlHref = dlUrlFor(
+      { id: 'yt:Chaiyya11AB', name: 'Chaiyya Chaiyya', artists: { primary: [{ name: 'A.R. Rahman' }] }, downloadUrl: [] },
+      '320kbps'
+    )
+    expect(dlHref).toContain('/api/ytaudio?')
+    expect(dlHref).toContain('download=1')
   })
 })

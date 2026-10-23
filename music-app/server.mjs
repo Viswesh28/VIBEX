@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { addTags } from './tagger.mjs'
 import ytmusicHandler from '../api/ytmusic.mjs'
+import ytaudioHandler from '../api/ytaudio.mjs'
 import canvasHandler from '../api/canvas.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -112,6 +113,10 @@ const server = http.createServer(async (req, res) => {
     // --- Serverless function routes owned directly by VIBEX ---
     if (url.pathname === '/api/ytmusic') {
       await runFunctionHandler(ytmusicHandler, req, res, url)
+      return
+    }
+    if (url.pathname === '/api/ytaudio') {
+      await runFunctionHandler(ytaudioHandler, req, res, url)
       return
     }
     if (url.pathname === '/api/canvas') {

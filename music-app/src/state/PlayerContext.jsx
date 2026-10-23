@@ -917,7 +917,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       const nextIdx = (idx + 1) % q.length
       if (nextIdx === idx) return
       const nextSong = q[nextIdx]
-      if (!nextSong || !isYtTrack(nextSong) || nextSong.downloadUrl?.length || isLongForm(nextSong)) {
+      if (!nextSong || !isYtTrack(nextSong) || nextSong.downloadUrl?.length) {
         return
       }
       const key = trackKey(nextSong) || nextSong.id
@@ -1004,11 +1004,6 @@ export function PlayerProvider({ children, streamResolver = null }) {
         setStatus('Playing: ' + decodeHtml(s.name) + (durSec > 0.6 ? ` (${durSec.toFixed(1)}s blend)` : ''))
       }
 
-      if (!streamResolver && isLongForm(s)) {
-        openEmbed(s, idx)
-        return
-      }
-
       const direct = streamOf(s, resolveQuality(s))
       if (!streamResolver && direct && !isExpired(direct)) {
         dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream' })
@@ -1055,11 +1050,6 @@ export function PlayerProvider({ children, streamResolver = null }) {
         afterStart(s)
         prewarmNextTrack(idx)
         setStatus('Playing: ' + decodeHtml(s.name))
-      }
-
-      if (!streamResolver && isLongForm(s)) {
-        openEmbed(s, idx)
-        return
       }
 
       const direct = streamOf(s, resolveQuality(s))

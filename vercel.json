@@ -10,6 +10,9 @@
     "api/dl.mjs": {
       "maxDuration": 60
     },
+    "api/ytaudio.mjs": {
+      "maxDuration": 60
+    },
     "api/ytmusic.mjs": {
       "maxDuration": 30
     },
