@@ -24,7 +24,7 @@ export function SearchView({ query, tab, onCount }) {
   const [error, setError] = useState(null)
   const { setStatus } = useStatus()
   const { navigate } = useUI()
-  const { setQueue } = usePlayerTransport()
+  const { queue, setQueue } = usePlayerTransport()
   const { source } = useSettings()
 
   // Scoped per view lifecycle so non-sensitive metadata is cached across tab
@@ -59,7 +59,7 @@ export function SearchView({ query, tab, onCount }) {
         setLoading(false)
         onCount?.(`(${d.total ?? list.length} found)`)
         if (tab === 'songs') {
-          setQueue(list)
+          setQueue(list, { onlyIfIdle: true })
           setStatus(list.length ? '' : 'No songs found.')
         } else {
           setStatus('')
@@ -83,18 +83,24 @@ export function SearchView({ query, tab, onCount }) {
       const more = await registry
         .getCatalog(activeCatalogId)
         .search(query, { pageToken: nextPageToken, limit: 20 })
-      const seen = new Set((data || []).map((s) => s.id))
+      const prevList = data || []
+      const isShowingActiveQueue =
+        !queue.length ||
+        (queue.length === prevList.length && queue.every((s, idx) => s?.id === prevList[idx]?.id))
+      const seen = new Set(prevList.map((s) => s.id))
       const appended = (more.songs || []).filter((s) => s?.id && !seen.has(s.id))
-      const combined = [...(data || []), ...appended]
+      const combined = [...prevList, ...appended]
       setData(combined)
       setNextPageToken(more.nextPageToken || null)
-      setQueue(combined)
+      if (isShowingActiveQueue) {
+        setQueue(combined)
+      }
     } catch (e) {
       setStatus('Could not load more results: ' + e.message, true)
     } finally {
       setLoadingMore(false)
     }
-  }, [nextPageToken, loadingMore, tab, registry, activeCatalogId, query, data, setQueue, setStatus])
+  }, [nextPageToken, loadingMore, tab, registry, activeCatalogId, query, data, queue, setQueue, setStatus])
 
   if (loading) return <Spinner />
   if (error) return <EmptyState icon="alert" title="Search failed" hint={error} />

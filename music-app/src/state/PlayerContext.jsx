@@ -1792,13 +1792,29 @@ export function PlayerProvider({ children, streamResolver = null }) {
   }, [])
 
   const setQueue = useCallback(
-    (list, { play = null } = {}) => {
+    (list, { play = null, onlyIfIdle = false } = {}) => {
+      const currentIdx = idxRef.current
+      const activeSong = currentIdx >= 0 ? queueRef.current[currentIdx] : null
+
+      // Browsing/searching another source or query must never wipe out an
+      // already active track or session before the listener taps a new song.
+      if (onlyIfIdle && activeSong) {
+        return
+      }
+
       setQueueState(list)
       queueRef.current = list
       resetContext(list)
+
       if (play === null) {
-        setCurrentIndex(-1)
-        idxRef.current = -1
+        if (activeSong) {
+          const preservedIdx = list.findIndex((s) => s?.id && s.id === activeSong.id)
+          setCurrentIndex(preservedIdx)
+          idxRef.current = preservedIdx
+        } else {
+          setCurrentIndex(-1)
+          idxRef.current = -1
+        }
       }
     },
     [resetContext]
