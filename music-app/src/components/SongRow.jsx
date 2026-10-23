@@ -70,7 +70,14 @@ export const SongRow = memo(function SongRow({
           {title}
           {/* Which catalogue this came from, so a mixed list stays readable. */}
           {isYtTrack(song) && (
-            <span className="src-badge" title="From YouTube Music — plays in the app only">
+            <span
+              className="src-badge"
+              title={
+                song.downloadUrl?.length
+                  ? 'Matched from YouTube Music — plays as pure audio'
+                  : 'From YouTube Music — plays in the app only'
+              }
+            >
               YT
             </span>
           )}

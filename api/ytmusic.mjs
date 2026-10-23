@@ -1,19 +1,30 @@
 /**
- * YouTube Music catalogue search — the other source a listener can pick.
+ * YouTube Music catalogue search + cross-catalogue studio audio resolution.
  *
- * Only the *catalogue* lives here. Search is the part YouTube still serves to
- * this deployment: it resolves ids, metadata and pagination continuations from
- * a datacenter IP without a session, which is what a catalogue adapter needs.
+ * Supports two compliant catalogue discovery paths:
+ * 1. Official YouTube Data API v3 (`YOUTUBE_API_KEY` env var or `x-youtube-api-key`
+ *    request header) using `youtube/v3/search` + `youtube/v3/videos`.
+ * 2. Public YouTube Music catalogue search fallback when no API key is configured.
  *
- * Streams are deliberately not attempted here. The player endpoint answers
- * `LOGIN_REQUIRED` from this sort of address (measured, see docs/adr/0001),
- * and InnerTube is undocumented and unapproved for third-party audio streaming.
- * `src/lib/sources.js` and `src/lib/providers.js` map each result onto the
- * shared domain model and route playback strictly through YouTube's official
- * embed player.
+ * Raw YouTube media streams are NEVER extracted or decrypted here. Instead,
+ * non-long-form results are matched by `(title, artist, album, duration)` metadata
+ * against JioSaavn's studio catalogue so matched songs play natively as pure
+ * `<audio>` tracks just like JioSaavn, while unmatched YouTube-only uploads play
+ * in YouTube's official IFrame Player.
  */
 
+import {
+  buildMatchQueries,
+  cleanChannelArtist,
+  matchSaavnTrack,
+  parseIsoDuration,
+  unescapeEntities,
+} from './_lib/trackMatch.mjs'
+
 const SEARCH_TIMEOUT = 6000
+const ENRICH_BUDGET_MS = 3800
+const ENRICH_CONCURRENCY = 6
+const LONG_FORM_SEC = 20 * 60
 
 const WEB_REMIX = {
   client: { clientName: 'WEB_REMIX', clientVersion: '1.20240701.00.00', hl: 'en', gl: 'US' },
@@ -43,6 +54,25 @@ async function postJson(url, body, timeoutMs) {
     const text = await res.text()
     if (!res.ok) return { ok: false, status: res.status }
     return { ok: true, json: JSON.parse(text) }
+  } catch (e) {
+    return { ok: false, status: 0, error: e?.name === 'AbortError' ? 'timeout' : String(e?.message || e) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function getJson(url, timeoutMs) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok || !json) return { ok: false, status: res.status }
+    return { ok: true, json }
   } catch (e) {
     return { ok: false, status: 0, error: e?.name === 'AbortError' ? 'timeout' : String(e?.message || e) }
   } finally {
@@ -109,6 +139,18 @@ function biggestThumb(thumbnails) {
   return thumbnails[thumbnails.length - 1]?.url || null
 }
 
+function bestSnippetThumb(thumbs) {
+  if (!thumbs || typeof thumbs !== 'object') return null
+  return (
+    thumbs.maxres?.url ||
+    thumbs.standard?.url ||
+    thumbs.high?.url ||
+    thumbs.medium?.url ||
+    thumbs.default?.url ||
+    null
+  )
+}
+
 function isExplicitRenderer(renderer) {
   const badges = renderer?.badges || []
   return badges.some(
@@ -172,46 +214,250 @@ export function parseYtSearchResponse(json, limit = 20) {
   return { results, nextPageToken }
 }
 
+/** Parse Official YouTube Data API v3 `search.list` + `videos.list` payloads. */
+export function parseYtDataApiResponse(searchJson, videosJson = null, limit = 20) {
+  const items = Array.isArray(searchJson?.items) ? searchJson.items : []
+  const detailsById = new Map()
+  for (const v of Array.isArray(videosJson?.items) ? videosJson.items : []) {
+    if (v?.id) detailsById.set(String(v.id), v)
+  }
+
+  const seen = new Set()
+  const results = []
+  for (const entry of items) {
+    const videoId = typeof entry?.id === 'string' ? entry.id : entry?.id?.videoId
+    if (!videoId || seen.has(videoId)) continue
+    const detail = detailsById.get(videoId)
+    const snippet = detail?.snippet || entry?.snippet || {}
+    const title = unescapeEntities(snippet.title || '').trim()
+    if (!title) continue
+    seen.add(videoId)
+
+    const artist = cleanChannelArtist(snippet.channelTitle || '')
+    const duration = parseIsoDuration(detail?.contentDetails?.duration)
+    results.push({
+      videoId,
+      title,
+      artists: artist ? [artist] : [],
+      album: null,
+      subtitle: artist,
+      duration,
+      thumbnail: bestSnippetThumb(snippet.thumbnails),
+      explicit: false,
+    })
+    if (results.length >= limit) break
+  }
+
+  return {
+    results,
+    nextPageToken: searchJson?.nextPageToken || null,
+  }
+}
+
+async function searchViaOfficialDataApi({ query, pageToken, limit, apiKey }) {
+  const searchParams = new URLSearchParams({
+    part: 'snippet',
+    type: 'video',
+    videoCategoryId: '10',
+    maxResults: String(Math.min(limit, 50)),
+    key: apiKey,
+  })
+  if (query) searchParams.set('q', query)
+  if (pageToken) searchParams.set('pageToken', pageToken)
+
+  const searchRes = await getJson(
+    `https://www.googleapis.com/youtube/v3/search?${searchParams.toString()}`,
+    SEARCH_TIMEOUT
+  )
+  if (!searchRes.ok) return null
+
+  const ids = (searchRes.json?.items || [])
+    .map((it) => (typeof it?.id === 'string' ? it.id : it?.id?.videoId))
+    .filter(Boolean)
+
+  let videosJson = null
+  if (ids.length) {
+    const vidParams = new URLSearchParams({
+      part: 'contentDetails,snippet',
+      id: ids.join(','),
+      key: apiKey,
+    })
+    const vidRes = await getJson(
+      `https://www.googleapis.com/youtube/v3/videos?${vidParams.toString()}`,
+      SEARCH_TIMEOUT
+    )
+    if (vidRes.ok) videosJson = vidRes.json
+  }
+
+  return parseYtDataApiResponse(searchRes.json, videosJson, limit)
+}
+
+let cachedSaavnAppPromise = null
+function loadSaavnApp() {
+  if (!cachedSaavnAppPromise) {
+    cachedSaavnAppPromise = import('../jiosaavn-api/src/server.js')
+      .then((m) => m.default)
+      .catch(() => null)
+  }
+  return cachedSaavnAppPromise
+}
+
+async function defaultSaavnSearch(query, signal) {
+  const path = `/api/search/songs?query=${encodeURIComponent(query)}&limit=8`
+  if (process.env.API_TARGET) {
+    const r = await fetch(`${process.env.API_TARGET}${path}`, {
+      headers: { accept: 'application/json' },
+      signal,
+    })
+    if (!r.ok) return []
+    const payload = await r.json().catch(() => null)
+    return Array.isArray(payload?.data?.results) ? payload.data.results : []
+  }
+
+  const app = await loadSaavnApp()
+  if (!app) return []
+  const r = await app.fetch(
+    new Request(`https://vibex.internal${path}`, {
+      headers: { accept: 'application/json' },
+      signal,
+    })
+  )
+  if (!r.ok) return []
+  const payload = await r.json().catch(() => null)
+  return Array.isArray(payload?.data?.results) ? payload.data.results : []
+}
+
+/**
+ * Enrich YouTube catalog rows in parallel with matched JioSaavn studio audio
+ * metadata + CDN URLs so tracks play natively as pure `<audio>` in the app.
+ */
+export async function enrichResultsWithSaavnAudio(
+  results,
+  { saavnSearchFn = defaultSaavnSearch, budgetMs = ENRICH_BUDGET_MS } = {}
+) {
+  if (!Array.isArray(results) || !results.length) return results
+  const out = results.map((item) => ({ ...item }))
+  const queryMemo = new Map()
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), budgetMs)
+
+  const cachedSearch = (q) => {
+    const key = q.toLowerCase()
+    if (!queryMemo.has(key)) {
+      queryMemo.set(
+        key,
+        saavnSearchFn(q, ctl.signal).catch(() => [])
+      )
+    }
+    return queryMemo.get(key)
+  }
+
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < out.length && !ctl.signal.aborted) {
+      const idx = cursor
+      cursor += 1
+      const item = out[idx]
+      if (!item || (Number(item.duration) > 0 && Number(item.duration) >= LONG_FORM_SEC)) continue
+      const queries = buildMatchQueries(item)
+      for (const q of queries) {
+        if (ctl.signal.aborted) break
+        const candidates = await cachedSearch(q)
+        const hit = matchSaavnTrack(item, candidates)
+        if (hit?.song) {
+          out[idx] = {
+            ...item,
+            matchedAudio: {
+              provider: 'jiosaavn',
+              songId: hit.song.id,
+              album: hit.song.album || null,
+              artists: hit.song.artists || null,
+              duration: Number(hit.song.duration) || 0,
+              image: Array.isArray(hit.song.image) ? hit.song.image : [],
+              downloadUrl: hit.song.downloadUrl,
+            },
+          }
+          break
+        }
+      }
+    }
+  }
+
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(ENRICH_CONCURRENCY, out.length) }, () => worker())
+    )
+  } finally {
+    clearTimeout(timer)
+  }
+  return out
+}
+
 export default async function handler(req, res) {
   const q = req.query || {}
   const query = String(q.query || '').slice(0, 160)
   const pageToken = typeof q.pageToken === 'string' ? q.pageToken.trim().slice(0, 512) : ''
   const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 40)
+  const shouldEnrich = q.enrich !== '0'
+  const headerKey = String(req.headers?.['x-youtube-api-key'] || '').trim()
+  const apiKey = headerKey || String(process.env.YOUTUBE_API_KEY || '').trim()
 
   if (!query && !pageToken) {
     res.status(400).json({ success: false, code: 'bad_request', message: 'A query is required.' })
     return
   }
 
-  const endpoint = pageToken
-    ? `https://music.youtube.com/youtubei/v1/search?continuation=${encodeURIComponent(pageToken)}&ctoken=${encodeURIComponent(pageToken)}&prettyPrint=false`
-    : 'https://music.youtube.com/youtubei/v1/search?prettyPrint=false'
+  let parsed = null
+  let providerMode = 'ytmusic-catalog'
 
-  const body = pageToken
-    ? { context: WEB_REMIX }
-    : { context: WEB_REMIX, query, params: SONGS_PARAMS }
-
-  const r = await postJson(endpoint, body, SEARCH_TIMEOUT)
-
-  if (!r.ok) {
-    // A search that cannot run is a typed answer, never a 500.
-    res.setHeader('Cache-Control', 'no-store')
-    res.status(200).json({
-      success: false,
-      code: r.status === 429 ? 'blocked' : 'upstream_error',
-      message: 'YouTube Music search is unavailable right now.',
-      detail: r.error || `http_${r.status}`,
-    })
-    return
+  // Prefer Official YouTube Data API v3 when a key is supplied; transparently
+  // fall back to public catalog search if unconfigured or quota-limited.
+  if (apiKey) {
+    parsed = await searchViaOfficialDataApi({ query, pageToken, limit, apiKey })
+    if (parsed) providerMode = 'youtube-data-v3'
   }
 
-  const { results, nextPageToken } = parseYtSearchResponse(r.json, limit)
+  if (!parsed) {
+    const endpoint = pageToken
+      ? `https://music.youtube.com/youtubei/v1/search?continuation=${encodeURIComponent(pageToken)}&ctoken=${encodeURIComponent(pageToken)}&prettyPrint=false`
+      : 'https://music.youtube.com/youtubei/v1/search?prettyPrint=false'
 
-  // Search results are stable for a given query; a short edge cache keeps the
-  // picker from re-asking YouTube on every keystroke.
-  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=900')
+    const body = pageToken
+      ? { context: WEB_REMIX }
+      : { context: WEB_REMIX, query, params: SONGS_PARAMS }
+
+    const r = await postJson(endpoint, body, SEARCH_TIMEOUT)
+
+    if (!r.ok) {
+      res.setHeader('Cache-Control', 'no-store')
+      res.status(200).json({
+        success: false,
+        code: r.status === 429 ? 'blocked' : 'upstream_error',
+        message: 'YouTube Music search is unavailable right now.',
+        detail: r.error || `http_${r.status}`,
+      })
+      return
+    }
+
+    parsed = parseYtSearchResponse(r.json, limit)
+  }
+
+  const results = shouldEnrich
+    ? await enrichResultsWithSaavnAudio(parsed.results)
+    : parsed.results
+
+  res.setHeader(
+    'Cache-Control',
+    headerKey ? 'private, max-age=120' : 'public, s-maxage=300, stale-while-revalidate=900'
+  )
   res.status(200).json({
     success: true,
-    data: { source: 'ytmusic', total: results.length, results, nextPageToken },
+    data: {
+      source: 'ytmusic',
+      providerMode,
+      total: results.length,
+      results,
+      nextPageToken: parsed.nextPageToken,
+    },
   })
 }

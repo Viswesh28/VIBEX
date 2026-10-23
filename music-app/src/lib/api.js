@@ -5,6 +5,7 @@
 // inside the bundle (see embedded-api.js) and we call it directly. Callers
 // below this line can't tell the difference.
 import { apiUrl, isNative } from './config.js'
+import { store } from './storage.js'
 
 // The embedded API is ~145 kB gzipped and useless in a browser (CORS), so it
 // is a dynamic import — web visitors never download the chunk.
@@ -22,9 +23,14 @@ export async function apiFetch(path, init) {
 }
 
 export async function api(path) {
+  const headers = { accept: 'application/json' }
+  if (typeof path === 'string' && path.startsWith('/ytmusic')) {
+    const customYtKey = String(store.get('svYtApiKey', '') || '').trim()
+    if (customYtKey) headers['x-youtube-api-key'] = customYtKey
+  }
   let response
   try {
-    response = await apiFetch(path, { headers: { accept: 'application/json' } })
+    response = await apiFetch(path, { headers })
   } catch {
     throw new Error('Cannot reach the music API. Check your connection and try again.')
   }

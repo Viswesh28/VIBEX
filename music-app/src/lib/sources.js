@@ -28,7 +28,7 @@ import { isLongForm, videoIdOf } from './ytEmbed.js'
  * promise someone reads as "it will probably play".
  */
 export const BROWSE_ONLY_NOTE =
-  'YouTube Music tracks open in YouTube’s own player — YouTube’s video and ads, and some rights holders block embedding. JioSaavn plays as audio, right here.'
+  'Matched tracks play right here as pure audio; unmatched items open in YouTube’s own player — with YouTube’s video and ads.'
 
 export const SOURCE_ID = {
   jiosaavn: 'jiosaavn',
@@ -173,6 +173,20 @@ export function mapYtResult(raw) {
   if (!raw?.videoId || !raw?.title) return null
   const artists = Array.isArray(raw.artists) ? raw.artists.filter(Boolean) : []
   const artist = artists.join(', ') || 'Unknown artist'
+  const matched = raw.matchedAudio && Array.isArray(raw.matchedAudio.downloadUrl) && raw.matchedAudio.downloadUrl.length
+    ? raw.matchedAudio
+    : null
+  const ytImages = raw.thumbnail ? [{ quality: '500x500', url: raw.thumbnail }] : []
+  const images = matched?.image?.length ? matched.image : ytImages
+  const primaryArtists = matched?.artists?.primary?.length
+    ? artists.length
+      ? artists.map((name, i) => ({
+          name,
+          ...(matched.artists.primary[i]?.id ? { id: matched.artists.primary[i].id } : {}),
+        }))
+      : matched.artists.primary
+    : artists.map((name) => ({ name }))
+
   return {
     id: `yt:${raw.videoId}`,
     key: `ytmusic:${raw.videoId}`,
@@ -180,14 +194,15 @@ export function mapYtResult(raw) {
     providerTrackId: raw.videoId,
     videoId: raw.videoId,
     source: SOURCE_ID.ytmusic,
+    ...(matched?.songId ? { _matchedSaavnId: matched.songId } : {}),
     name: raw.title,
-    subtitle: raw.subtitle || [artist, raw.album].filter(Boolean).join(' • '),
-    duration: Number(raw.duration) || 0,
+    subtitle: raw.subtitle || [artist, raw.album || matched?.album?.name].filter(Boolean).join(' • '),
+    duration: Number(raw.duration) || Number(matched?.duration) || 0,
     explicitContent: raw.explicit ? 1 : 0,
-    album: raw.album ? { name: raw.album } : null,
-    artists: { primary: artists.map((name) => ({ name })), all: [] },
-    image: raw.thumbnail ? [{ quality: '500x500', url: raw.thumbnail }] : [],
-    downloadUrl: [],
+    album: raw.album ? { name: raw.album } : matched?.album || null,
+    artists: { primary: primaryArtists, all: matched?.artists?.all || [] },
+    image: images,
+    downloadUrl: matched ? matched.downloadUrl : [],
     url: `https://music.youtube.com/watch?v=${raw.videoId}`,
   }
 }

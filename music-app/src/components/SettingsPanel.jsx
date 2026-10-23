@@ -567,6 +567,19 @@ export function SettingsPanel({ open, sleep }) {
             ))}
           </select>
         </div>
+        {s.source === 'ytmusic' && (
+          <label className="set-field" style={{ marginTop: 8 }}>
+            <span>YouTube Data API key (optional)</span>
+            <input
+              type="password"
+              aria-label="YouTube Data API v3 key"
+              placeholder="Built-in search active — paste key to override"
+              value={s.ytApiKey || ''}
+              onChange={(e) => s.setYtApiKey(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+        )}
         <p className="set-note">
           {s.source === 'ytmusic'
             ? BROWSE_ONLY_NOTE
