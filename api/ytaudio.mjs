@@ -380,15 +380,46 @@ async function raceDirectAudioExtractors(videoId, fetchImpl = fetch, useCircuitB
 
 async function resolveOfficialOmvAudioFallback(videoId, fetchImpl = fetch) {
   try {
+    let rawTitle = ''
+    let cleanAuthor = ''
+
     const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`
     const oeRes = await fetchImpl(oembedUrl, {
       headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
-      signal: AbortSignal.timeout(3500),
+      signal: AbortSignal.timeout(3000),
     }).catch(() => null)
-    if (!oeRes?.ok) return null
-    const oe = await oeRes.json().catch(() => null)
-    const rawTitle = String(oe?.title || '').trim()
-    const cleanAuthor = cleanChannelArtist(String(oe?.author_name || ''))
+    if (oeRes?.ok) {
+      const oe = await oeRes.json().catch(() => null)
+      rawTitle = String(oe?.title || '').trim()
+      cleanAuthor = cleanChannelArtist(String(oe?.author_name || ''))
+    }
+
+    // Fallback for UMG / SME `- Topic` Art Tracks where `oembed` returns `401`:
+    // `WEB_REMIX` `youtubei/v1/player` always returns `videoDetails` (`title`, `author`) cleanly!
+    if (!rawTitle) {
+      const metaRes = await fetchImpl('https://music.youtube.com/youtubei/v1/player?prettyPrint=false', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'user-agent': 'Mozilla/5.0',
+          origin: 'https://music.youtube.com',
+          referer: 'https://music.youtube.com/',
+        },
+        body: JSON.stringify({
+          context: {
+            client: { clientName: 'WEB_REMIX', clientVersion: '1.20250312.01.00', hl: 'en', gl: 'US' },
+          },
+          videoId,
+        }),
+        signal: AbortSignal.timeout(3500),
+      }).catch(() => null)
+      if (metaRes?.ok) {
+        const metaJson = await metaRes.json().catch(() => null)
+        rawTitle = String(metaJson?.videoDetails?.title || '').trim()
+        cleanAuthor = cleanChannelArtist(String(metaJson?.videoDetails?.author || ''))
+      }
+    }
+
     if (!rawTitle) return null
 
     const searchQuery = [rawTitle, cleanAuthor, 'official audio'].filter(Boolean).join(' ')
