@@ -87,6 +87,7 @@ export function SettingsProvider({ children }) {
   // Private session: playback works exactly as always, nothing is written to
   // the listening history that drives the personalised feed.
   const [privateSession, setPrivateSessionState] = useState(() => store.get('svPrivate', '0') === '1')
+  const [ytApiKey, setYtApiKeyState] = useState(() => store.get('svYtApiKey', '') || '')
   const [excludedArtists, setExcludedArtists] = useState(() => {
     const v = store.getJSON('svExcluded', [])
     return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()) : []
@@ -201,6 +202,13 @@ export function SettingsProvider({ children }) {
     store.set('svCfl', next)
   }, [])
 
+  const setYtApiKey = useCallback((raw) => {
+    const clean = String(raw || '').trim()
+    setYtApiKeyState(clean)
+    if (clean) store.set('svYtApiKey', clean)
+    else store.remove('svYtApiKey')
+  }, [])
+
   const setQualityPref = useCallback((q) => {
     setQualityPrefState(q)
     store.set('svQuality', q)
@@ -238,6 +246,8 @@ export function SettingsProvider({ children }) {
         setSourceState(next)
         store.set('svSource', next)
       },
+      ytApiKey,
+      setYtApiKey,
       canvas: canvasOn,
       setCanvas: (v) => {
         setCanvasOn(v)
@@ -271,7 +281,7 @@ export function SettingsProvider({ children }) {
     }),
     [
       dataSaver, setDataSaver, saverAuto, crossfadeOn, crossfadeDur, crossfadeLaw, setCrossfadeLaw,
-      vizOn, vizStyle, canvasOn, source, shuffleMode, cycleShuffle, chooseShuffleMode, repeat, cycleRepeat, theme, radio, setRadio,
+      vizOn, vizStyle, canvasOn, source, ytApiKey, setYtApiKey, shuffleMode, cycleShuffle, chooseShuffleMode, repeat, cycleRepeat, theme, radio, setRadio,
       autoplay, setAutoplay, qualityPref, setQualityPref, liveOK, ios, privateSession,
       excludedArtists, excludeArtist, unexcludeArtist, isExcluded,
     ]

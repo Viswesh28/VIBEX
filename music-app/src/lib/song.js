@@ -52,7 +52,7 @@ export function dlBaseName(s) {
 /** URL for the gateway's /dl endpoint, which tags the file before sending it. */
 export function dlUrlFor(s, quality) {
   const params = new URLSearchParams({
-    songId: s.id,
+    songId: s._matchedSaavnId || s.id,
     q: quality,
     url: streamOf(s, quality),
     name: dlBaseName(s),

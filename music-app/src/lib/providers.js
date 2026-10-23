@@ -20,7 +20,8 @@ import { PLAYBACK_FAILURE } from './playbackState.js'
 import { effQ, streamOf } from './song.js'
 import { SOURCE_ID, cataloguePath, isYtTrack, mapYtResults } from './sources.js'
 import { isExpired, parseExpiry } from './stream.js'
-import { embedUrl, videoIdOf } from './ytEmbed.js'
+import { buildMatchQueries, matchSaavnTrack } from './trackMatch.js'
+import { embedUrl, isLongForm, videoIdOf } from './ytEmbed.js'
 
 export class ProviderError extends Error {
   constructor(message, { category = PLAYBACK_FAILURE.ProviderUnavailable, status = 0, retryAfterMs = null } = {}) {
@@ -397,6 +398,135 @@ export function createYtMusicEmbedResolver({
   })
 }
 
+/**
+ * Cross-catalog YouTube Music `StreamResolver`:
+ * Resolves a YouTube Music catalog entry against JioSaavn's studio audio catalog
+ * by `(title, artist, album, duration)` metadata so matching songs play natively
+ * as pure `<audio>` tracks just like JioSaavn, falling back cleanly to YouTube's
+ * official IFrame embed player (`mode: 'embed'`) when no studio recording matches.
+ */
+export function createYtMusicStreamResolver({
+  apiFn = defaultApi,
+  apiFetchFn = defaultApiFetch,
+  getOrigin = () => (typeof window !== 'undefined' ? window.location.origin : ''),
+  cache = new MetadataCache(),
+  now = () => Date.now(),
+} = {}) {
+  const buildStreamResult = (candidate, quality, dataSaver) => {
+    if (!candidate?.downloadUrl?.length) return null
+    const targetQ = effQ(candidate, quality, dataSaver)
+    const direct = streamOf(candidate, targetQ)
+    if (!direct || isExpired(direct, now())) return null
+    const expSec = parseExpiry(direct)
+    return {
+      mode: 'stream',
+      uri: direct,
+      mimeType: 'audio/mp4',
+      quality: targetQ,
+      expiresAtEpochMs: expSec != null ? expSec * 1000 : null,
+      matchedSong: candidate,
+      requestHeaders: {},
+      license: null,
+    }
+  }
+
+  const buildEmbedFallback = (videoId) => {
+    if (!videoId) {
+      throw new ProviderError('No valid YouTube video ID available.', {
+        category: PLAYBACK_FAILURE.UnsupportedFormat,
+      })
+    }
+    return {
+      mode: 'embed',
+      videoId,
+      uri: embedUrl({ videoId }, { origin: getOrigin(), autoplay: true }),
+      mimeType: 'text/html',
+      expiresAtEpochMs: null,
+      requestHeaders: {},
+      license: null,
+    }
+  }
+
+  return validateStreamResolver({
+    id: SOURCE_ID.ytmusic,
+
+    async resolve(trackId, quality = '320kbps', { track = null, forceRefresh = false, dataSaver = false } = {}) {
+      const parsed = parseCompositeKey(trackId || track?.id)
+      const videoId = videoIdOf(track || { videoId: parsed.id })
+
+      if (track && isLongForm(track)) {
+        return buildEmbedFallback(videoId)
+      }
+
+      if (!forceRefresh && track?.downloadUrl?.length) {
+        const inline = buildStreamResult(track, quality, dataSaver)
+        if (inline) return inline
+      }
+
+      // Direct O(1) refresh when a previously matched JioSaavn song ID is present.
+      if (track?._matchedSaavnId) {
+        try {
+          const r = await apiFetchFn(`/songs/${encodeURIComponent(track._matchedSaavnId)}`, {
+            headers: { accept: 'application/json' },
+          })
+          if (r.ok) {
+            const payload = await r.json().catch(() => null)
+            const data = payload?.data
+            const fresh = Array.isArray(data) ? data[0] : data?.songs?.[0] || data?.song || data
+            const resolved = buildStreamResult(fresh, quality, dataSaver)
+            if (resolved) return resolved
+          }
+        } catch {
+          /* fall through to metadata match or embed fallback */
+        }
+      }
+
+      const cacheKey = videoId ? `ytmatch:${videoId}` : null
+      if (!forceRefresh && cacheKey) {
+        const cached = cache.get(cacheKey)
+        if (cached?.unmatched) return buildEmbedFallback(videoId)
+        if (cached?.songId) {
+          try {
+            const r = await apiFetchFn(`/songs/${encodeURIComponent(cached.songId)}`, {
+              headers: { accept: 'application/json' },
+            })
+            if (r.ok) {
+              const payload = await r.json().catch(() => null)
+              const data = payload?.data
+              const fresh = Array.isArray(data) ? data[0] : data?.songs?.[0] || data?.song || data
+              const resolved = buildStreamResult(fresh, quality, dataSaver)
+              if (resolved) return resolved
+            }
+          } catch {
+            /* re-search below */
+          }
+        }
+      }
+
+      if (track && (track.name || track.title)) {
+        const queries = buildMatchQueries(track)
+        for (const q of queries) {
+          try {
+            const data = await apiFn(`/search/songs?query=${encodeURIComponent(q)}&limit=10`)
+            const candidates = Array.isArray(data?.results) ? data.results : []
+            const hit = matchSaavnTrack(track, candidates)
+            if (hit?.song) {
+              if (cacheKey) cache.set(cacheKey, { songId: hit.song.id })
+              const resolved = buildStreamResult(hit.song, quality, dataSaver)
+              if (resolved) return resolved
+            }
+          } catch {
+            /* upstream search failed — fall through cleanly to YouTube embed */
+          }
+        }
+      }
+
+      if (cacheKey) cache.set(cacheKey, { unmatched: true }, 60 * 1000)
+      return buildEmbedFallback(videoId)
+    },
+  })
+}
+
 // ==========================================================================
 // Registry — plug in licensed providers cleanly at runtime or in tests
 // ==========================================================================
@@ -428,7 +558,10 @@ export function createProviderRegistry({
   registerCatalog(SOURCE_ID.jiosaavn, createJioSaavnCatalogProvider({ apiFn, cache }))
   registerCatalog(SOURCE_ID.ytmusic, createYtMusicCatalogProvider({ apiFn, cache }))
   registerStreamResolver(SOURCE_ID.jiosaavn, createJioSaavnStreamResolver({ apiFetchFn }))
-  registerStreamResolver(SOURCE_ID.ytmusic, createYtMusicEmbedResolver())
+  registerStreamResolver(
+    SOURCE_ID.ytmusic,
+    createYtMusicStreamResolver({ apiFn, apiFetchFn, cache })
+  )
 
   return {
     cache,

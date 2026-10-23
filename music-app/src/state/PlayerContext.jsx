@@ -19,10 +19,10 @@ import {
   playbackFailureCopy,
   transitionPlaybackState,
 } from '../lib/playbackState.js'
-import { createJioSaavnStreamResolver } from '../lib/providers.js'
+import { createJioSaavnStreamResolver, createYtMusicStreamResolver } from '../lib/providers.js'
 import { artistsOf, effQ, streamOf } from '../lib/song.js'
-import { playbackCopy, playbackPlan } from '../lib/sources.js'
-import { EMBED_NOTE, videoIdOf } from '../lib/ytEmbed.js'
+import { isYtTrack, playbackCopy, playbackPlan } from '../lib/sources.js'
+import { EMBED_NOTE, isLongForm, videoIdOf } from '../lib/ytEmbed.js'
 import { isIOS, preparePlaybackAudioSession } from '../lib/platform.js'
 import { store } from '../lib/storage.js'
 import {
@@ -137,8 +137,15 @@ export function PlayerProvider({ children, streamResolver = null }) {
   const { statsOnPlay, flushStats, loadStats } = useLibrary()
   const { setStatus } = useStatus()
 
-  const defaultStreamResolver = useMemo(() => createJioSaavnStreamResolver(), [])
-  const activeResolver = streamResolver || defaultStreamResolver
+  const defaultSaavnResolver = useMemo(() => createJioSaavnStreamResolver(), [])
+  const defaultYtResolver = useMemo(() => createYtMusicStreamResolver(), [])
+  const resolverFor = useCallback(
+    (song) => {
+      if (streamResolver) return streamResolver
+      return isYtTrack(song) ? defaultYtResolver : defaultSaavnResolver
+    },
+    [defaultSaavnResolver, defaultYtResolver, streamResolver]
+  )
 
   // Read once, before the first paint, so the restored track is in the very
   // first render rather than flashing "Nothing playing".
@@ -848,6 +855,51 @@ export function PlayerProvider({ children, streamResolver = null }) {
     resolveQualityRef.current = resolveQuality
   }, [resolveQuality])
 
+  const hydrateMatchedQueueItem = useCallback((idx, matchedSong) => {
+    if (!matchedSong?.downloadUrl?.length) return
+    setQueueState((prev) => {
+      if (!prev[idx]) return prev
+      const existing = prev[idx]
+      const updated = {
+        ...existing,
+        downloadUrl: matchedSong.downloadUrl,
+        _matchedSaavnId: matchedSong.id || existing._matchedSaavnId,
+        duration: Number(existing.duration) || Number(matchedSong.duration) || 0,
+        image: matchedSong.image?.length ? matchedSong.image : existing.image,
+        artists: matchedSong.artists?.primary?.length ? matchedSong.artists : existing.artists,
+      }
+      const next = [...prev]
+      next[idx] = updated
+      queueRef.current = next
+      return next
+    })
+  }, [])
+
+  const prewarmNextTrack = useCallback(
+    (idx) => {
+      if (streamResolver) return
+      const q = queueRef.current
+      if (!q.length) return
+      const nextIdx = (idx + 1) % q.length
+      if (nextIdx === idx) return
+      const nextSong = q[nextIdx]
+      if (!nextSong || !isYtTrack(nextSong) || nextSong.downloadUrl?.length || isLongForm(nextSong)) {
+        return
+      }
+      const key = trackKey(nextSong) || nextSong.id
+      defaultYtResolver
+        .resolve(key, resolveQuality(nextSong), {
+          track: nextSong,
+          dataSaver: setRef.current.dataSaver,
+        })
+        .then((res) => {
+          if (res?.matchedSong) hydrateMatchedQueueItem(nextIdx, res.matchedSong)
+        })
+        .catch(() => {})
+    },
+    [defaultYtResolver, hydrateMatchedQueueItem, resolveQuality, streamResolver]
+  )
+
   /** Resolve a stream via `StreamResolver` when a custom resolver is active or URLs expired/stripped. */
   const resolveViaAdapter = useCallback(
     async (song, idx, { isReResolve = false, onResolved }) => {
@@ -856,7 +908,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       setCurrentIndex(idx)
       idxRef.current = idx
       try {
-        const resolved = await activeResolver.resolve(key, resolveQuality(song), {
+        const resolved = await resolverFor(song).resolve(key, resolveQuality(song), {
           track: song,
           forceRefresh: isReResolve,
           dataSaver: setRef.current.dataSaver,
@@ -869,6 +921,11 @@ export function PlayerProvider({ children, streamResolver = null }) {
         if (!resolved?.uri) {
           throw { category: PLAYBACK_FAILURE.UnsupportedFormat }
         }
+        setLongForm(null)
+        if (resolved.matchedSong) {
+          hydrateMatchedQueueItem(idx, resolved.matchedSong)
+        }
+        prewarmNextTrack(idx)
         dispatchMachine({ type: 'RESOLVE_READY', mode: 'stream' })
         dispatchMachine({ type: 'BUFFERING' })
         onResolved(resolved.uri)
@@ -880,7 +937,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
         setStatus(msg, true)
       }
     },
-    [activeResolver, dispatchMachine, openEmbed, resolveQuality, setStatus]
+    [dispatchMachine, hydrateMatchedQueueItem, openEmbed, prewarmNextTrack, resolveQuality, resolverFor, setStatus]
   )
 
   /** Load track `i` onto the idle deck and crossfade into it. */
@@ -896,6 +953,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
         if (isExpired(url)) {
           telemetry(EVENTS.streamFailed, { songId: s.id, reason: FAILURE.staleUrl })
         }
+        setLongForm(null)
         const outEl = active()
         const inEl = other()
         setCurrentIndex(idx)
@@ -908,11 +966,11 @@ export function PlayerProvider({ children, streamResolver = null }) {
         activeRef.current = inEl
         startFade(outEl, inEl, durSec, lawOverride)
         afterStart(s)
+        prewarmNextTrack(idx)
         setStatus('Playing: ' + decodeHtml(s.name) + (durSec > 0.6 ? ` (${durSec.toFixed(1)}s blend)` : ''))
       }
 
-      const plan = playbackPlan(s, { embed: true })
-      if (plan.mode === 'embed') {
+      if (!streamResolver && isLongForm(s)) {
         openEmbed(s, idx)
         return
       }
@@ -929,7 +987,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       }
       setStatus(unplayableCopy(s), true)
     },
-    [afterStart, dispatchMachine, openEmbed, prepDeck, resolveQuality, resolveViaAdapter, setStatus, startFade, streamResolver, unplayableCopy]
+    [afterStart, dispatchMachine, openEmbed, prepDeck, prewarmNextTrack, resolveQuality, resolveViaAdapter, setStatus, startFade, streamResolver, unplayableCopy]
   )
 
   const playTrack = useCallback(
@@ -948,6 +1006,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       const key = trackKey(s) || s?.id
       const start = (url) => {
         if (!url) return
+        setLongForm(null)
         setCurrentIndex(idx)
         idxRef.current = idx
         streamAttempts.current = 0
@@ -960,11 +1019,11 @@ export function PlayerProvider({ children, streamResolver = null }) {
         armResume(el, s)
         el.play().catch((e) => setStatus('Playback blocked: ' + e.message + ' (tap play)', true))
         afterStart(s)
+        prewarmNextTrack(idx)
         setStatus('Playing: ' + decodeHtml(s.name))
       }
 
-      const plan = playbackPlan(s, { embed: true })
-      if (plan.mode === 'embed') {
+      if (!streamResolver && isLongForm(s)) {
         openEmbed(s, idx)
         return
       }
@@ -981,7 +1040,7 @@ export function PlayerProvider({ children, streamResolver = null }) {
       }
       setStatus(unplayableCopy(s), true)
     },
-    [afterStart, armResume, cancelFade, dispatchMachine, openEmbed, prepDeck, resetDeckGain, resolveQuality, resolveViaAdapter, setStatus, streamResolver, swapTo, unplayableCopy]
+    [afterStart, armResume, cancelFade, dispatchMachine, openEmbed, prepDeck, prewarmNextTrack, resetDeckGain, resolveQuality, resolveViaAdapter, setStatus, streamResolver, swapTo, unplayableCopy]
   )
 
   const stopPlayback = useCallback(
