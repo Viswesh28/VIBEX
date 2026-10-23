@@ -13,7 +13,7 @@ export const APK_VERSION = '3.2.0'
 export const APK_PACKAGE_ID = 'dev.viswesh.vibex'
 export const GITHUB_RELEASE_APK_URL =
   process.env.VIBEX_APK_URL ||
-  `https://github.com/Viswesh28/VIBEX/releases/download/v${APK_VERSION}/${APK_FILENAME}`
+  `https://vibex-music-pi.vercel.app/downloads/${APK_FILENAME}`
 
 const CANDIDATE_PATHS = [
   path.resolve(__dirname, '../music-app/dist/downloads', APK_FILENAME),

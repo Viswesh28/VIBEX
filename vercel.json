@@ -41,7 +41,7 @@
   "rewrites": [
     {
       "source": "/download/vibex.apk",
-      "destination": "/api/apk"
+      "destination": "/downloads/VIBEX-v3.2.0-universal.apk"
     },
     {
       "source": "/dl",
