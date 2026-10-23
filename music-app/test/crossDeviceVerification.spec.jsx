@@ -86,6 +86,24 @@ describe('Cross-Device (Mobile, Tablet, Desktop) End-to-End Verification', () =>
 
     expect(scoreSaavnCandidate(ytTarget, instrumentalCover).score).toBe(0)
     expect(scoreSaavnCandidate(ytTarget, studioOriginal).score).toBeGreaterThan(0.85)
+
+    // Also reject unrelated cover artists that share only generic album words (`Covers`)
+    const leoCover = {
+      title: 'Blinding Lights',
+      artists: ['Leo'],
+      album: 'Leo Metal Covers Volume 28',
+      duration: 241,
+    }
+    const guitarCafeteria = {
+      id: 'cover-2',
+      name: 'Blinding Lights',
+      duration: 230,
+      album: { name: 'Soothing Guitar Covers, Vol. 2' },
+      artists: { primary: [{ id: 'g1', name: 'Guitar Cafetéria' }], featured: [], all: [] },
+      image: [{ quality: '500x500', url: 'https://c.saavncdn.com/Soothing-Guitar-500x500.jpg' }],
+      downloadUrl: [{ quality: '320kbps', url: 'https://cdn.example/guitar.mp4' }],
+    }
+    expect(scoreSaavnCandidate(leoCover, guitarCafeteria).score).toBe(0)
   })
 
   it('recognizes VIBEX own deep links (?play=...) across shareTarget + server-side import-playlist', async () => {

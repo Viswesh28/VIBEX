@@ -222,22 +222,46 @@ async function queryYtMusicSearchParam(effectiveFetch, query, params) {
   return listItemRenderers(raw).map((r) => toResult(r)).filter(Boolean)[0] || null
 }
 
+async function queryYouTubeWebVideoId(effectiveFetch, query) {
+  const res = await effectiveFetch('https://www.youtube.com/youtubei/v1/search?prettyPrint=false', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'user-agent': UA,
+      origin: 'https://www.youtube.com',
+      referer: 'https://www.youtube.com/',
+    },
+    body: JSON.stringify({
+      context: {
+        client: { clientName: 'WEB', clientVersion: '2.20250312.01.00', hl: 'en', gl: 'US' },
+      },
+      query: `${query} official audio`,
+    }),
+    signal: AbortSignal.timeout(5500),
+  }).catch(() => null)
+  if (!res?.ok) return ''
+  const txt =
+    typeof res.text === 'function'
+      ? await res.text().catch(() => '')
+      : JSON.stringify(await res.json().catch(() => ''))
+  const m = /"videoRenderer":\{"videoId":"([A-Za-z0-9_-]{11})"/.exec(txt)
+  return m ? m[1] : ''
+}
+
 async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
   const effectiveFetch = fetchImpl || globalThis.fetch
   if (typeof effectiveFetch !== 'function') return null
-  // Search Videos (`OMV`) in parallel with Songs (`ATV`) and prefer the Music Video ID when available,
-  // because InnerTube `ANDROID_VR` streams `OMV` video IDs directly as native `audio/mp4` on serverless IPs!
-  const VIDEOS_PARAMS = 'EgWKAQIIAUICCAFqDBAOEAoQAxAEEAkQBQ%3D%3D'
-  const SONGS_PARAMS = 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D'
-  const [videoHit, songHit] = await Promise.all([
-    queryYtMusicSearchParam(effectiveFetch, entry.query, VIDEOS_PARAMS),
+  // Search YT Music Songs (rich album art & clean metadata) in parallel with YouTube Web Video search
+  // (guaranteed standard `OMV` video ID streamable as native `audio/mp4` via `ANDROID_VR`!)
+  const SONGS_PARAMS = 'EgWKAQIIAWoKEAkQBRAKEAMQBA=='
+  const [omvVideoId, songHit] = await Promise.all([
+    queryYouTubeWebVideoId(effectiveFetch, entry.query),
     queryYtMusicSearchParam(effectiveFetch, entry.query, SONGS_PARAMS),
   ])
-  const item = videoHit || songHit
-  const vid = item?.videoId || item?.id
+  const vid = omvVideoId || songHit?.videoId || songHit?.id
   if (!vid) return null
-  const primaryArtists = Array.isArray(item.artists) && item.artists.length
-    ? item.artists.map((a) =>
+  const primaryArtists = Array.isArray(songHit?.artists) && songHit.artists.length
+    ? songHit.artists.map((a) =>
         typeof a === 'string'
           ? { id: '', name: unescapeEntities(a) }
           : { id: a?.id || '', name: unescapeEntities(a?.name || '') }
@@ -250,10 +274,10 @@ async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
     providerTrackId: vid,
     videoId: vid,
     source: 'ytmusic',
-    name: unescapeEntities(item.title || entry.title || 'Track'),
+    name: unescapeEntities(songHit?.title || entry.title || 'Track'),
     type: 'song',
-    duration: Number(item.duration) || 0,
-    album: { id: '', name: unescapeEntities(item.album || songHit?.album || '') },
+    duration: Number(songHit?.duration) || 0,
+    album: { id: '', name: unescapeEntities(songHit?.album || '') },
     artists: {
       primary: primaryArtists,
       featured: [],
@@ -262,7 +286,7 @@ async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
     image: [
       {
         quality: '500x500',
-        url: songHit?.thumbnail || item.thumbnail || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+        url: songHit?.thumbnail || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
       },
     ],
     downloadUrl: [{ quality: '160kbps', url: `/api/ytaudio?id=${vid}` }],
