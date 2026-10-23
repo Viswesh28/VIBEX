@@ -15,7 +15,8 @@ export const NAV = [
 export function Sidebar({ apiOnline, open = false, onClose }) {
   const { liked, playlists, account } = useLibrary()
   const { dataSaver } = useSettings()
-  const { view, navigate, search, openNewPlaylistModal, setImportModalOpen } = useUI()
+  const { view, navigate, search, openNewPlaylistModal, setImportModalOpen, openShareToVibex } =
+    useUI()
 
   const activeKind = view.kind === 'artist' || view.kind === 'detail' ? 'search' : view.kind
 
@@ -55,17 +56,39 @@ export function Sidebar({ apiOnline, open = false, onClose }) {
 
       <div className="side-label side-extra">
         <span>Playlists</span>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           <button
             type="button"
-            onClick={() => setImportModalOpen(true)}
+            onClick={() => {
+              onClose?.()
+              openShareToVibex?.('')
+            }}
+            aria-label="Open shared song or playlist link"
+            title="Play or import a shared link"
+          >
+            <Icon name="link" size={13} />
+            Link
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose?.()
+              setImportModalOpen(true)
+            }}
             aria-label="Import playlist"
             title="Import Spotify / YouTube / JioSaavn playlist"
           >
             <Icon name="import" size={13} />
             Import
           </button>
-          <button type="button" onClick={openNewPlaylistModal} aria-label="Create a playlist">
+          <button
+            type="button"
+            onClick={() => {
+              onClose?.()
+              openNewPlaylistModal()
+            }}
+            aria-label="Create a playlist"
+          >
             <Icon name="plus" size={13} />
             New
           </button>

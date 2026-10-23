@@ -199,9 +199,7 @@ function pickBestSaavnCandidate(results = [], entry = {}) {
   return enforcePerformerMatch ? null : results[0] || null
 }
 
-async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
-  const effectiveFetch = fetchImpl || globalThis.fetch
-  if (typeof effectiveFetch !== 'function') return null
+async function queryYtMusicSearchParam(effectiveFetch, query, params) {
   const res = await effectiveFetch('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
     method: 'POST',
     headers: {
@@ -214,15 +212,28 @@ async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
       context: {
         client: { clientName: 'WEB_REMIX', clientVersion: '1.20250312.01.00', hl: 'en', gl: 'IN' },
       },
-      query: entry.query,
-      // Official YT Music "Songs" filter param so studio audio tracks rank first
-      params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D',
+      query,
+      params,
     }),
     signal: AbortSignal.timeout(6500),
   }).catch(() => null)
   if (!res?.ok) return null
   const raw = await res.json().catch(() => null)
-  const item = listItemRenderers(raw).map((r) => toResult(r)).filter(Boolean)[0]
+  return listItemRenderers(raw).map((r) => toResult(r)).filter(Boolean)[0] || null
+}
+
+async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
+  const effectiveFetch = fetchImpl || globalThis.fetch
+  if (typeof effectiveFetch !== 'function') return null
+  // Search Videos (`OMV`) in parallel with Songs (`ATV`) and prefer the Music Video ID when available,
+  // because InnerTube `ANDROID_VR` streams `OMV` video IDs directly as native `audio/mp4` on serverless IPs!
+  const VIDEOS_PARAMS = 'EgWKAQIIAUICCAFqDBAOEAoQAxAEEAkQBQ%3D%3D'
+  const SONGS_PARAMS = 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D'
+  const [videoHit, songHit] = await Promise.all([
+    queryYtMusicSearchParam(effectiveFetch, entry.query, VIDEOS_PARAMS),
+    queryYtMusicSearchParam(effectiveFetch, entry.query, SONGS_PARAMS),
+  ])
+  const item = videoHit || songHit
   const vid = item?.videoId || item?.id
   if (!vid) return null
   const primaryArtists = Array.isArray(item.artists) && item.artists.length
@@ -234,10 +245,15 @@ async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
     : [{ id: '', name: entry.artist || 'YouTube Music' }]
   return {
     id: `yt:${vid}`,
+    key: `ytmusic:${vid}`,
+    provider: 'ytmusic',
+    providerTrackId: vid,
+    videoId: vid,
+    source: 'ytmusic',
     name: unescapeEntities(item.title || entry.title || 'Track'),
     type: 'song',
     duration: Number(item.duration) || 0,
-    album: { id: '', name: unescapeEntities(item.album || '') },
+    album: { id: '', name: unescapeEntities(item.album || songHit?.album || '') },
     artists: {
       primary: primaryArtists,
       featured: [],
@@ -246,7 +262,7 @@ async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
     image: [
       {
         quality: '500x500',
-        url: item.thumbnail || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+        url: songHit?.thumbnail || item.thumbnail || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
       },
     ],
     downloadUrl: [{ quality: '160kbps', url: `/api/ytaudio?id=${vid}` }],
@@ -414,6 +430,11 @@ async function importSingleYouTubeVideo(videoId, hintTitle = '', fetchImpl = fet
     tracks: [
       {
         id: `yt:${videoId}`,
+        key: `ytmusic:${videoId}`,
+        provider: 'ytmusic',
+        providerTrackId: videoId,
+        videoId,
+        source: 'ytmusic',
         name: cleanTitle,
         type: 'song',
         duration: ytDuration,
@@ -492,7 +513,15 @@ async function importFromYouTubePlaylist(listId, fetchImpl = fetch) {
       downloadUrl: matched?.downloadUrl?.length
         ? matched.downloadUrl
         : [{ quality: '160kbps', url: `/api/ytaudio?id=${vid}` }],
-      ...(matched?.songId ? { _matchedSaavnId: matched.songId } : {}),
+      ...(matched?.songId
+        ? { _matchedSaavnId: matched.songId }
+        : {
+            key: `ytmusic:${vid}`,
+            provider: 'ytmusic',
+            providerTrackId: vid,
+            videoId: vid,
+            source: 'ytmusic',
+          }),
     }
   })
 
@@ -714,7 +743,23 @@ export default async function handler(req, res, deps = {}) {
           path
         )
 
-      if (host === 'jiosaavn.com' || host === 'saavn.com') {
+      const vibexPlayId = parsedUrl.searchParams.get('play') || ''
+      if (vibexPlayId) {
+        if (vibexPlayId.startsWith('yt:')) {
+          imported = await importSingleYouTubeVideo(vibexPlayId.slice(3), hintTitle, fetchImpl)
+        } else {
+          const data = await callSaavn(`/songs?ids=${encodeURIComponent(vibexPlayId)}`, deps.fetchImpl || null)
+          const songs = Array.isArray(data) ? data : data?.songs || []
+          if (!songs.length) throw new Error('Shared VIBEX track could not be loaded.')
+          imported = {
+            kind: 'track',
+            name: unescapeEntities(songs[0].name || 'Shared VIBEX Song'),
+            sourceType: 'vibex',
+            requestedCount: 1,
+            tracks: [songs[0]],
+          }
+        }
+      } else if (host === 'jiosaavn.com' || host === 'saavn.com') {
         imported = await importFromJioSaavnUrl(unwrappedUrl, deps.fetchImpl || null)
       } else if (
         /^[A-Za-z0-9_-]{11}$/.test(ytVideoId) &&

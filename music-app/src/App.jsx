@@ -96,7 +96,9 @@ export default function App() {
     const isYt = rawId.startsWith('yt:')
     const cleanId = isYt ? rawId.slice(3) : rawId
     const req = isYt
-      ? api(`/ytmusic?op=song&id=${encodeURIComponent(cleanId)}`).then((d) => d?.song || d)
+      ? api(
+          `/import-playlist?sourceUrl=${encodeURIComponent(`https://www.youtube.com/watch?v=${cleanId}`)}`
+        ).then((d) => d?.tracks?.[0] || null)
       : api(`/songs?ids=${encodeURIComponent(cleanId)}`).then((d) =>
           Array.isArray(d) ? d[0] : d?.data?.[0] || d?.[0] || null
         )

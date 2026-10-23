@@ -123,7 +123,9 @@ export function isSupportedMusicUrl(raw = '') {
       host === 'spoti.fi' ||
       host === 'jiosaavn.com' ||
       host === 'saavn.com' ||
-      host === 'music.apple.com'
+      host === 'music.apple.com' ||
+      host === 'vibex-music-pi.vercel.app' ||
+      Boolean(u.searchParams.get('play') || u.searchParams.get('share_url'))
     )
   } catch {
     return false
