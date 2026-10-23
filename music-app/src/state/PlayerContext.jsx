@@ -52,6 +52,8 @@ import {
 } from '../lib/stream.js'
 import { EVENTS, track as telemetry } from '../lib/telemetry.js'
 import { buildTaste, rankByTaste, recentlyPlayedIds } from '../lib/taste.js'
+import { applyDeckPlaybackRate, applyDspSettings, createAudioDspChain } from '../lib/audioDsp.js'
+import { isPipOpen, isPipSupported, openPipPlayer, subscribePipState, updatePipPlayer, closePipPlayer } from '../lib/pipPlayer.js'
 import { useSettings } from './SettingsContext.jsx'
 import { useLibrary } from './LibraryContext.jsx'
 import { useStatus } from './StatusContext.jsx'
@@ -188,6 +190,13 @@ export function PlayerProvider({ children, streamResolver = null }) {
   // A different kind of playback from everything else in this file — YouTube's
   // player, not ours — so it is state rather than a fifth deck.
   const [embedTrack, setLongForm] = useState(null)
+  const [recentHistory, setRecentHistory] = useState(() => {
+    const v = store.getJSON('svRecentHistory', [])
+    return Array.isArray(v) ? v.filter((x) => x && x.id).slice(0, 30) : []
+  })
+  const [pipActive, setPipActive] = useState(() => isPipOpen())
+
+  useEffect(() => subscribePipState(setPipActive), [])
 
   // --- decks ---
   const deckA = useRef(null)
@@ -207,8 +216,9 @@ export function PlayerProvider({ children, streamResolver = null }) {
   const fadeLaw = useRef('equalPower')
   const fadeIdleTimer = useRef(null)
 
-  // --- web audio (live spectrum) ---
+  // --- web audio (DSP rack + live spectrum) ---
   const actx = useRef(null)
+  const dspChain = useRef(null)
   const analyser = useRef(null)
   const freqData = useRef(null)
 
@@ -278,10 +288,13 @@ export function PlayerProvider({ children, streamResolver = null }) {
   const active = () => activeRef.current || deckA.current
   const other = () => (activeRef.current === deckA.current ? deckB.current : deckA.current)
 
-  const wantLive = useCallback(
-    () => setRef.current.viz.on && setRef.current.viz.style === 'spectrum' && setRef.current.liveOK,
-    []
-  )
+  const wantLive = useCallback(() => {
+    const s = setRef.current
+    const dspWanted = Boolean(
+      s.dsp?.eqOn || s.dsp?.loudnessNorm || Number(s.dsp?.reverbMix) > 0 || s.dsp?.slowedReverb
+    )
+    return ((s.viz.on && s.viz.style === 'spectrum') || dspWanted) && s.liveOK
+  }, [])
 
   const ensureGraph = useCallback(
     (el) => {
@@ -294,22 +307,28 @@ export function PlayerProvider({ children, streamResolver = null }) {
             return
           }
           actx.current = new AC()
+          dspChain.current = createAudioDspChain(actx.current)
+          if (dspChain.current && setRef.current.dsp) {
+            applyDspSettings(dspChain.current, setRef.current.dsp)
+          }
           analyser.current = actx.current.createAnalyser()
           analyser.current.fftSize = 256
           analyser.current.smoothingTimeConstant = 0.82
           freqData.current = new Uint8Array(analyser.current.frequencyBinCount)
+          if (dspChain.current) {
+            dspChain.current.output.connect(analyser.current)
+          }
           analyser.current.connect(actx.current.destination)
         }
+        const graphTarget = dspChain.current ? dspChain.current.input : analyser.current
         if (!el._src) {
           el._src = actx.current.createMediaElementSource(el)
-          // A per-deck gain lane means the crossfade can be scheduled on the
-          // audio clock instead of being approximated with element.volume.
           if (typeof actx.current.createGain === 'function') {
             el._xfade = actx.current.createGain()
             el._src.connect(el._xfade)
-            el._xfade.connect(analyser.current)
+            el._xfade.connect(graphTarget)
           } else {
-            el._src.connect(analyser.current)
+            el._src.connect(graphTarget)
           }
         }
         if (actx.current.state === 'suspended') actx.current.resume()
@@ -320,11 +339,23 @@ export function PlayerProvider({ children, streamResolver = null }) {
     [wantLive]
   )
 
+  // Live-update 10-band EQ, loudness normalizer, reverb, speed, and pitch lock.
+  useEffect(() => {
+    if (dspChain.current && settings.dsp) {
+      applyDspSettings(dspChain.current, settings.dsp)
+    }
+    for (const el of [deckA.current, deckB.current]) {
+      applyDeckPlaybackRate(el, settings.dsp)
+      if (el?.src && !el.paused) ensureGraph(el)
+    }
+  }, [ensureGraph, settings.dsp])
+
   // A deck must be marked crossorigin *before* it loads, or the analyser gets
   // silence from a tainted stream.
   const prepDeck = useCallback(
     (el) => {
       if (!el) return
+      applyDeckPlaybackRate(el, setRef.current.dsp)
       if (wantLive()) {
         el.setAttribute('crossorigin', 'anonymous')
         ensureGraph(el)
@@ -672,6 +703,14 @@ export function PlayerProvider({ children, streamResolver = null }) {
         ? { id: song.id, kind: song._prov.kind, reason: song._prov.reason }
         : null
       statsOnPlay(song)
+      if (song?.id && !setRef.current.privateSession) {
+        const clean = sanitizeTrackForPersistence(song) || song
+        setRecentHistory((prev) => {
+          const next = [clean, ...prev.filter((x) => x.id !== clean.id)].slice(0, 30)
+          store.setJSON('svRecentHistory', next)
+          return next
+        })
+      }
       setStopReason(null)
       autoplayFailed.current = false
       radioFailed.current = false
@@ -1868,6 +1907,76 @@ export function PlayerProvider({ children, streamResolver = null }) {
     })
   }, [])
 
+  const qReorder = useCallback((fromIdx, toIdx) => {
+    setQueueState((prev) => {
+      if (
+        fromIdx === toIdx ||
+        fromIdx < 0 ||
+        toIdx < 0 ||
+        fromIdx >= prev.length ||
+        toIdx >= prev.length
+      ) {
+        return prev
+      }
+      const next = [...prev]
+      const [moved] = next.splice(fromIdx, 1)
+      next.splice(toIdx, 0, moved)
+      queueRef.current = next
+      setCurrentIndex((ci) => {
+        let nextCi = ci
+        if (ci === fromIdx) nextCi = toIdx
+        else if (fromIdx < ci && ci <= toIdx) nextCi = ci - 1
+        else if (toIdx <= ci && ci < fromIdx) nextCi = ci + 1
+        idxRef.current = nextCi
+        return nextCi
+      })
+      return next
+    })
+  }, [])
+
+  const playNext = useCallback(
+    (song) => {
+      if (!song?.id) return
+      const prev = queueRef.current
+      const curIdx = idxRef.current
+      if (!prev.length || curIdx < 0) {
+        setQueueState([song])
+        queueRef.current = [song]
+        resetContext([song])
+        playTrack(0)
+        return
+      }
+      const before = prev.slice(0, curIdx + 1)
+      const after = prev.slice(curIdx + 1).filter((s) => s.id !== song.id)
+      const next = [...before, song, ...after]
+      setQueueState(next)
+      queueRef.current = next
+      prewarmNextTrack(curIdx)
+      setStatus(`Playing next: ${decodeHtml(song.name)}`)
+    },
+    [playTrack, prewarmNextTrack, resetContext, setStatus]
+  )
+
+  const addToQueue = useCallback(
+    (song) => {
+      if (!song?.id) return
+      const prev = queueRef.current
+      const curIdx = idxRef.current
+      if (!prev.length || curIdx < 0) {
+        setQueueState([song])
+        queueRef.current = [song]
+        resetContext([song])
+        playTrack(0)
+        return
+      }
+      const next = [...prev, song]
+      setQueueState(next)
+      queueRef.current = next
+      setStatus(`Added to queue: ${decodeHtml(song.name)}`)
+    },
+    [playTrack, resetContext, setStatus]
+  )
+
   const qRemove = useCallback(
     (i) => {
       const prev = queueRef.current
@@ -1951,16 +2060,39 @@ export function PlayerProvider({ children, streamResolver = null }) {
       ? '12kbps'
       : settings.qualityPref
 
+  const togglePip = useCallback(async () => {
+    if (isPipOpen()) {
+      closePipPlayer()
+      return false
+    }
+    return openPipPlayer({
+      current,
+      isPlaying,
+      progressFrac: clockRef.current.dur ? clockRef.current.cur / clockRef.current.dur : 0,
+      onTogglePlay: togglePlay,
+      onPrev: prevTrack,
+      onNext: nextTrack,
+    })
+  }, [current, isPlaying, nextTrack, prevTrack, togglePlay])
+
+  useEffect(() => {
+    if (!pipActive) return
+    updatePipPlayer({
+      current,
+      isPlaying,
+      progressFrac: clock.dur ? clock.cur / clock.dur : 0,
+    })
+  }, [pipActive, current, isPlaying, clock])
+
   const transportValue = useMemo(
     () => ({
       queue, currentIndex, current, isPlaying, volume, currentQuality,
-      setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
+      recentHistory,
+      setQueue, playFromList, playTrack, playNext, addToQueue, qReorder,
+      nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
-      // The long-form embed: open, and this is what is open. Null otherwise.
       embedTrack, closeEmbed, reportEmbed, registerEmbedCommand,
-      // Transition truth for the "Mixing" badge, plus typed stop reasons so the
-      // UI can offer the right recovery instead of one generic error.
       transition,
       stopReason,
       playbackState: playbackMachine.state,
@@ -1968,18 +2100,22 @@ export function PlayerProvider({ children, streamResolver = null }) {
       reResolvedCount: playbackMachine.reResolvedCount,
       dismissRecommendation,
       clearForcedQuality,
+      pipActive,
+      pipSupported: isPipSupported(),
+      togglePip,
       analyserRef: analyser, freqDataRef: freqData,
       audioRef: activeRef,
-      // Exposed so the UI can explain iOS-specific behaviour without probing
-      // the user agent on every render.
       ios: isIOS(),
     }),
     [
       queue, currentIndex, current, isPlaying, volume, currentQuality,
-      setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
+      recentHistory,
+      setQueue, playFromList, playTrack, playNext, addToQueue, qReorder,
+      nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
       transition, stopReason, playbackMachine, dismissRecommendation, clearForcedQuality,
+      pipActive, togglePip,
       embedTrack, closeEmbed, reportEmbed, registerEmbedCommand,
     ]
   )

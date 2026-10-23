@@ -9,17 +9,56 @@ import { QueueList } from './QueueList.jsx'
 import { Visualizer } from './Visualizer.jsx'
 import { useLyrics } from '../hooks/useLyrics.js'
 import { useLibrary } from '../state/LibraryContext.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerClock, usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
+function NowPlayingProgress({ seekFrac }) {
+  const clock = usePlayerClock()
+  const pct = clock.dur ? (clock.cur / clock.dur) * 100 : 0
+  return (
+    <div
+      id="npProg"
+      role="slider"
+      tabIndex={0}
+      aria-label="Seek"
+      aria-valuemin={0}
+      aria-valuemax={Math.max(1, Math.round(clock.dur || 0))}
+      aria-valuenow={Math.round(clock.cur || 0)}
+      onClick={(e) => {
+        const r = e.currentTarget.getBoundingClientRect()
+        seekFrac((e.clientX - r.left) / r.width)
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
+        const delta = e.key === 'ArrowRight' ? 10 : -10
+        seekFrac(Math.min(1, Math.max(0, (clock.cur + delta) / (clock.dur || 1))))
+        e.preventDefault()
+      }}
+    >
+      <div id="npProgFill" style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
 /** The right rail: artwork, transport of the current track, lyrics and queue. */
 export function NowPlaying({ onDownload }) {
   const {
-    current, currentIndex, isPlaying, clock, togglePlay, seekFrac, queue, currentQuality,
-    transition, stopReason, dismissRecommendation, startRadioFrom, playTrack,
-  } = usePlayer()
+    current,
+    currentIndex,
+    isPlaying,
+    togglePlay,
+    seekFrac,
+    seekTo,
+    queue,
+    currentQuality,
+    transition,
+    stopReason,
+    dismissRecommendation,
+    startRadioFrom,
+    playTrack,
+  } = usePlayerTransport()
   const { likedIds, toggleLike } = useLibrary()
   const { dataSaver, viz, radio, setRadio } = useSettings()
   const { setStatus } = useStatus()
@@ -32,7 +71,6 @@ export function NowPlaying({ onDownload }) {
   const effTab = viz.on ? tab : 'lyr'
   const { res, activeIdx } = useLyrics(current, effTab === 'lyr')
 
-  const pct = clock.dur ? (clock.cur / clock.dur) * 100 : 0
   const liked = current ? likedIds.has(current.id) : false
   const est = estimate(currentQuality, current?.duration)
 
@@ -55,7 +93,12 @@ export function NowPlaying({ onDownload }) {
             <span>Pick a song to play</span>
           </div>
         )}
-        <img id="npCover" alt="" src={current ? imgOf(current, dataSaver) : undefined} style={{ opacity: current ? 1 : 0 }} />
+        <img
+          id="npCover"
+          alt=""
+          src={current ? imgOf(current, dataSaver) : undefined}
+          style={{ opacity: current ? 1 : 0 }}
+        />
         <TransitionBadge transition={transition} />
         <button
           type="button"
@@ -68,27 +111,7 @@ export function NowPlaying({ onDownload }) {
             <Icon name={isPlaying ? 'pause' : 'play'} size={22} />
           </span>
         </button>
-        <div
-          id="npProg"
-          role="slider"
-          tabIndex={0}
-          aria-label="Seek"
-          aria-valuemin={0}
-          aria-valuemax={Math.max(1, Math.round(clock.dur || 0))}
-          aria-valuenow={Math.round(clock.cur || 0)}
-          onClick={(e) => {
-            const r = e.currentTarget.getBoundingClientRect()
-            seekFrac((e.clientX - r.left) / r.width)
-          }}
-          onKeyDown={(e) => {
-            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
-            const delta = e.key === 'ArrowRight' ? 10 : -10
-            seekFrac(Math.min(1, Math.max(0, (clock.cur + delta) / (clock.dur || 1))))
-            e.preventDefault()
-          }}
-        >
-          <div id="npProgFill" style={{ width: `${pct}%` }} />
-        </div>
+        <NowPlayingProgress seekFrac={seekFrac} />
       </div>
 
       <div className="np-meta">
@@ -179,7 +202,7 @@ export function NowPlaying({ onDownload }) {
       <Visualizer active={effTab === 'viz' && viz.on && !!current} />
       <div id="lyricsBox" style={{ display: effTab === 'lyr' ? 'block' : 'none' }}>
         <div id="lyricsContent">
-          <LyricsBody res={current ? res : null} activeIdx={activeIdx} />
+          <LyricsBody res={current ? res : null} activeIdx={activeIdx} onSeekLine={seekTo} />
         </div>
         <div id="lyricsCredit">Lyrics by LRCLIB</div>
       </div>
@@ -202,7 +225,7 @@ export function NowPlaying({ onDownload }) {
 }
 
 function QueueClear() {
-  const { qClear } = usePlayer()
+  const { qClear } = usePlayerTransport()
   return (
     <button
       type="button"

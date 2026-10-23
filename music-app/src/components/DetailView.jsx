@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
 import { decodeHtml } from '../lib/format.js'
+import { shareVibexLink } from '../lib/shareUrl.js'
 import { imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
 import { SongList } from './SongList.jsx'
@@ -106,6 +107,20 @@ export function DetailView({ type, id, onTitle }) {
             >
               <Icon name="shuffle" size={15} />
               Shuffle
+            </button>
+            <button
+              type="button"
+              className="btn-ghost on-art"
+              onClick={async () => {
+                const out = await shareVibexLink({
+                  title: decodeHtml(data.name),
+                  pathOrUrl: `/?v=detail&type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`,
+                })
+                if (out.copied) setStatus('Copied shareable link to clipboard.')
+              }}
+            >
+              <Icon name="share" size={15} />
+              Share
             </button>
           </div>
         </div>

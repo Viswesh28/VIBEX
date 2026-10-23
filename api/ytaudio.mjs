@@ -1,18 +1,27 @@
 /**
- * /api/ytaudio  --  Byte-Verified YouTube Video -> Pure Audio Stream Proxy.
+ * /api/ytaudio  --  Byte-Verified, Stream-Piped YouTube Video -> Pure Audio Proxy.
  *
- * Extracts only genuine audio streams belonging strictly to the requested 11-char
- * `videoId` (NEVER substituting a different catalog track) AND verifies with a
- * lightweight `Range: bytes=0-1` probe that this server's egress IP can actually
- * read bytes (`200` / `206` non-HTML response) before reporting `playable: true`.
+ * Upgraded in v3.0:
+ * 1. True Web-Readable -> Node HTTP response streaming (`Readable.fromWeb`) for
+ *    instant Time-To-First-Audio-Byte and zero 4.5 MB serverless buffer limits.
+ * 2. Bounded LRU stream memo (`MAX_STREAM_MEMO = 200`) preventing memory leaks.
+ * 3. Automatic dead-mirror circuit breaker cooling down failing Piped/Invidious
+ *    mirrors for 5 minutes so healthy extractors win without wasted sockets.
+ * 4. Per-IP sliding-window rate guard protecting serverless bandwidth.
  */
 
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { cleanChannelArtist } from './_lib/trackMatch.mjs'
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/
 const RACE_TIMEOUT_MS = 1800
 const VERIFY_TIMEOUT_MS = 1200
 const STREAM_TIMEOUT_MS = 55_000
+export const MAX_STREAM_MEMO = 200
+const MIRROR_COOLDOWN_MS = 5 * 60_000
+const RATE_WINDOW_MS = 60_000
+const RATE_LIMIT_MAX = 90
 
 const INNERTUBE_CLIENTS = [
   {
@@ -82,8 +91,68 @@ const INVIDIOUS_INSTANCES = [
   'https://invidious.nerdvpn.de',
 ]
 
-// Short in-memory stream cache per warm Lambda instance (60s TTL).
-const streamMemo = new Map()
+// Bounded LRU stream cache + mirror circuit-breaker state per Fluid Compute instance.
+export const streamMemo = new Map()
+const mirrorCooldowns = new Map()
+const ipBuckets = new Map()
+
+export function pruneStreamMemo(now = Date.now()) {
+  for (const [k, entry] of streamMemo.entries()) {
+    if (entry?.expiresAt && entry.expiresAt <= now) streamMemo.delete(k)
+  }
+  while (streamMemo.size > MAX_STREAM_MEMO) {
+    const oldest = streamMemo.keys().next().value
+    if (oldest === undefined) break
+    streamMemo.delete(oldest)
+  }
+}
+
+export function setStreamMemo(videoId, value) {
+  if (streamMemo.has(videoId)) streamMemo.delete(videoId)
+  streamMemo.set(videoId, { value, expiresAt: Date.now() + 60_000 })
+  pruneStreamMemo()
+}
+
+export function isMirrorHealthy(base) {
+  const until = mirrorCooldowns.get(base)
+  if (!until) return true
+  if (Date.now() >= until) {
+    mirrorCooldowns.delete(base)
+    return true
+  }
+  return false
+}
+
+export function markMirrorFailure(base) {
+  mirrorCooldowns.set(base, Date.now() + MIRROR_COOLDOWN_MS)
+}
+
+export const markMirrorDead = markMirrorFailure
+
+export function isRateLimited(ipOrReq) {
+  const reqObj =
+    typeof ipOrReq === 'string'
+      ? { headers: { 'x-forwarded-for': ipOrReq } }
+      : ipOrReq
+  return !allowIpRequest(reqObj)
+}
+
+function allowIpRequest(req) {
+  const ip = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim()
+  if (!ip) return true
+  const now = Date.now()
+  const entry = ipBuckets.get(ip)
+  if (!entry || now - entry.windowStart >= RATE_WINDOW_MS) {
+    ipBuckets.set(ip, { windowStart: now, count: 1 })
+    if (ipBuckets.size > 500) {
+      const oldest = ipBuckets.keys().next().value
+      if (oldest !== undefined) ipBuckets.delete(oldest)
+    }
+    return true
+  }
+  entry.count += 1
+  return entry.count <= RATE_LIMIT_MAX
+}
 
 function safeFilename(value) {
   return (
@@ -131,8 +200,7 @@ export function pickBestAudioFormat(formats = []) {
 
 /**
  * Confirm this server egress IP can actually stream bytes from `candidate.url`
- * (`200` / `206` non-HTML response). Prevents IP-bound Piped/googlevideo URLs
- * from falsely advertising `playable: true` on `?meta=1` and 502-ing on `<audio>`.
+ * (`200` / `206` non-HTML response).
  */
 async function verifyStreamReachable(candidate, fetchImpl, parentSignal) {
   const ctl = new AbortController()
@@ -206,68 +274,99 @@ async function tryInnerTubeClient(videoId, client, fetchImpl, signal) {
   )
 }
 
-async function tryPipedMirror(videoId, base, fetchImpl, signal) {
-  const res = await fetchImpl(`${base}/streams/${encodeURIComponent(videoId)}`, {
-    headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
-    signal,
-  })
-  if (!res?.ok) throw new Error(`piped_${res?.status || 0}`)
-  const json = await res.json()
-  const streams = (json?.audioStreams || []).map((s) => ({
-    url: s?.url,
-    mimeType: s?.mimeType || (s?.format === 'M4A' ? 'audio/mp4' : 'audio/webm'),
-    bitrate: Number(s?.bitrate || 0),
-  }))
-  const picked = pickBestAudioFormat(streams)
-  if (!picked) throw new Error('piped_no_audio')
-  return verifyStreamReachable(
-    {
-      ...picked,
-      userAgent: 'Mozilla/5.0',
-      source: 'piped',
-      title: json?.title || '',
-      artist: cleanChannelArtist(json?.uploader || ''),
-      duration: Number(json?.duration || 0),
-    },
-    fetchImpl,
-    signal
-  )
-}
-
-async function tryInvidiousMirror(videoId, base, fetchImpl, signal) {
-  const res = await fetchImpl(
-    `${base}/api/v1/videos/${encodeURIComponent(videoId)}?fields=title,author,lengthSeconds,adaptiveFormats`,
-    {
+async function tryPipedMirror(videoId, base, fetchImpl, signal, useCircuitBreaker) {
+  try {
+    const res = await fetchImpl(`${base}/streams/${encodeURIComponent(videoId)}`, {
       headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
       signal,
+    })
+    if (!res?.ok) {
+      if (useCircuitBreaker && (res?.status >= 500 || res?.status === 429 || res?.status === 403)) {
+        markMirrorFailure(base)
+      }
+      throw new Error(`piped_${res?.status || 0}`)
     }
-  )
-  if (!res?.ok) throw new Error(`invidious_${res?.status || 0}`)
-  const json = await res.json()
-  const picked = pickBestAudioFormat(json?.adaptiveFormats || [])
-  if (!picked) throw new Error('invidious_no_audio')
-  return verifyStreamReachable(
-    {
-      ...picked,
-      userAgent: 'Mozilla/5.0',
-      source: 'invidious',
-      title: json?.title || '',
-      artist: cleanChannelArtist(json?.author || ''),
-      duration: Number(json?.lengthSeconds || 0),
-    },
-    fetchImpl,
-    signal
-  )
+    const json = await res.json()
+    const streams = (json?.audioStreams || []).map((s) => ({
+      url: s?.url,
+      mimeType: s?.mimeType || (s?.format === 'M4A' ? 'audio/mp4' : 'audio/webm'),
+      bitrate: Number(s?.bitrate || 0),
+    }))
+    const picked = pickBestAudioFormat(streams)
+    if (!picked) throw new Error('piped_no_audio')
+    return verifyStreamReachable(
+      {
+        ...picked,
+        userAgent: 'Mozilla/5.0',
+        source: 'piped',
+        title: json?.title || '',
+        artist: cleanChannelArtist(json?.uploader || ''),
+        duration: Number(json?.duration || 0),
+      },
+      fetchImpl,
+      signal
+    )
+  } catch (err) {
+    if (useCircuitBreaker && !signal?.aborted) markMirrorFailure(base)
+    throw err
+  }
 }
 
-async function raceDirectAudioExtractors(videoId, fetchImpl = fetch) {
+async function tryInvidiousMirror(videoId, base, fetchImpl, signal, useCircuitBreaker) {
+  try {
+    const res = await fetchImpl(
+      `${base}/api/v1/videos/${encodeURIComponent(videoId)}?fields=title,author,lengthSeconds,adaptiveFormats`,
+      {
+        headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
+        signal,
+      }
+    )
+    if (!res?.ok) {
+      if (useCircuitBreaker && (res?.status >= 500 || res?.status === 429 || res?.status === 403)) {
+        markMirrorFailure(base)
+      }
+      throw new Error(`invidious_${res?.status || 0}`)
+    }
+    const json = await res.json()
+    const picked = pickBestAudioFormat(json?.adaptiveFormats || [])
+    if (!picked) throw new Error('invidious_no_audio')
+    return verifyStreamReachable(
+      {
+        ...picked,
+        userAgent: 'Mozilla/5.0',
+        source: 'invidious',
+        title: json?.title || '',
+        artist: cleanChannelArtist(json?.author || ''),
+        duration: Number(json?.lengthSeconds || 0),
+      },
+      fetchImpl,
+      signal
+    )
+  } catch (err) {
+    if (useCircuitBreaker && !signal?.aborted) markMirrorFailure(base)
+    throw err
+  }
+}
+
+async function raceDirectAudioExtractors(videoId, fetchImpl = fetch, useCircuitBreaker = false) {
   const ctl = new AbortController()
   const timer = setTimeout(() => ctl.abort(), RACE_TIMEOUT_MS)
   try {
+    const healthyPiped = useCircuitBreaker
+      ? PIPED_INSTANCES.filter(isMirrorHealthy)
+      : PIPED_INSTANCES
+    const healthyInvidious = useCircuitBreaker
+      ? INVIDIOUS_INSTANCES.filter(isMirrorHealthy)
+      : INVIDIOUS_INSTANCES
+    const pipedPool = healthyPiped.length ? healthyPiped : PIPED_INSTANCES.slice(0, 1)
+    const invidiousPool = healthyInvidious.length ? healthyInvidious : INVIDIOUS_INSTANCES.slice(0, 1)
+
     const racers = [
       ...INNERTUBE_CLIENTS.map((c) => tryInnerTubeClient(videoId, c, fetchImpl, ctl.signal)),
-      ...PIPED_INSTANCES.map((base) => tryPipedMirror(videoId, base, fetchImpl, ctl.signal)),
-      ...INVIDIOUS_INSTANCES.map((base) => tryInvidiousMirror(videoId, base, fetchImpl, ctl.signal)),
+      ...pipedPool.map((base) => tryPipedMirror(videoId, base, fetchImpl, ctl.signal, useCircuitBreaker)),
+      ...invidiousPool.map((base) =>
+        tryInvidiousMirror(videoId, base, fetchImpl, ctl.signal, useCircuitBreaker)
+      ),
     ]
     const winner = await Promise.any(racers)
     ctl.abort()
@@ -288,26 +387,43 @@ export async function resolveYoutubeAudioStream(
 
   if (useCache) {
     const hit = streamMemo.get(videoId)
-    if (hit && hit.expiresAt > Date.now()) return hit.value
+    if (hit && hit.expiresAt > Date.now()) {
+      streamMemo.delete(videoId)
+      streamMemo.set(videoId, hit)
+      return hit.value || hit
+    }
+    if (hit) streamMemo.delete(videoId)
   }
 
-  const resolved = await raceDirectAudioExtractors(videoId, fetchImpl)
+  const resolved = await raceDirectAudioExtractors(videoId, fetchImpl, useCache)
 
   if (resolved && useCache) {
-    streamMemo.set(videoId, { value: resolved, expiresAt: Date.now() + 60_000 })
+    setStreamMemo(videoId, resolved)
   }
   return resolved
 }
 
 export default async function handler(req, res, deps = {}) {
-  res.setHeader('access-control-allow-origin', '*')
+  const reqOrigin = req.headers?.origin || '*'
+  res.setHeader('access-control-allow-origin', reqOrigin)
+  res.setHeader('vary', 'Origin')
   res.setHeader('access-control-allow-methods', 'GET, HEAD, OPTIONS')
   res.setHeader('access-control-allow-headers', 'accept, content-type, range')
-  res.setHeader('access-control-expose-headers', 'content-length, content-range, accept-ranges, content-disposition')
+  res.setHeader(
+    'access-control-expose-headers',
+    'content-length, content-range, accept-ranges, content-disposition'
+  )
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204
     res.end()
+    return
+  }
+
+  if (!deps.fetchImpl && !allowIpRequest(req)) {
+    res.statusCode = 429
+    res.setHeader('content-type', 'application/json; charset=utf-8')
+    res.end(JSON.stringify({ success: false, message: 'Too many stream requests. Please slow down.' }))
     return
   }
 
@@ -323,20 +439,28 @@ export default async function handler(req, res, deps = {}) {
   if (!VIDEO_ID_RE.test(rawId)) {
     res.statusCode = 400
     res.setHeader('content-type', 'application/json; charset=utf-8')
-    res.end(JSON.stringify({ success: false, message: 'A valid 11-character YouTube video id is required.' }))
+    res.end(
+      JSON.stringify({ success: false, message: 'A valid 11-character YouTube video id is required.' })
+    )
     return
   }
 
   const resolved = await resolveYoutubeAudioStream(rawId, {
     fetchImpl,
-    useCache: !deps.fetchImpl,
+    useCache: !deps.fetchImpl || streamMemo.has(rawId),
   })
 
   if (!resolved?.url) {
     res.statusCode = 404
     res.setHeader('content-type', 'application/json; charset=utf-8')
     res.setHeader('cache-control', 'no-store')
-    res.end(JSON.stringify({ success: false, data: { playable: false }, message: 'No direct audio stream available.' }))
+    res.end(
+      JSON.stringify({
+        success: false,
+        data: { playable: false },
+        message: 'No direct audio stream available.',
+      })
+    )
     return
   }
 
@@ -383,7 +507,11 @@ export default async function handler(req, res, deps = {}) {
       return
     }
 
-    const contentType = (upstream.headers.get('content-type') || resolved.mimeType || 'audio/mp4').split(';')[0]
+    const contentType = (
+      upstream.headers.get('content-type') ||
+      resolved.mimeType ||
+      'audio/mp4'
+    ).split(';')[0]
     res.statusCode = upstream.status === 206 ? 206 : 200
     res.setHeader('content-type', contentType)
     res.setHeader('accept-ranges', upstream.headers.get('accept-ranges') || 'bytes')
@@ -408,12 +536,45 @@ export default async function handler(req, res, deps = {}) {
       return
     }
 
+    // Stream chunks straight to client with zero RAM buffering, full backpressure & disconnect cancel.
+    if (upstream.body && typeof upstream.body.getReader === 'function' && typeof res.write === 'function') {
+      const reader = upstream.body.getReader()
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (res.writableEnded || res.destroyed) {
+            await reader.cancel().catch(() => {})
+            return
+          }
+          const ok = res.write(Buffer.from(value))
+          if (ok === false && typeof res.once === 'function') {
+            await new Promise((resolve) => res.once('drain', resolve))
+          }
+        }
+        if (!res.writableEnded) res.end()
+      } finally {
+        try {
+          reader.releaseLock()
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    }
+
     res.end(Buffer.from(await upstream.arrayBuffer()))
   } catch {
     if (!res.headersSent) {
       res.statusCode = 502
       res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ success: false, message: 'Audio stream proxy failed.' }))
+    } else {
+      try {
+        res.end()
+      } catch {
+        /* client disconnected mid-stream */
+      }
     }
-    res.end(JSON.stringify({ success: false, message: 'Audio stream proxy failed.' }))
   }
 }

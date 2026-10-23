@@ -236,6 +236,76 @@ const STROKE = {
       <circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none" />
     </>
   ),
+  sliders: (
+    <>
+      <path d="M6 4v10M6 18v2M12 4v4M12 12v8M18 4v12M18 20v0.1" />
+      <circle cx="6" cy="16" r="2" />
+      <circle cx="12" cy="10" r="2" />
+      <circle cx="18" cy="18" r="2" />
+    </>
+  ),
+  pip: (
+    <>
+      <rect x="3.5" y="4.8" width="17" height="14.4" rx="2.2" />
+      <rect x="11.6" y="11.2" width="6.8" height="5.6" rx="1.2" fill="currentColor" stroke="none" />
+    </>
+  ),
+  pin: (
+    <>
+      <circle cx="12" cy="12" r="8.4" />
+      <path d="M12 7.6v6.4" />
+      <path d="m9.2 11.4 2.8 2.8 2.8-2.8" />
+    </>
+  ),
+  import: (
+    <>
+      <path d="M4.5 14.5v3.3a1.7 1.7 0 0 0 1.7 1.7h11.6a1.7 1.7 0 0 0 1.7-1.7v-3.3" />
+      <path d="M12 4.2v10.2" />
+      <path d="m8.2 10.6 3.8 3.8 3.8-3.8" />
+    </>
+  ),
+  command: (
+    <>
+      <path d="M8.5 8.5V6.2a2.3 2.3 0 1 0-2.3 2.3h11.6a2.3 2.3 0 1 0-2.3-2.3v11.6a2.3 2.3 0 1 0 2.3-2.3H6.2a2.3 2.3 0 1 0 2.3 2.3V8.5Z" />
+    </>
+  ),
+  queueNext: (
+    <>
+      <path d="M4 7h9" />
+      <path d="M4 12h9" />
+      <path d="M4 17h13" />
+      <path d="m16 6.5 4.2 2.8L16 12.1Z" fill="currentColor" stroke="none" />
+    </>
+  ),
+  queueAdd: (
+    <>
+      <path d="M4 7h12" />
+      <path d="M4 12h12" />
+      <path d="M4 17h7" />
+      <path d="M17.2 14.2v5.6M14.4 17h5.6" />
+    </>
+  ),
+  cloud: (
+    <>
+      <path d="M7.2 18.5h10.2a3.8 3.8 0 0 0 .5-7.6A5.4 5.4 0 0 0 7.4 9.5a4.5 4.5 0 0 0-.2 9Z" />
+    </>
+  ),
+  translate: (
+    <>
+      <path d="M4 6.5h9.5M8.7 4.2v2.3" />
+      <path d="M6.2 6.5c.4 3.5 2.4 6.3 5.6 8" />
+      <path d="M11.3 6.5c-.6 3.4-2.6 6.2-5.8 8" />
+      <path d="m13.4 19.6 3.4-8.4 3.4 8.4" />
+      <path d="M14.6 17h4.4" />
+    </>
+  ),
+  card: (
+    <>
+      <rect x="4.5" y="3.8" width="15" height="16.4" rx="2.4" />
+      <path d="M8.2 8.5h7.6M8.2 12h5.2" />
+      <circle cx="9.2" cy="16.2" r="1.2" fill="currentColor" stroke="none" />
+    </>
+  ),
 }
 
 const FILLED = new Set(['play', 'pause', 'prev', 'next', 'heartFilled'])

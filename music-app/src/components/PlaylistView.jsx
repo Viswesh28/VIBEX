@@ -10,14 +10,15 @@ import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
-/** A playlist the user built, stored on this device. */
+/** A playlist the user built or imported, stored in IndexedDB & synced to Cloud. */
 export function PlaylistView({ id, onTitle }) {
-  const { playlists, deletePlaylist, removeFromPlaylist } = useLibrary()
+  const { playlists, deletePlaylist, removeFromPlaylist, pinPlaylistOffline } = useLibrary()
   const { setStatus } = useStatus()
   const { playFromList } = usePlayerTransport()
   const { dataSaver } = useSettings()
   const { navigate, openRenameModal } = useUI()
   const [armed, setArmed] = useState(false)
+  const [pinning, setPinning] = useState(false)
 
   const pl = playlists.find((p) => p.id === id)
 
@@ -27,7 +28,6 @@ export function PlaylistView({ id, onTitle }) {
     setStatus('')
   }, [pl, onTitle, setStatus])
 
-  // Give the "are you sure" state a moment, then disarm.
   useEffect(() => {
     if (!armed) return undefined
     const t = setTimeout(() => setArmed(false), 3000)
@@ -38,6 +38,15 @@ export function PlaylistView({ id, onTitle }) {
 
   const play = () => pl.songs.length && playFromList(pl.songs, 0)
   const cover = pl.songs.length ? imgOf(pl.songs[0], dataSaver) : ''
+
+  const handlePinAll = async () => {
+    if (!pl.songs.length || pinning) return
+    setPinning(true)
+    setStatus(`Caching “${decodeHtml(pl.name)}” offline…`)
+    const n = await pinPlaylistOffline(pl.songs)
+    setPinning(false)
+    setStatus(`Saved ${n} tracks from “${decodeHtml(pl.name)}” offline.`)
+  }
 
   return (
     <>
@@ -60,13 +69,24 @@ export function PlaylistView({ id, onTitle }) {
           </span>
           <h3 id="playlistTitle">{decodeHtml(pl.name)}</h3>
           <div className="hero-meta">
-            {pl.songs.length} {pl.songs.length === 1 ? 'song' : 'songs'} · saved on this device
+            {pl.songs.length} {pl.songs.length === 1 ? 'song' : 'songs'} · saved locally &amp; cloud-ready
           </div>
           <div className="hero-actions">
             <button type="button" className="btn-primary" onClick={play} disabled={!pl.songs.length}>
               <Icon name="play" size={15} />
               Play
             </button>
+            {pl.songs.length > 0 && (
+              <button
+                type="button"
+                className="btn-ghost on-art"
+                disabled={pinning}
+                onClick={handlePinAll}
+              >
+                <Icon name="pin" size={15} />
+                {pinning ? 'Saving offline…' : 'Save offline'}
+              </button>
+            )}
             <button
               type="button"
               className="btn-ghost on-art"

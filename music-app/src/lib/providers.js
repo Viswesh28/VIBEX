@@ -18,6 +18,7 @@ import {
   toTrackSummary,
 } from './models.js'
 import { PLAYBACK_FAILURE } from './playbackState.js'
+import { resolveOfflinePlaybackUrl } from './offlineStore.js'
 import { effQ, streamOf } from './song.js'
 import { SOURCE_ID, cataloguePath, isYtTrack, mapYtResults } from './sources.js'
 import { isExpired, parseExpiry } from './stream.js'
@@ -295,6 +296,20 @@ export function createJioSaavnStreamResolver({
       const parsed = parseCompositeKey(trackId || track?.id)
       const id = parsed.id
 
+      // Serve pinned offline audio straight from IndexedDB with zero network latency.
+      const offlineUri = await resolveOfflinePlaybackUrl(track?.id || id)
+      if (offlineUri) {
+        return {
+          mode: 'stream',
+          uri: offlineUri,
+          mimeType: 'audio/mp4',
+          quality: 'offline',
+          expiresAtEpochMs: null,
+          requestHeaders: {},
+          license: null,
+        }
+      }
+
       const pickFromSong = (candidate) => {
         if (!candidate?.downloadUrl?.length) return null
         const targetQ = effQ(candidate, quality, dataSaver)
@@ -490,6 +505,19 @@ export function createYtMusicStreamResolver({
     async resolve(trackId, quality = '320kbps', { track = null, forceRefresh = false, dataSaver = false } = {}) {
       const parsed = parseCompositeKey(trackId || track?.id)
       const videoId = videoIdOf(track || { videoId: parsed.id })
+
+      const offlineUri = await resolveOfflinePlaybackUrl(track?.id || (videoId ? `yt:${videoId}` : null))
+      if (offlineUri) {
+        return {
+          mode: 'stream',
+          uri: offlineUri,
+          mimeType: 'audio/mp4',
+          quality: 'offline',
+          expiresAtEpochMs: null,
+          requestHeaders: {},
+          license: null,
+        }
+      }
 
       if (!forceRefresh && track?.downloadUrl?.length) {
         const inline = buildStreamResult(track, quality, dataSaver)

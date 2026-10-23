@@ -4,7 +4,7 @@ import { createProviderRegistry } from '../lib/providers.js'
 import { SOURCE_ID } from '../lib/sources.js'
 import { ArtistGrid, CardGrid } from './CardGrid.jsx'
 import { SongList } from './SongList.jsx'
-import { EmptyState, Spinner } from './Spinner.jsx'
+import { EmptyState, SectionTitle, Spinner } from './Spinner.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 import { usePlayerTransport } from '../state/PlayerContext.jsx'
@@ -18,6 +18,7 @@ const ENDPOINT = {
 
 export function SearchView({ query, tab, onCount }) {
   const [data, setData] = useState(null)
+  const [unified, setUnified] = useState(null)
   const [nextPageToken, setNextPageToken] = useState(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -27,12 +28,10 @@ export function SearchView({ query, tab, onCount }) {
   const { queue, setQueue } = usePlayerTransport()
   const { source } = useSettings()
 
-  // Scoped per view lifecycle so non-sensitive metadata is cached across tab
-  // switches and back-navigation without leaking stale state across sessions.
   const registry = useMemo(() => createProviderRegistry({ apiFn: api }), [])
 
   const yt = source === SOURCE_ID.ytmusic
-  const activeCatalogId = yt && tab === 'songs' ? SOURCE_ID.ytmusic : SOURCE_ID.jiosaavn
+  const activeCatalogId = yt && (tab === 'songs' || tab === 'all') ? SOURCE_ID.ytmusic : SOURCE_ID.jiosaavn
 
   useEffect(() => {
     let alive = true
@@ -40,6 +39,31 @@ export function SearchView({ query, tab, onCount }) {
     setError(null)
     setNextPageToken(null)
     setStatus(`Searching ${tab} for “${query}”…`)
+
+    if (tab === 'all') {
+      Promise.allSettled([
+        registry.getCatalog(activeCatalogId).search(query, { limit: 8 }),
+        api(ENDPOINT.artists(query)),
+        api(ENDPOINT.albums(query)),
+        api(ENDPOINT.playlists(query)),
+      ]).then(([songsRes, artistsRes, albumsRes, playlistsRes]) => {
+        if (!alive) return
+        const songs = songsRes.status === 'fulfilled' ? songsRes.value.songs || [] : []
+        const artists = artistsRes.status === 'fulfilled' ? (artistsRes.value.results || []).slice(0, 6) : []
+        const albums = albumsRes.status === 'fulfilled' ? (albumsRes.value.results || []).slice(0, 6) : []
+        const playlists = playlistsRes.status === 'fulfilled' ? (playlistsRes.value.results || []).slice(0, 6) : []
+        const total = songs.length + artists.length + albums.length + playlists.length
+        setUnified({ songs, artists, albums, playlists })
+        setData(songs)
+        setLoading(false)
+        onCount?.(`(${total} top results)`)
+        if (songs.length) setQueue(songs, { onlyIfIdle: true })
+        setStatus('')
+      })
+      return () => {
+        alive = false
+      }
+    }
 
     const request =
       tab === 'songs'
@@ -104,11 +128,64 @@ export function SearchView({ query, tab, onCount }) {
 
   if (loading) return <Spinner />
   if (error) return <EmptyState icon="alert" title="Search failed" hint={error} />
+
+  if (tab === 'all') {
+    const hasAny =
+      unified &&
+      (unified.songs.length || unified.artists.length || unified.albums.length || unified.playlists.length)
+    if (!hasAny) return <EmptyState icon="search" title="No results found" hint="Try another search." />
+    return (
+      <>
+        {unified.songs.length > 0 && (
+          <>
+            <SectionTitle>
+              Top songs <span>{unified.songs.length}</span>
+            </SectionTitle>
+            <SongList songs={unified.songs} />
+          </>
+        )}
+        {unified.artists.length > 0 && (
+          <>
+            <SectionTitle>
+              Artists <span>{unified.artists.length}</span>
+            </SectionTitle>
+            <ArtistGrid
+              items={unified.artists}
+              onOpen={(a) => navigate({ kind: 'artist', id: a.id })}
+            />
+          </>
+        )}
+        {unified.albums.length > 0 && (
+          <>
+            <SectionTitle>
+              Albums <span>{unified.albums.length}</span>
+            </SectionTitle>
+            <CardGrid
+              items={unified.albums}
+              kind="album"
+              onOpen={(item) => navigate({ kind: 'detail', type: 'album', id: item.id })}
+            />
+          </>
+        )}
+        {unified.playlists.length > 0 && (
+          <>
+            <SectionTitle>
+              Playlists <span>{unified.playlists.length}</span>
+            </SectionTitle>
+            <CardGrid
+              items={unified.playlists}
+              kind="playlist"
+              onOpen={(item) => navigate({ kind: 'detail', type: 'playlist', id: item.id })}
+            />
+          </>
+        )}
+      </>
+    )
+  }
+
   if (!data?.length)
     return <EmptyState icon="search" title={`No ${tab} found`} hint="Try another search." />
 
-  // The source switch itself lives in the top bar (see SourceSwitch), so the
-  // results do not repeat it; the banner there carries the limit.
   if (tab === 'songs') {
     return (
       <>
