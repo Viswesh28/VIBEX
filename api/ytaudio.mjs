@@ -378,6 +378,77 @@ async function raceDirectAudioExtractors(videoId, fetchImpl = fetch, useCircuitB
   }
 }
 
+async function resolveOfficialOmvAudioFallback(videoId, fetchImpl = fetch) {
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`
+    const oeRes = await fetchImpl(oembedUrl, {
+      headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(3500),
+    }).catch(() => null)
+    if (!oeRes?.ok) return null
+    const oe = await oeRes.json().catch(() => null)
+    const rawTitle = String(oe?.title || '').trim()
+    const cleanAuthor = cleanChannelArtist(String(oe?.author_name || ''))
+    if (!rawTitle) return null
+
+    const searchQuery = [rawTitle, cleanAuthor, 'official audio'].filter(Boolean).join(' ')
+    const searchRes = await fetchImpl('https://www.youtube.com/youtubei/v1/search?prettyPrint=false', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': 'Mozilla/5.0',
+        origin: 'https://www.youtube.com',
+        referer: 'https://www.youtube.com/',
+      },
+      body: JSON.stringify({
+        context: {
+          client: { clientName: 'WEB', clientVersion: '2.20250312.01.00', hl: 'en', gl: 'US' },
+        },
+        query: searchQuery,
+      }),
+      signal: AbortSignal.timeout(4500),
+    }).catch(() => null)
+    if (!searchRes?.ok) return null
+    const bodyText =
+      typeof searchRes.text === 'function'
+        ? await searchRes.text().catch(() => '')
+        : JSON.stringify(await searchRes.json().catch(() => ''))
+    const candidateIds = [
+      ...new Set(
+        [...bodyText.matchAll(/"videoRenderer":\{"videoId":"([A-Za-z0-9_-]{11})"/g)]
+          .map((m) => m[1])
+          .filter((id) => id && id !== videoId)
+      ),
+    ].slice(0, 3)
+    if (!candidateIds.length) return null
+
+    const wantTokens = rawTitle
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t.length >= 3)
+
+    for (const candId of candidateIds) {
+      const ctl = new AbortController()
+      const timer = setTimeout(() => ctl.abort(), 5000)
+      try {
+        const hit = await tryInnerTubeClient(candId, INNERTUBE_CLIENTS[0], fetchImpl, ctl.signal)
+        const hitText = `${hit?.title || ''} ${hit?.artist || ''}`.toLowerCase()
+        if (!wantTokens.length || wantTokens.some((tok) => hitText.includes(tok))) {
+          return { ...hit, source: `${hit.source}:omv`, resolvedVideoId: candId }
+        }
+      } catch {
+        /* try next candidate */
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 /** Resolve a YouTube `videoId` strictly to its own verified audio stream (never another song). */
 export async function resolveYoutubeAudioStream(
   videoId,
@@ -395,7 +466,10 @@ export async function resolveYoutubeAudioStream(
     if (hit) streamMemo.delete(videoId)
   }
 
-  const resolved = await raceDirectAudioExtractors(videoId, fetchImpl, useCache)
+  let resolved = await raceDirectAudioExtractors(videoId, fetchImpl, useCache)
+  if (!resolved) {
+    resolved = await resolveOfficialOmvAudioFallback(videoId, fetchImpl)
+  }
 
   if (resolved && useCache) {
     setStreamMemo(videoId, resolved)

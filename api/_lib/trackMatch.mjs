@@ -433,26 +433,51 @@ export function scoreSaavnCandidate(sourceTrack, candidate) {
   const contextBonus = contextOverlap >= 2 ? 0.16 : contextOverlap === 1 ? 0.11 : 0
 
   // Strict 1:1 performer guard: when the source names a real non-label performer
-  // (e.g. "The Weeknd", "Rick Astley") AND the candidate names real performers,
-  // never match a cover/tribute act that shares zero performer/album context tokens.
+  // (e.g. "The Weeknd", "Manfred Mann's Earth Band", "Leo", "Rick Astley") AND the
+  // candidate names real performers, require genuine performer OR non-title film/soundtrack
+  // overlap (ignoring repeated song-title words and generic words like `cover`/`vol`/`hits`).
+  const NOISE_ALBUM_TOKENS = new Set([
+    ...significantTokens(target.coreTitle),
+    'cover',
+    'covers',
+    'vol',
+    'volume',
+    'hits',
+    'best',
+    'single',
+    'version',
+    'songs',
+  ])
   const targetArtistTokens = target.artists
     .flatMap((s) => significantTokens(s))
     .filter((t) => t.length >= 2)
+  const targetFilmTokens = target.contextHints
+    .flatMap((s) => significantTokens(s))
+    .filter((t) => t.length >= 3 && !NOISE_ALBUM_TOKENS.has(t))
   const candPrimaryNames = Array.isArray(candidate?.artists?.primary)
-    ? candidate.artists.primary
+    ? [
+        ...(candidate.artists.primary || []),
+        ...(candidate.artists.featured || []),
+      ]
         .flatMap((a) => splitArtistList(a?.name || a))
         .filter((a) => !GENERIC_LABELS.has(normalizeText(a)))
     : candParts.artists
-  const candPerformerAndAlbumTokens = new Set(
-    [...candPrimaryNames, ...candParts.contextHints]
-      .flatMap((s) => significantTokens(s))
-      .filter((t) => t.length >= 2)
+  const candPerformerTokens = new Set(
+    candPrimaryNames.flatMap((s) => significantTokens(s)).filter((t) => t.length >= 2)
   )
+  const candFilmTokens = new Set(
+    candParts.contextHints
+      .flatMap((s) => significantTokens(s))
+      .filter((t) => t.length >= 3 && !NOISE_ALBUM_TOKENS.has(t))
+  )
+  const hasRealPerformerMatch = targetArtistTokens.some((t) => candPerformerTokens.has(t))
+  const hasRealFilmMatch =
+    targetFilmTokens.length > 0 && targetFilmTokens.some((t) => candFilmTokens.has(t))
   if (
     targetArtistTokens.length > 0 &&
-    candPerformerAndAlbumTokens.size > 0 &&
-    contextOverlap === 0 &&
-    !targetArtistTokens.some((t) => candPerformerAndAlbumTokens.has(t))
+    candPerformerTokens.size > 0 &&
+    !hasRealPerformerMatch &&
+    !hasRealFilmMatch
   ) {
     return { score: 0, titleScore }
   }
