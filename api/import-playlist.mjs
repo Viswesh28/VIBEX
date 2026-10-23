@@ -140,12 +140,24 @@ export function parseTextTracklist(rawText = '') {
     })
 }
 
+const LABEL_CHANNEL_RE =
+  /\b(records?|music|entertainment|pictures|films?|studios?|productions?|audio|t-?series|yrf|sony|zee|saregama|aditya|lahari|think|sun\s+tv|tips|junglee|mythri|hombale|divo|ayngaran|vevo)\b/i
+
+function artistTokens(str = '') {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2 && w !== 'the' && w !== 'and')
+}
+
 function pickBestSaavnCandidate(results = [], entry = {}) {
   if (!Array.isArray(results) || !results.length) return null
-  const wantArtist = String(entry.artist || '')
-    .toLowerCase()
+  const rawArtist = String(entry.artist || '')
     .split(/[,&]|feat\.?|ft\.?/i)[0]
     .trim()
+  const wantTokens = artistTokens(rawArtist)
+  const enforcePerformerMatch = wantTokens.length > 0 && !LABEL_CHANNEL_RE.test(rawArtist)
   const wantTitle = String(entry.title || entry.query || '').toLowerCase()
   const wantsCoverOrInst = /\b(instrumental|karaoke|cover|lofi|8d|slowed|reverb|piano)\b/i.test(wantTitle)
 
@@ -154,17 +166,26 @@ function pickBestSaavnCandidate(results = [], entry = {}) {
   for (let i = 0; i < results.length; i++) {
     const c = results[i]
     if (!c?.id || !c?.downloadUrl?.length) continue
-    let score = Math.max(0, 12 - i * 2)
-    const primaryNames = (c.artists?.primary || []).map((a) => String(a.name || '').toLowerCase()).join(' | ')
+    const performerText = [...(c.artists?.primary || []), ...(c.artists?.featured || [])]
+      .map((a) => String(a.name || '').toLowerCase())
+      .join(' | ')
     const allNames = (c.artists?.all || []).map((a) => String(a.name || '').toLowerCase()).join(' | ')
-    const candText = `${c.name || ''} ${c.album?.name || ''} ${primaryNames}`.toLowerCase()
+    const candText = `${c.name || ''} ${c.album?.name || ''} ${performerText}`.toLowerCase()
 
-    if (wantArtist && wantArtist.length >= 2) {
-      if (primaryNames.includes(wantArtist)) score += 50
-      else if (allNames.includes(wantArtist)) score += 12
+    // Hard 1:1 performer guard: when a real singer/band is known (e.g. "Rick Astley",
+    // "The Weeknd", "Taylor Swift"), never substitute a cover/tribute act ("The Piano Guys")
+    // that only credits the original artist as songwriter in `artists.all`!
+    const hasPerformerOverlap = wantTokens.some((tok) => performerText.includes(tok))
+    if (enforcePerformerMatch && !hasPerformerOverlap) {
+      continue
     }
+
+    let score = Math.max(0, 12 - i * 2)
+    if (hasPerformerOverlap) score += 50
+    else if (wantTokens.some((tok) => allNames.includes(tok))) score += 12
+
     if (!wantsCoverOrInst && /\b(instrumental|karaoke|tribute|piano guys|ringtone)\b/i.test(candText)) {
-      score -= 35
+      score -= 40
     }
     const plays = Number(c.playCount || 0)
     if (plays > 0) score += Math.min(18, Math.log10(plays + 1) * 2.5)
@@ -174,7 +195,57 @@ function pickBestSaavnCandidate(results = [], entry = {}) {
       best = c
     }
   }
-  return best || results[0] || null
+  if (best) return best
+  return enforcePerformerMatch ? null : results[0] || null
+}
+
+async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
+  const effectiveFetch = fetchImpl || globalThis.fetch
+  if (typeof effectiveFetch !== 'function') return null
+  const res = await effectiveFetch('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'user-agent': UA,
+      origin: 'https://music.youtube.com',
+      referer: 'https://music.youtube.com/',
+    },
+    body: JSON.stringify({
+      context: {
+        client: { clientName: 'WEB_REMIX', clientVersion: '1.20250312.01.00', hl: 'en', gl: 'IN' },
+      },
+      query: entry.query,
+      // Official YT Music "Songs" filter param so studio audio tracks rank first
+      params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D',
+    }),
+    signal: AbortSignal.timeout(6500),
+  }).catch(() => null)
+  if (!res?.ok) return null
+  const raw = await res.json().catch(() => null)
+  const item = listItemRenderers(raw).map(toResult).filter(Boolean)[0]
+  if (!item?.id) return null
+  return {
+    id: `yt:${item.id}`,
+    name: unescapeEntities(item.title || entry.title || 'Track'),
+    type: 'song',
+    duration: Number(item.duration) || 0,
+    album: { id: '', name: unescapeEntities(item.album || '') },
+    artists: {
+      primary: (item.artists?.length
+        ? item.artists
+        : [{ id: '', name: entry.artist || 'YouTube Music' }]
+      ).map((a) => ({ id: a.id || '', name: unescapeEntities(a.name || '') })),
+      featured: [],
+      all: [],
+    },
+    image: [
+      {
+        quality: '500x500',
+        url: item.thumbnail || `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
+      },
+    ],
+    downloadUrl: [{ quality: '160kbps', url: `/api/ytaudio?id=${item.id}` }],
+  }
 }
 
 async function resolveTextQueriesToSaavn(entries, fetchImpl = null) {
@@ -188,7 +259,10 @@ async function resolveTextQueriesToSaavn(entries, fetchImpl = null) {
         `/search/songs?query=${encodeURIComponent(entry.query)}&limit=8`,
         fetchImpl
       ).catch(() => null)
-      const hit = pickBestSaavnCandidate(d?.results || [], entry)
+      let hit = pickBestSaavnCandidate(d?.results || [], entry)
+      if (!hit && entries.length <= 25) {
+        hit = await resolveViaYouTubeMusicSearch(entry, fetchImpl)
+      }
       if (hit?.id && hit?.downloadUrl?.length) out[idx] = hit
     }
   }
@@ -300,22 +374,26 @@ async function importSingleYouTubeVideo(videoId, hintTitle = '', fetchImpl = fet
     }
   }
 
-  // 3. Match against 320kbps studio audio first when the song exists in catalogue
+  // 3. Match against 320kbps studio audio first ONLY when verified 1:1 performer match exists
   if (ytTitle) {
     const query = ytAuthor && !ytTitle.toLowerCase().includes(ytAuthor.toLowerCase())
       ? `${ytTitle} ${ytAuthor}`
       : ytTitle
-    const matched = await resolveTextQueriesToSaavn(
-      [{ artist: ytAuthor, title: ytTitle, query }],
-      fetchImpl
+    const d = await callSaavn(`/search/songs?query=${encodeURIComponent(query)}&limit=8`, fetchImpl).catch(
+      () => null
     )
-    if (matched.length) {
+    const saavnMatch = pickBestSaavnCandidate(d?.results || [], {
+      artist: ytAuthor,
+      title: ytTitle,
+      query,
+    })
+    if (saavnMatch?.id && saavnMatch?.downloadUrl?.length) {
       return {
         kind: 'track',
-        name: unescapeEntities(matched[0].name || ytTitle),
+        name: unescapeEntities(saavnMatch.name || ytTitle),
         sourceType: 'youtube',
         requestedCount: 1,
-        tracks: [matched[0]],
+        tracks: [saavnMatch],
       }
     }
   }
