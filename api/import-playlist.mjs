@@ -14,7 +14,7 @@
  */
 
 import saavnApp from '../jiosaavn-api/src/server.js'
-import ytmusicHandler, { enrichResultsWithSaavnAudio, listItemRenderers, toResult } from './ytmusic.mjs'
+import { enrichResultsWithSaavnAudio, listItemRenderers, toResult } from './ytmusic.mjs'
 import { unescapeEntities } from './_lib/trackMatch.mjs'
 
 const MAX_IMPORT_TRACKS = 100
@@ -140,6 +140,43 @@ export function parseTextTracklist(rawText = '') {
     })
 }
 
+function pickBestSaavnCandidate(results = [], entry = {}) {
+  if (!Array.isArray(results) || !results.length) return null
+  const wantArtist = String(entry.artist || '')
+    .toLowerCase()
+    .split(/[,&]|feat\.?|ft\.?/i)[0]
+    .trim()
+  const wantTitle = String(entry.title || entry.query || '').toLowerCase()
+  const wantsCoverOrInst = /\b(instrumental|karaoke|cover|lofi|8d|slowed|reverb|piano)\b/i.test(wantTitle)
+
+  let best = null
+  let bestScore = -Infinity
+  for (let i = 0; i < results.length; i++) {
+    const c = results[i]
+    if (!c?.id || !c?.downloadUrl?.length) continue
+    let score = Math.max(0, 12 - i * 2)
+    const primaryNames = (c.artists?.primary || []).map((a) => String(a.name || '').toLowerCase()).join(' | ')
+    const allNames = (c.artists?.all || []).map((a) => String(a.name || '').toLowerCase()).join(' | ')
+    const candText = `${c.name || ''} ${c.album?.name || ''} ${primaryNames}`.toLowerCase()
+
+    if (wantArtist && wantArtist.length >= 2) {
+      if (primaryNames.includes(wantArtist)) score += 50
+      else if (allNames.includes(wantArtist)) score += 12
+    }
+    if (!wantsCoverOrInst && /\b(instrumental|karaoke|tribute|piano guys|ringtone)\b/i.test(candText)) {
+      score -= 35
+    }
+    const plays = Number(c.playCount || 0)
+    if (plays > 0) score += Math.min(18, Math.log10(plays + 1) * 2.5)
+
+    if (score > bestScore) {
+      bestScore = score
+      best = c
+    }
+  }
+  return best || results[0] || null
+}
+
 async function resolveTextQueriesToSaavn(entries, fetchImpl = null) {
   const out = new Array(entries.length).fill(null)
   let cursor = 0
@@ -148,10 +185,10 @@ async function resolveTextQueriesToSaavn(entries, fetchImpl = null) {
       const idx = cursor++
       const entry = entries[idx]
       const d = await callSaavn(
-        `/search/songs?query=${encodeURIComponent(entry.query)}&limit=3`,
+        `/search/songs?query=${encodeURIComponent(entry.query)}&limit=8`,
         fetchImpl
       ).catch(() => null)
-      const hit = d?.results?.[0]
+      const hit = pickBestSaavnCandidate(d?.results || [], entry)
       if (hit?.id && hit?.downloadUrl?.length) out[idx] = hit
     }
   }
@@ -206,43 +243,86 @@ async function importFromJioSaavnUrl(sourceUrl, fetchImpl = null) {
   }
 }
 
-async function importSingleYouTubeVideo(videoId, hintTitle = '', fetchImpl = fetch) {
-  // Call in-process ytmusic single-song lookup (already matches 320kbps studio audio + `/api/ytaudio` fallback!)
-  let songPayload = null
-  const mockRes = {
-    statusCode: 200,
-    setHeader: () => {},
-    end: (raw) => {
-      try {
-        songPayload = JSON.parse(raw)
-      } catch {
-        songPayload = null
-      }
-    },
-  }
-  await ytmusicHandler(
-    {
-      method: 'GET',
-      url: `/api/ytmusic?op=song&id=${encodeURIComponent(videoId)}`,
-      headers: { host: 'vibex.internal' },
-    },
-    mockRes,
-    fetchImpl === fetch ? {} : { fetchImpl }
-  ).catch(() => {})
+function cleanYouTubeTitleForSearch(rawTitle = '') {
+  return unescapeEntities(rawTitle)
+    .replace(/\s*[\(\[](?:official\s*(?:music\s*)?video|official\s*audio|lyric\s*video|lyrics?|4k|hd|full\s*video(?:\s*song)?|audio|visualizer)[^)\]]*[\)\]]/gi, '')
+    .replace(/\s*\|\s*(?:official|full\s*video|lyric|4k).*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
-  const resolvedSong = songPayload?.data?.song || songPayload?.data
-  if (resolvedSong?.id) {
-    return {
-      kind: 'track',
-      name: unescapeEntities(resolvedSong.name || hintTitle || 'YouTube Track'),
-      sourceType: 'youtube',
-      requestedCount: 1,
-      tracks: [resolvedSong],
+async function importSingleYouTubeVideo(videoId, hintTitle = '', fetchImpl = fetch) {
+  let ytTitle = cleanYouTubeTitleForSearch(hintTitle)
+  let ytAuthor = ''
+  let ytDuration = 0
+
+  // 1. Official YouTube JSON oEmbed — fast (~60ms) & never datacenter-blocked on Vercel AWS IPs
+  const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`
+  const oeRes = await fetchImpl(oembedUrl, {
+    headers: { 'user-agent': UA, accept: 'application/json' },
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => null)
+  if (oeRes?.ok) {
+    const oe = await oeRes.json().catch(() => null)
+    if (oe?.title) ytTitle = cleanYouTubeTitleForSearch(oe.title) || ytTitle
+    if (oe?.author_name) {
+      ytAuthor = unescapeEntities(oe.author_name)
+        .replace(/\s*-\s*Topic$/i, '')
+        .replace(/VEVO$/i, '')
+        .trim()
     }
   }
 
-  // Fallback direct YouTube audio track descriptor if metadata lookup was minimal
-  const cleanTitle = unescapeEntities(hintTitle || 'YouTube Audio Track')
+  // 2. InnerTube `youtubei/v1/player` fallback if video had embedding disabled
+  if (!ytTitle) {
+    const itRes = await fetchImpl('https://music.youtube.com/youtubei/v1/player?prettyPrint=false', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': UA,
+        origin: 'https://music.youtube.com',
+        referer: 'https://music.youtube.com/',
+      },
+      body: JSON.stringify({
+        context: {
+          client: { clientName: 'WEB_REMIX', clientVersion: '1.20250312.01.00', hl: 'en', gl: 'IN' },
+        },
+        videoId,
+      }),
+      signal: AbortSignal.timeout(6000),
+    }).catch(() => null)
+    if (itRes?.ok) {
+      const itJson = await itRes.json().catch(() => null)
+      const vd = itJson?.videoDetails
+      if (vd?.title) ytTitle = cleanYouTubeTitleForSearch(vd.title)
+      if (vd?.author) ytAuthor = unescapeEntities(vd.author).replace(/\s*-\s*Topic$/i, '').trim()
+      ytDuration = Number(vd?.lengthSeconds) || 0
+    }
+  }
+
+  // 3. Match against 320kbps studio audio first when the song exists in catalogue
+  if (ytTitle) {
+    const query = ytAuthor && !ytTitle.toLowerCase().includes(ytAuthor.toLowerCase())
+      ? `${ytTitle} ${ytAuthor}`
+      : ytTitle
+    const matched = await resolveTextQueriesToSaavn(
+      [{ artist: ytAuthor, title: ytTitle, query }],
+      fetchImpl
+    )
+    if (matched.length) {
+      return {
+        kind: 'track',
+        name: unescapeEntities(matched[0].name || ytTitle),
+        sourceType: 'youtube',
+        requestedCount: 1,
+        tracks: [matched[0]],
+      }
+    }
+  }
+
+  // 4. Pure-audio direct `/api/ytaudio` fallback for YouTube-exclusive uploads / remixes / covers
+  const cleanTitle = unescapeEntities(ytTitle || hintTitle || 'YouTube Audio Track')
+  const cleanArtist = ytAuthor || 'YouTube Music'
   return {
     kind: 'track',
     name: cleanTitle,
@@ -253,8 +333,8 @@ async function importSingleYouTubeVideo(videoId, hintTitle = '', fetchImpl = fet
         id: `yt:${videoId}`,
         name: cleanTitle,
         type: 'song',
-        duration: 0,
-        artists: { primary: [{ id: '', name: 'YouTube Music' }], featured: [], all: [] },
+        duration: ytDuration,
+        artists: { primary: [{ id: '', name: cleanArtist }], featured: [], all: [] },
         image: [
           { quality: '500x500', url: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` },
         ],
@@ -390,10 +470,28 @@ async function importFromSpotifyEntity(entityType, entityId, hintTitle = '', fet
         title = unescapeEntities(oe?.title || '')
       }
     }
-    if (!title && html) {
-      title = extractMetaTag(html, 'og:title')
+    if (html) {
+      if (!title) title = extractMetaTag(html, 'og:title')
       const desc = extractMetaTag(html, 'og:description')
       if (desc && !artist) artist = desc.split('·')[0].trim()
+    }
+    if (!artist || !title) {
+      const pageRes = await fetchImpl(canonicalUrl, {
+        headers: { 'user-agent': UA, accept: 'text/html' },
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => null)
+      if (pageRes?.ok) {
+        const pageHtml = await pageRes.text().catch(() => '')
+        if (!title) title = extractMetaTag(pageHtml, 'og:title')
+        const pageDesc = extractMetaTag(pageHtml, 'og:description')
+        if (pageDesc && !artist) artist = pageDesc.split('·')[0].trim()
+        if (!artist) {
+          const byMatch = /<title>[^<]*?-\s*song(?:\s+and\s+lyrics)?\s+by\s+([^|<]+?)\s*\|\s*Spotify<\/title>/i.exec(
+            pageHtml
+          )
+          if (byMatch) artist = unescapeEntities(byMatch[1]).trim()
+        }
+      }
     }
     if (!title && hintTitle) title = hintTitle
     if (!title) throw new Error('Could not read track metadata from that Spotify link.')
