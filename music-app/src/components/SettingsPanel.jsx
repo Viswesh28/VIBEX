@@ -105,7 +105,20 @@ function InstallSection() {
 /** Playback preferences. Everything here persists across reloads. */
 export function SettingsPanel({ open, sleep }) {
   const s = useSettings()
-  const { resetHistory } = useLibrary()
+  const {
+    resetHistory,
+    hasAccountProvider,
+    account,
+    syncState,
+    connectAccount,
+    syncNow,
+    pauseSync,
+    resumeSync,
+    disconnectAccount,
+    clearRemoteMirror,
+    downloadLibraryExport,
+    deleteLocalLibrary,
+  } = useLibrary()
   const { current, currentQuality } = usePlayer()
   const est = estimate(currentQuality, current?.duration)
   const plan = mediaPlan({ dataSaver: s.dataSaver, qualityPref: s.qualityPref })
@@ -114,6 +127,8 @@ export function SettingsPanel({ open, sleep }) {
   // Two-step reset: a history wipe is irreversible, so the first tap only arms
   // the button and tells the listener exactly what will survive.
   const [resetArmed, setResetArmed] = useState(false)
+  const [deleteLibArmed, setDeleteLibArmed] = useState(false)
+  const [syncBusy, setSyncBusy] = useState(false)
 
   return (
     <div
@@ -408,6 +423,130 @@ export function SettingsPanel({ open, sleep }) {
             ? 'This erases plays, minutes and the taste profile. Likes and playlists stay.'
             : 'Reset erases plays, minutes and the taste profile — likes and playlists stay.'}
         </p>
+
+        <div className="set-row">
+          <span className="set-label">Library backup</span>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => downloadLibraryExport()}
+          >
+            Export library
+          </button>
+        </div>
+
+        <div className="set-row">
+          <span className="set-label">Local library data</span>
+          <button
+            type="button"
+            className={'btn-ghost' + (deleteLibArmed ? ' danger' : '')}
+            onClick={() => {
+              if (!deleteLibArmed) {
+                setDeleteLibArmed(true)
+                return
+              }
+              deleteLocalLibrary()
+              setDeleteLibArmed(false)
+            }}
+            onBlur={() => setDeleteLibArmed(false)}
+          >
+            {deleteLibArmed ? 'Tap again to delete library' : 'Delete library copy'}
+          </button>
+        </div>
+        <p className="set-note">
+          {deleteLibArmed
+            ? 'Removes saved likes, custom playlists, and any synced mirror copy from this device.'
+            : 'Export saves your likes and playlists as portable JSON without expiring stream links.'}
+        </p>
+
+        {hasAccountProvider ? (
+          <>
+            <div className="set-row">
+              <span className="set-label">
+                Account sync{account ? ` (${account.displayName})` : ''}
+              </span>
+              {!account ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={syncBusy}
+                  onClick={async () => {
+                    setSyncBusy(true)
+                    try {
+                      await connectAccount({ collections: ['liked', 'playlists'] })
+                    } finally {
+                      setSyncBusy(false)
+                    }
+                  }}
+                >
+                  Opt in &amp; connect
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={syncBusy}
+                  onClick={async () => {
+                    setSyncBusy(true)
+                    try {
+                      await syncNow()
+                    } finally {
+                      setSyncBusy(false)
+                    }
+                  }}
+                >
+                  Sync now
+                </button>
+              )}
+            </div>
+            {account && (
+              <div className="set-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                {syncState?.status === 'paused' ? (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => resumeSync()}
+                  >
+                    Resume sync
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => pauseSync()}
+                  >
+                    Pause sync
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => clearRemoteMirror()}
+                >
+                  Clear synced copy
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => disconnectAccount({ deleteMirror: false })}
+                >
+                  Disconnect account
+                </button>
+              </div>
+            )}
+            <p className="set-note">
+              {syncState?.status === 'auth_required'
+                ? 'Provider session expired or was revoked — reconnect to resume library sync.'
+                : account
+                  ? `Syncs liked songs and playlists only (${syncState?.status || 'idle'}). Local-only items are never removed by a sync.`
+                  : 'Optional delegated sign-in reads liked songs and playlists only. Passwords and browser cookies are never collected.'}
+            </p>
+          </>
+        ) : (
+          <p className="set-note">
+            Cloud account sync is disabled until an authorized OAuth provider integration is configured — VIBEX never collects passwords or browser cookies.
+          </p>
+        )}
       </div>
 
       <div className="set-sec">
@@ -474,6 +613,23 @@ export function SettingsPanel({ open, sleep }) {
       </div>
 
       <InstallSection />
+
+      <div className="set-sec">
+        <div className="set-head">
+          <Icon name="info" size={16} />
+          <span>Independent service notice</span>
+        </div>
+        <p className="set-note">
+          VIBEX is an independent application and is not affiliated with, endorsed by, or sponsored
+          by Google, YouTube, YouTube Music, JioSaavn, or any music provider. Provider names and
+          marks belong to their respective owners.
+        </p>
+        <p className="set-note">
+          Availability depends on provider, territory, account entitlements, and rights. Users must
+          follow applicable service terms and copyright law. VIBEX grants no rights to copy,
+          redistribute, or publicly perform recordings.
+        </p>
+      </div>
     </div>
   )
 }

@@ -74,13 +74,17 @@ export function YouTubeEmbed() {
       } catch {
         return
       }
-      if (data?.event === 'onError') setFailure(embedErrorCopy(data.info))
+      if (data?.event === 'onError') {
+        setFailure(embedErrorCopy(data.info))
+        reportEmbed('error', data.info)
+      }
       if (data?.event === 'onReady') setFailure('')
       if (data?.event === 'onStateChange') {
         // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued.
         const code = Number(data.info)
         if (code === 1) reportEmbed('playing')
         if (code === 2) reportEmbed('paused')
+        if (code === 3) reportEmbed('buffering')
         if (code === 0) {
           if (reportEmbed('ended') === 'replay') {
             command('seekTo', [0, true])

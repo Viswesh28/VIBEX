@@ -2,18 +2,15 @@
  * YouTube Music catalogue search — the other source a listener can pick.
  *
  * Only the *catalogue* lives here. Search is the part YouTube still serves to
- * this deployment: it resolves ids and metadata from a datacenter IP without a
- * session, which is exactly what a picker needs to show results.
+ * this deployment: it resolves ids, metadata and pagination continuations from
+ * a datacenter IP without a session, which is what a catalogue adapter needs.
  *
- * Streams are a different story and are deliberately not attempted here. The
- * player endpoint answers `LOGIN_REQUIRED` from this sort of address (measured,
- * see docs/adr/0001), so a route that pretended to resolve one would be the
- * false promise this project keeps refusing to ship. `src/lib/sources.js` says
- * what a listener can actually do with a result, and where.
- *
- * The response is normalised into the same field names the JioSaavn routes use
- * (`videoId`, `title`, `artists`, `duration`, `thumbnail`) so the client has one
- * mapping step, not two shapes to reconcile.
+ * Streams are deliberately not attempted here. The player endpoint answers
+ * `LOGIN_REQUIRED` from this sort of address (measured, see docs/adr/0001),
+ * and InnerTube is undocumented and unapproved for third-party audio streaming.
+ * `src/lib/sources.js` and `src/lib/providers.js` map each result onto the
+ * shared domain model and route playback strictly through YouTube's official
+ * embed player.
  */
 
 const SEARCH_TIMEOUT = 6000
@@ -54,7 +51,7 @@ async function postJson(url, body, timeoutMs) {
 }
 
 /** Join the text of a YouTube "runs" array, ignoring separators it leaves behind. */
-function runsText(node) {
+export function runsText(node) {
   if (!node) return ''
   const runs = node.runs || (node.simpleText ? [{ text: node.simpleText }] : [])
   return runs
@@ -65,7 +62,7 @@ function runsText(node) {
 }
 
 /** Every `musicResponsiveListItemRenderer` in the tree, in order. */
-function listItemRenderers(node, out = [], depth = 0) {
+export function listItemRenderers(node, out = [], depth = 0) {
   if (depth > 24 || node == null || out.length > 200) return out
   if (Array.isArray(node)) {
     for (const v of node) listItemRenderers(v, out, depth + 1)
@@ -78,8 +75,30 @@ function listItemRenderers(node, out = [], depth = 0) {
   return out
 }
 
+/** Walk the response tree for the first shelf continuation token, if present. */
+export function findContinuationToken(node, depth = 0) {
+  if (depth > 24 || node == null || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const hit = findContinuationToken(item, depth + 1)
+      if (hit) return hit
+    }
+    return null
+  }
+  const direct =
+    node?.nextContinuationData?.continuation ||
+    node?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token ||
+    null
+  if (typeof direct === 'string' && direct.trim()) return direct.trim()
+  for (const key of Object.keys(node)) {
+    const hit = findContinuationToken(node[key], depth + 1)
+    if (hit) return hit
+  }
+  return null
+}
+
 /** "3:42" → 222. Tolerates "1:02:03" and junk. */
-function seconds(text) {
+export function seconds(text) {
   const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(text || '').trim())
   if (!m) return 0
   return m[3] ? +m[1] * 3600 + +m[2] * 60 + +m[3] : +m[1] * 60 + +m[2]
@@ -90,8 +109,18 @@ function biggestThumb(thumbnails) {
   return thumbnails[thumbnails.length - 1]?.url || null
 }
 
+function isExplicitRenderer(renderer) {
+  const badges = renderer?.badges || []
+  return badges.some(
+    (b) =>
+      b?.musicInlineBadgeRenderer?.icon?.iconType === 'MUSIC_EXPLICIT_BADGE' ||
+      /explicit/i.test(String(b?.musicInlineBadgeRenderer?.accessibilityData?.accessibilityData?.label || ''))
+  )
+}
+
 /** Pull one renderer apart into the flat shape the client maps. */
-function toResult(renderer) {
+export function toResult(renderer) {
+  if (!renderer || typeof renderer !== 'object') return null
   const cols = renderer.flexColumns || []
   const title = runsText(cols[0]?.musicResponsiveListItemFlexColumnRenderer?.text)
   const subtitleText = runsText(cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text)
@@ -124,25 +153,45 @@ function toResult(renderer) {
     subtitle: subtitleText,
     duration,
     thumbnail: biggestThumb(thumbnails),
+    explicit: isExplicitRenderer(renderer),
   }
+}
+
+/** Parse a full search payload into deduplicated items + optional continuation cursor. */
+export function parseYtSearchResponse(json, limit = 20) {
+  const seen = new Set()
+  const results = []
+  for (const renderer of listItemRenderers(json)) {
+    const item = toResult(renderer)
+    if (!item || seen.has(item.videoId)) continue
+    seen.add(item.videoId)
+    results.push(item)
+    if (results.length >= limit) break
+  }
+  const nextPageToken = results.length ? findContinuationToken(json) : null
+  return { results, nextPageToken }
 }
 
 export default async function handler(req, res) {
   const q = req.query || {}
   const query = String(q.query || '').slice(0, 160)
+  const pageToken = typeof q.pageToken === 'string' ? q.pageToken.trim().slice(0, 512) : ''
   const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 40)
 
-  if (!query) {
+  if (!query && !pageToken) {
     res.status(400).json({ success: false, code: 'bad_request', message: 'A query is required.' })
     return
   }
 
-  const body = { context: WEB_REMIX, query, params: SONGS_PARAMS }
-  const r = await postJson(
-    'https://music.youtube.com/youtubei/v1/search?prettyPrint=false',
-    body,
-    SEARCH_TIMEOUT
-  )
+  const endpoint = pageToken
+    ? `https://music.youtube.com/youtubei/v1/search?continuation=${encodeURIComponent(pageToken)}&ctoken=${encodeURIComponent(pageToken)}&prettyPrint=false`
+    : 'https://music.youtube.com/youtubei/v1/search?prettyPrint=false'
+
+  const body = pageToken
+    ? { context: WEB_REMIX }
+    : { context: WEB_REMIX, query, params: SONGS_PARAMS }
+
+  const r = await postJson(endpoint, body, SEARCH_TIMEOUT)
 
   if (!r.ok) {
     // A search that cannot run is a typed answer, never a 500.
@@ -156,21 +205,13 @@ export default async function handler(req, res) {
     return
   }
 
-  const seen = new Set()
-  const results = []
-  for (const renderer of listItemRenderers(r.json)) {
-    const item = toResult(renderer)
-    if (!item || seen.has(item.videoId)) continue
-    seen.add(item.videoId)
-    results.push(item)
-    if (results.length >= limit) break
-  }
+  const { results, nextPageToken } = parseYtSearchResponse(r.json, limit)
 
   // Search results are stable for a given query; a short edge cache keeps the
   // picker from re-asking YouTube on every keystroke.
   res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=900')
   res.status(200).json({
     success: true,
-    data: { source: 'ytmusic', total: results.length, results },
+    data: { source: 'ytmusic', total: results.length, results, nextPageToken },
   })
 }

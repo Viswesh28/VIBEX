@@ -66,11 +66,14 @@ export function normalizeSource(id) {
 }
 
 /** The catalogue endpoint for a source; both return `{ results: [...] }`. */
-export function cataloguePath(source, query, limit = 20) {
+export function cataloguePath(source, query, limit = 20, pageToken = null) {
   const q = encodeURIComponent(query)
-  return source === SOURCE_ID.ytmusic
-    ? `/ytmusic?query=${q}&limit=${limit}`
-    : `/search/songs?query=${q}&limit=${limit}`
+  if (source === SOURCE_ID.ytmusic) {
+    const tokenPart = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''
+    return `/ytmusic?query=${q}&limit=${limit}${tokenPart}`
+  }
+  const pagePart = pageToken ? `&page=${encodeURIComponent(pageToken)}` : ''
+  return `/search/songs?query=${q}&limit=${limit}${pagePart}`
 }
 
 /** Playback outcomes, kept apart from the canvas reasons on purpose. */
@@ -172,11 +175,15 @@ export function mapYtResult(raw) {
   const artist = artists.join(', ') || 'Unknown artist'
   return {
     id: `yt:${raw.videoId}`,
+    key: `ytmusic:${raw.videoId}`,
+    provider: SOURCE_ID.ytmusic,
+    providerTrackId: raw.videoId,
     videoId: raw.videoId,
     source: SOURCE_ID.ytmusic,
     name: raw.title,
     subtitle: raw.subtitle || [artist, raw.album].filter(Boolean).join(' • '),
     duration: Number(raw.duration) || 0,
+    explicitContent: raw.explicit ? 1 : 0,
     album: raw.album ? { name: raw.album } : null,
     artists: { primary: artists.map((name) => ({ name })), all: [] },
     image: raw.thumbnail ? [{ quality: '500x500', url: raw.thumbnail }] : [],

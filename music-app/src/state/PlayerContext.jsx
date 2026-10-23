@@ -9,6 +9,17 @@ import {
 } from 'react'
 import { api } from '../lib/api.js'
 import { decodeHtml } from '../lib/format.js'
+import { sanitizeTrackForPersistence, trackKey } from '../lib/models.js'
+import {
+  PLAYBACK_FAILURE,
+  PLAYBACK_STATE,
+  classifyPlaybackFailure,
+  decideFailureAction,
+  initialPlaybackMachine,
+  playbackFailureCopy,
+  transitionPlaybackState,
+} from '../lib/playbackState.js'
+import { createJioSaavnStreamResolver } from '../lib/providers.js'
 import { artistsOf, effQ, streamOf } from '../lib/song.js'
 import { playbackCopy, playbackPlan } from '../lib/sources.js'
 import { EMBED_NOTE, videoIdOf } from '../lib/ytEmbed.js'
@@ -121,10 +132,13 @@ function readSavedPosition(songId) {
  * is never interrupted by a React re-render. Only the values the UI actually
  * paints (current index, play state, clock) live in state.
  */
-export function PlayerProvider({ children }) {
+export function PlayerProvider({ children, streamResolver = null }) {
   const settings = useSettings()
   const { statsOnPlay, flushStats, loadStats } = useLibrary()
   const { setStatus } = useStatus()
+
+  const defaultStreamResolver = useMemo(() => createJioSaavnStreamResolver(), [])
+  const activeResolver = streamResolver || defaultStreamResolver
 
   // Read once, before the first paint, so the restored track is in the very
   // first render rather than flashing "Nothing playing".
@@ -144,6 +158,17 @@ export function PlayerProvider({ children }) {
   // Transition truth, not a timer: the badge and the cover cross-fade read this.
   const [transition, setTransition] = useState({ state: 'idle', kind: null, reason: null, dur: 0 })
   const [stopReason, setStopReason] = useState(null)
+  // Explicit playback state machine: Idle → Resolving → Ready → Buffering → Playing ↔ Paused → Ended (+ Failed).
+  const [playbackMachine, setPlaybackMachine] = useState(initialPlaybackMachine)
+  const machineRef = useRef(playbackMachine)
+  machineRef.current = playbackMachine
+  const dispatchMachine = useCallback((event) => {
+    setPlaybackMachine((prev) => {
+      const next = transitionPlaybackState(prev, event)
+      machineRef.current = next
+      return next
+    })
+  }, [])
   // The long-form embed, when one is open: { id, name, subtitle, videoId }.
   // A different kind of playback from everything else in this file — YouTube's
   // player, not ours — so it is state rather than a fifth deck.
@@ -211,15 +236,16 @@ export function PlayerProvider({ children }) {
   idxRef.current = currentIndex
   setRef.current = settings
 
-  // Persist the queue (capped) and the current index. A relaunch restores the
-  // track paused; nothing autoplays, which iOS would block anyway.
+  // Persist the queue (capped) and the current index, stripping transient or
+  // expiring stream URLs (`?expire=...` / `expiresAtEpochMs`) so stale raw CDN
+  // tokens are never saved across reloads.
   useEffect(() => {
     if (!queue.length) {
       store.remove(SESSION_KEY)
       return
     }
     store.setJSON(SESSION_KEY, {
-      queue: queue.slice(0, QUEUE_CAP),
+      queue: queue.slice(0, QUEUE_CAP).map(sanitizeTrackForPersistence).filter(Boolean),
       index: currentIndex,
       at: Date.now(),
     })
@@ -752,11 +778,15 @@ export function PlayerProvider({ children }) {
         streamAttempts.current = 0
         afterStart(song)
       }
+      const key = trackKey(song) || song.id
+      dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'embed' })
+      dispatchMachine({ type: 'RESOLVE_READY', mode: 'embed' })
+      dispatchMachine({ type: 'PLAYING' })
       setIsPlaying(true)
       setLongForm({ id: song.id, name: song.name, subtitle: song.subtitle || '', videoId })
       setStatus(EMBED_NOTE)
     },
-    [afterStart, cancelFade, setStatus, unplayableCopy]
+    [afterStart, cancelFade, dispatchMachine, setStatus, unplayableCopy]
   )
 
   /**
@@ -768,17 +798,30 @@ export function PlayerProvider({ children }) {
    * repeat-one, which is answered with a command rather than a new open, so the
    * same video restarts instead of reloading.
    */
-  const reportEmbed = useCallback((state) => {
+  const reportEmbed = useCallback((state, detail) => {
+    if (state === 'buffering') {
+      dispatchMachine({ type: 'BUFFERING' })
+      return ''
+    }
     if (state === 'playing') {
+      dispatchMachine({ type: 'PLAYING' })
       setIsPlaying(true)
       return ''
     }
     if (state === 'paused') {
+      dispatchMachine({ type: 'PAUSED' })
       setIsPlaying(false)
+      return ''
+    }
+    if (state === 'error') {
+      setIsPlaying(false)
+      const category = classifyPlaybackFailure({ embedCode: detail })
+      dispatchMachine({ type: 'FAILED', category })
       return ''
     }
     if (state === 'ended') {
       setIsPlaying(false)
+      dispatchMachine({ type: 'ENDED' })
       if (setRef.current.repeat === 'one') return 'replay'
       // The next track owns the screen, whichever kind it is; if it is another
       // embed, `openEmbed` immediately puts it back.
@@ -786,7 +829,7 @@ export function PlayerProvider({ children }) {
       advanceRef.current?.({ manual: false })
     }
     return ''
-  }, [])
+  }, [dispatchMachine])
 
   const closeEmbed = useCallback(() => {
     setLongForm(null)
@@ -805,6 +848,41 @@ export function PlayerProvider({ children }) {
     resolveQualityRef.current = resolveQuality
   }, [resolveQuality])
 
+  /** Resolve a stream via `StreamResolver` when a custom resolver is active or URLs expired/stripped. */
+  const resolveViaAdapter = useCallback(
+    async (song, idx, { isReResolve = false, onResolved }) => {
+      const key = trackKey(song) || song?.id
+      dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream', isReResolve })
+      setCurrentIndex(idx)
+      idxRef.current = idx
+      try {
+        const resolved = await activeResolver.resolve(key, resolveQuality(song), {
+          track: song,
+          forceRefresh: isReResolve,
+          dataSaver: setRef.current.dataSaver,
+        })
+        if (idxRef.current !== idx) return
+        if (resolved?.mode === 'embed') {
+          openEmbed(song, idx)
+          return
+        }
+        if (!resolved?.uri) {
+          throw { category: PLAYBACK_FAILURE.UnsupportedFormat }
+        }
+        dispatchMachine({ type: 'RESOLVE_READY', mode: 'stream' })
+        dispatchMachine({ type: 'BUFFERING' })
+        onResolved(resolved.uri)
+      } catch (err) {
+        const category = classifyPlaybackFailure(err)
+        const msg = err?.message || playbackFailureCopy(category)
+        dispatchMachine({ type: 'FAILED', category, message: msg })
+        setIsPlaying(false)
+        setStatus(msg, true)
+      }
+    },
+    [activeResolver, dispatchMachine, openEmbed, resolveQuality, setStatus]
+  )
+
   /** Load track `i` onto the idle deck and crossfade into it. */
   const swapTo = useCallback(
     (i, durSec, lawOverride) => {
@@ -812,6 +890,7 @@ export function PlayerProvider({ children }) {
       if (!q.length) return
       const idx = ((i % q.length) + q.length) % q.length
       const s = q[idx]
+      const key = trackKey(s) || s?.id
       const finishSwap = (url) => {
         if (!url) return
         if (isExpired(url)) {
@@ -822,30 +901,35 @@ export function PlayerProvider({ children }) {
         setCurrentIndex(idx)
         idxRef.current = idx
         streamAttempts.current = 0
+        dispatchMachine({ type: 'RESOLVE_READY', mode: 'stream' })
+        dispatchMachine({ type: 'PLAYING' })
         prepDeck(inEl)
         inEl.src = url
         activeRef.current = inEl
         startFade(outEl, inEl, durSec, lawOverride)
         afterStart(s)
         setStatus('Playing: ' + decodeHtml(s.name) + (durSec > 0.6 ? ` (${durSec.toFixed(1)}s blend)` : ''))
-      };
-
-      const direct = streamOf(s, resolveQuality(s))
-      if (direct) {
-        finishSwap(direct)
-        return
       }
-      // Embed-only: a YouTube item goes to YouTube's own player, on every
-      // client. Anything else that got here carries no stream, and saying so is
-      // better than a spinner.
+
       const plan = playbackPlan(s, { embed: true })
       if (plan.mode === 'embed') {
         openEmbed(s, idx)
         return
       }
+
+      const direct = streamOf(s, resolveQuality(s))
+      if (!streamResolver && direct && !isExpired(direct)) {
+        dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream' })
+        finishSwap(direct)
+        return
+      }
+      if (streamResolver || s?.id) {
+        resolveViaAdapter(s, idx, { onResolved: finishSwap })
+        return
+      }
       setStatus(unplayableCopy(s), true)
     },
-    [afterStart, openEmbed, prepDeck, resolveQuality, setStatus, startFade, unplayableCopy]
+    [afterStart, dispatchMachine, openEmbed, prepDeck, resolveQuality, resolveViaAdapter, setStatus, startFade, streamResolver, unplayableCopy]
   )
 
   const playTrack = useCallback(
@@ -861,11 +945,14 @@ export function PlayerProvider({ children }) {
       cancelFade()
       const idx = ((i % q.length) + q.length) % q.length
       const s = q[idx]
+      const key = trackKey(s) || s?.id
       const start = (url) => {
         if (!url) return
         setCurrentIndex(idx)
         idxRef.current = idx
         streamAttempts.current = 0
+        dispatchMachine({ type: 'RESOLVE_READY', mode: 'stream' })
+        dispatchMachine({ type: 'PLAYING' })
         prepDeck(el)
         el.src = url
         writeVol(el, baseVol.current, sleepMul.current)
@@ -876,19 +963,25 @@ export function PlayerProvider({ children }) {
         setStatus('Playing: ' + decodeHtml(s.name))
       }
 
-      const direct = streamOf(s, resolveQuality(s))
-      if (direct) {
-        start(direct)
-        return
-      }
       const plan = playbackPlan(s, { embed: true })
       if (plan.mode === 'embed') {
         openEmbed(s, idx)
         return
       }
+
+      const direct = streamOf(s, resolveQuality(s))
+      if (!streamResolver && direct && !isExpired(direct)) {
+        dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream' })
+        start(direct)
+        return
+      }
+      if (streamResolver || s?.id) {
+        resolveViaAdapter(s, idx, { onResolved: start })
+        return
+      }
       setStatus(unplayableCopy(s), true)
     },
-    [afterStart, armResume, cancelFade, openEmbed, prepDeck, resetDeckGain, resolveQuality, setStatus, swapTo, unplayableCopy]
+    [afterStart, armResume, cancelFade, dispatchMachine, openEmbed, prepDeck, resetDeckGain, resolveQuality, resolveViaAdapter, setStatus, streamResolver, swapTo, unplayableCopy]
   )
 
   const stopPlayback = useCallback(
@@ -1089,14 +1182,14 @@ export function PlayerProvider({ children }) {
     // resolveQuality honours an automatic downgrade; using the raw preference
     // here would quietly undo the recovery on the next reload.
     const direct = streamOf(s, resolveQuality(s))
-    if (direct) {
+    if (!streamResolver && direct && !isExpired(direct)) {
       apply(direct)
       return
     }
 
-    // Nothing to re-mint: a track either carries a working signed URL or it
-    // does not, and YouTube items are played by the embed.
-  }, [cancelFade, prepDeck, resolveQuality])
+    // Expired reference: re-resolve fresh playback URL via StreamResolver once.
+    resolveViaAdapter(s, idxRef.current, { isReResolve: true, onResolved: apply })
+  }, [cancelFade, prepDeck, resolveQuality, resolveViaAdapter, streamResolver])
 
   const togglePlay = useCallback(() => {
     if (idxRef.current < 0) {
@@ -1264,12 +1357,18 @@ export function PlayerProvider({ children }) {
     const onPlay = (e) => {
       if (e.target !== active()) return
       playingRef.current = true
+      dispatchMachine({ type: 'PLAYING' })
       setIsPlaying(true)
     }
     const onPause = (e) => {
       if (e.target !== active()) return
       playingRef.current = false
+      dispatchMachine({ type: 'PAUSED' })
       setIsPlaying(false)
+    }
+    const onWaiting = (e) => {
+      if (e.target !== active()) return
+      dispatchMachine({ type: 'BUFFERING' })
     }
 
     const onTime = (e) => {
@@ -1311,6 +1410,7 @@ export function PlayerProvider({ children }) {
       if (e.target !== active()) return
       const s = setRef.current
       const el = active()
+      dispatchMachine({ type: 'ENDED' })
       if (s.repeat === 'one') {
         cancelFade()
         try {
@@ -1327,9 +1427,10 @@ export function PlayerProvider({ children }) {
     const onError = (e) => {
       const el = e.target
       if (el !== active()) return
-      // A CDN without CORS headers taints the deck. Drop the analyser, reload
-      // the same stream without crossorigin, and keep the music going.
-      if (el.hasAttribute('crossorigin') && !el._corsFix) {
+      const currentUrl = el.currentSrc || el.src
+      // Never waste the error event reloading an already-expired signed URL
+      // without `crossorigin` — an expired link needs re-resolution, not CORS fallback.
+      if (el.hasAttribute('crossorigin') && !el._corsFix && !isExpired(currentUrl)) {
         el._corsFix = true
         setRef.current.setLiveOK(false)
         if (el._src) {
@@ -1365,18 +1466,28 @@ export function PlayerProvider({ children }) {
       const available = song?.downloadUrl || []
       const urls = el.currentSrc || el.src
       const signed = parseExpiry(urls) != null
-      telemetry(EVENTS.streamFailed, { songId: song?.id, reason })
+      const category =
+        signed && isExpired(urls)
+          ? PLAYBACK_FAILURE.ExpiredPlaybackReference
+          : classifyPlaybackFailure(e, { url: urls })
+      telemetry(EVENTS.streamFailed, { songId: song?.id, reason, category })
+
+      const decision = decideFailureAction(category, {
+        networkAttempts: machineRef.current.networkAttempts,
+        reResolvedCount: machineRef.current.reResolvedCount,
+      })
 
       const attempt = streamAttempts.current
       streamAttempts.current += 1
 
-      if (signed && isExpired(urls) && attempt < 2) {
-        // A signed URL past its expiry needs a fresh one, not a retry.
+      if (decision.action === 're_resolve') {
+        // Expired playback reference: re-resolve strictly ONCE via StreamResolver.
         reloadRef.current()
         return
       }
 
-      if (attempt < 1 && (reason === FAILURE.network || reason === FAILURE.aborted || reason === FAILURE.unknown)) {
+      if (decision.action === 'retry_network' && attempt < 1 && (reason === FAILURE.network || reason === FAILURE.aborted || reason === FAILURE.unknown)) {
+        dispatchMachine({ type: 'NETWORK_RETRY' })
         setStatus('Connection hiccup — retrying the stream…', true)
         try {
           el.load()
@@ -1396,15 +1507,26 @@ export function PlayerProvider({ children }) {
         return
       }
 
+      dispatchMachine({ type: 'FAILED', category, message: playbackFailureCopy(category) })
       setStatus(failureMessage(reason), true)
-      setTimeout(() => {
-        if (active() === el) advanceRef.current?.({ manual: false })
-      }, 900)
+      // Do not silently substitute another track when authorization, region, or
+      // rights/DRM errors occur — surface the failure honestly instead.
+      if (
+        category !== PLAYBACK_FAILURE.AuthorizationRequired &&
+        category !== PLAYBACK_FAILURE.NotAvailableInRegion &&
+        category !== PLAYBACK_FAILURE.RightsOrDrm &&
+        !streamResolver
+      ) {
+        setTimeout(() => {
+          if (active() === el) advanceRef.current?.({ manual: false })
+        }, 900)
+      }
     }
 
     decks.forEach((el) => {
       el.addEventListener('play', onPlay)
       el.addEventListener('pause', onPause)
+      el.addEventListener('waiting', onWaiting)
       el.addEventListener('timeupdate', onTime)
       el.addEventListener('ended', onEnded)
       el.addEventListener('error', onError)
@@ -1414,12 +1536,13 @@ export function PlayerProvider({ children }) {
       decks.forEach((el) => {
         el.removeEventListener('play', onPlay)
         el.removeEventListener('pause', onPause)
+        el.removeEventListener('waiting', onWaiting)
         el.removeEventListener('timeupdate', onTime)
         el.removeEventListener('ended', onEnded)
         el.removeEventListener('error', onError)
       })
     }
-  }, [swapTo, cancelFade, stopPlayback, nextTrack, setStatus])
+  }, [swapTo, cancelFade, dispatchMachine, stopPlayback, nextTrack, setStatus, streamResolver])
 
   // Persist the playhead on a slow tick, and immediately when the app is
   // backgrounded or closed — a phone kills the tab without warning.
@@ -1514,7 +1637,8 @@ export function PlayerProvider({ children }) {
     idxRef.current = -1
     setIsPlaying(false)
     setClock({ cur: 0, dur: 0 })
-  }, [cancelFade])
+    dispatchMachine({ type: 'RESET' })
+  }, [cancelFade, dispatchMachine])
 
   const qMove = useCallback((i, dir) => {
     setQueueState((prev) => {
@@ -1629,6 +1753,9 @@ export function PlayerProvider({ children }) {
       // UI can offer the right recovery instead of one generic error.
       transition,
       stopReason,
+      playbackState: playbackMachine.state,
+      playbackFailure: playbackMachine.failure,
+      reResolvedCount: playbackMachine.reResolvedCount,
       dismissRecommendation,
       clearForcedQuality,
       analyserRef: analyser, freqDataRef: freqData,
@@ -1642,7 +1769,7 @@ export function PlayerProvider({ children }) {
       setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
-      transition, stopReason, dismissRecommendation, clearForcedQuality,
+      transition, stopReason, playbackMachine, dismissRecommendation, clearForcedQuality,
       embedTrack, closeEmbed, reportEmbed,
     ]
   )
