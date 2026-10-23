@@ -4,14 +4,14 @@
  * Converts any YouTube video ID (`11` chars) into a pure audio stream (`audio/mp4`
  * AAC or `audio/webm` Opus) playable directly inside HTML5 `<audio>` elements
  * with full HTTP `Range` (`206 Partial Content`) seeking and optional `.m4a`
- * attachment download (`?download=1`), using a 3-tier resilient ladder:
+ * attachment download (`?download=1`), racing multiple independent audio
+ * extractors concurrently so unmatched videos start playing in ~300ms:
  *
- *   1. Direct YouTube InnerTube `player` audio-only adaptive formats
- *      (`ANDROID_VR` -> `IOS` -> `TVHTML5_SIMPLY_EMBEDDED_PLAYER`) proxied from
- *      the same server egress IP so IP-bound `googlevideo.com` URLs never 403.
- *   2. Public Piped / Invidious audio-stream API fallback instances when
- *      datacenter IPs encounter bot challenges on `youtubei/v1/player`.
- *   3. YouTube `oEmbed` (`title` + `author_name`) -> bundled JioSaavn `320kbps`
+ *   1. Parallel race (`Promise.any`) across:
+ *      - Direct YouTube InnerTube `player` audio-only adaptive formats
+ *        (`ANDROID_VR`, `IOS`, `TVHTML5_SIMPLY_EMBEDDED_PLAYER`)
+ *      - Public Piped & Invidious audio-stream mirrors
+ *   2. YouTube `oEmbed` (`title` + `author_name`) -> bundled JioSaavn `320kbps`
  *      studio audio stream fallback.
  */
 
@@ -24,12 +24,13 @@ import {
 } from './_lib/trackMatch.mjs'
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/
-const UPSTREAM_TIMEOUT_MS = 4500
+const RACE_TIMEOUT_MS = 4500
 const STREAM_TIMEOUT_MS = 55_000
 
 const INNERTUBE_CLIENTS = [
   {
     name: 'ANDROID_VR',
+    clientHeader: '28',
     userAgent:
       'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
     context: {
@@ -48,6 +49,7 @@ const INNERTUBE_CLIENTS = [
   },
   {
     name: 'IOS',
+    clientHeader: '5',
     userAgent:
       'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)',
     context: {
@@ -63,18 +65,36 @@ const INNERTUBE_CLIENTS = [
       },
     },
   },
+  {
+    name: 'TV_EMBEDDED',
+    clientHeader: '85',
+    userAgent: 'Mozilla/5.0 (PlayStation; PlayStation 5/6.50) AppleWebKit/605.1.15',
+    context: {
+      client: {
+        clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+        clientVersion: '2.0',
+        hl: 'en',
+        gl: 'IN',
+      },
+      thirdParty: {
+        embedUrl: 'https://www.youtube.com/',
+      },
+    },
+  },
 ]
 
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.adminforge.de',
   'https://api.piped.private.coffee',
+  'https://pipedapi.reallyaweso.me',
   'https://pipedapi.smnz.de',
 ]
 
 const INVIDIOUS_INSTANCES = [
   'https://inv.nadeko.net',
-  'https://yewtu.be',
+  'https://invidious.nerdvpn.de',
+  'https://invidious.jing.rocks',
 ]
 
 // Short in-memory stream cache per warm Lambda instance (90s TTL).
@@ -109,7 +129,6 @@ export function pickBestAudioFormat(formats = []) {
       const mimeRaw = String(f.mimeType || f.type || 'audio/mp4')
       const baseMime = mimeRaw.split(';')[0].trim().toLowerCase()
       const bitrate = Number(f.bitrate || f.averageBitrate || 0)
-      // Prefer `audio/mp4` (m4a) so Safari/iOS, Android WebView, and desktop browsers all decode natively.
       const codecBonus = baseMime.includes('mp4') || baseMime.includes('m4a') ? 40_000 : 0
       return {
         url: f.url,
@@ -125,108 +144,107 @@ export function pickBestAudioFormat(formats = []) {
   return candidates[0] || null
 }
 
-async function resolveViaInnerTube(videoId, fetchImpl = fetch) {
-  for (const client of INNERTUBE_CLIENTS) {
-    try {
-      const res = await fetchImpl('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'user-agent': client.userAgent,
-          'x-youtube-client-name': client.name === 'IOS' ? '5' : '28',
-          'x-youtube-client-version': client.context.client.clientVersion,
-        },
-        body: JSON.stringify({
-          videoId,
-          context: client.context,
-          contentCheckOk: true,
-          racyCheckOk: true,
-        }),
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      })
-      if (!res.ok) continue
-      const data = await res.json().catch(() => null)
-      if (data?.playabilityStatus?.status !== 'OK') continue
-      const allFormats = [
-        ...(data?.streamingData?.adaptiveFormats || []),
-        ...(data?.streamingData?.formats || []),
-      ]
-      const picked = pickBestAudioFormat(allFormats)
-      if (picked) {
-        return {
-          ...picked,
-          userAgent: client.userAgent,
-          source: `innertube:${client.name.toLowerCase()}`,
-          title: data?.videoDetails?.title || '',
-          artist: cleanChannelArtist(data?.videoDetails?.author || ''),
-          duration: Number(data?.videoDetails?.lengthSeconds || 0),
-        }
-      }
-    } catch {
-      /* try next client profile */
-    }
+async function tryInnerTubeClient(videoId, client, fetchImpl, signal) {
+  const res = await fetchImpl('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'user-agent': client.userAgent,
+      'x-youtube-client-name': client.clientHeader,
+      'x-youtube-client-version': client.context.client.clientVersion,
+    },
+    body: JSON.stringify({
+      videoId,
+      context: client.context,
+      contentCheckOk: true,
+      racyCheckOk: true,
+    }),
+    signal,
+  })
+  if (!res?.ok) throw new Error(`innertube_${client.name}_${res?.status || 0}`)
+  const data = await res.json()
+  if (data?.playabilityStatus?.status !== 'OK') {
+    throw new Error(`unplayable_${client.name}`)
   }
-  return null
+  const allFormats = [
+    ...(data?.streamingData?.adaptiveFormats || []),
+    ...(data?.streamingData?.formats || []),
+  ]
+  const picked = pickBestAudioFormat(allFormats)
+  if (!picked) throw new Error(`no_audio_${client.name}`)
+  return {
+    ...picked,
+    userAgent: client.userAgent,
+    source: `innertube:${client.name.toLowerCase()}`,
+    title: data?.videoDetails?.title || '',
+    artist: cleanChannelArtist(data?.videoDetails?.author || ''),
+    duration: Number(data?.videoDetails?.lengthSeconds || 0),
+  }
 }
 
-async function resolveViaPipedOrInvidious(videoId, fetchImpl = fetch) {
-  for (const base of PIPED_INSTANCES) {
-    try {
-      const res = await fetchImpl(`${base}/streams/${encodeURIComponent(videoId)}`, {
-        headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(3500),
-      })
-      if (!res.ok) continue
-      const json = await res.json().catch(() => null)
-      const streams = (json?.audioStreams || []).map((s) => ({
-        url: s?.url,
-        mimeType: s?.mimeType || (s?.format === 'M4A' ? 'audio/mp4' : 'audio/webm'),
-        bitrate: Number(s?.bitrate || 0),
-      }))
-      const picked = pickBestAudioFormat(streams)
-      if (picked) {
-        return {
-          ...picked,
-          userAgent: 'Mozilla/5.0',
-          source: 'piped',
-          title: json?.title || '',
-          artist: cleanChannelArtist(json?.uploader || ''),
-          duration: Number(json?.duration || 0),
-        }
-      }
-    } catch {
-      /* next mirror */
-    }
+async function tryPipedMirror(videoId, base, fetchImpl, signal) {
+  const res = await fetchImpl(`${base}/streams/${encodeURIComponent(videoId)}`, {
+    headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
+    signal,
+  })
+  if (!res?.ok) throw new Error(`piped_${res?.status || 0}`)
+  const json = await res.json()
+  const streams = (json?.audioStreams || []).map((s) => ({
+    url: s?.url,
+    mimeType: s?.mimeType || (s?.format === 'M4A' ? 'audio/mp4' : 'audio/webm'),
+    bitrate: Number(s?.bitrate || 0),
+  }))
+  const picked = pickBestAudioFormat(streams)
+  if (!picked) throw new Error('piped_no_audio')
+  return {
+    ...picked,
+    userAgent: 'Mozilla/5.0',
+    source: 'piped',
+    title: json?.title || '',
+    artist: cleanChannelArtist(json?.uploader || ''),
+    duration: Number(json?.duration || 0),
   }
+}
 
-  for (const base of INVIDIOUS_INSTANCES) {
-    try {
-      const res = await fetchImpl(
-        `${base}/api/v1/videos/${encodeURIComponent(videoId)}?fields=title,author,lengthSeconds,adaptiveFormats`,
-        {
-          headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(3500),
-        }
-      )
-      if (!res.ok) continue
-      const json = await res.json().catch(() => null)
-      const picked = pickBestAudioFormat(json?.adaptiveFormats || [])
-      if (picked) {
-        return {
-          ...picked,
-          userAgent: 'Mozilla/5.0',
-          source: 'invidious',
-          title: json?.title || '',
-          artist: cleanChannelArtist(json?.author || ''),
-          duration: Number(json?.lengthSeconds || 0),
-        }
-      }
-    } catch {
-      /* next mirror */
+async function tryInvidiousMirror(videoId, base, fetchImpl, signal) {
+  const res = await fetchImpl(
+    `${base}/api/v1/videos/${encodeURIComponent(videoId)}?fields=title,author,lengthSeconds,adaptiveFormats`,
+    {
+      headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
+      signal,
     }
+  )
+  if (!res?.ok) throw new Error(`invidious_${res?.status || 0}`)
+  const json = await res.json()
+  const picked = pickBestAudioFormat(json?.adaptiveFormats || [])
+  if (!picked) throw new Error('invidious_no_audio')
+  return {
+    ...picked,
+    userAgent: 'Mozilla/5.0',
+    source: 'invidious',
+    title: json?.title || '',
+    artist: cleanChannelArtist(json?.author || ''),
+    duration: Number(json?.lengthSeconds || 0),
   }
+}
 
-  return null
+async function raceDirectAudioExtractors(videoId, fetchImpl = fetch) {
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), RACE_TIMEOUT_MS)
+  try {
+    const racers = [
+      ...INNERTUBE_CLIENTS.map((c) => tryInnerTubeClient(videoId, c, fetchImpl, ctl.signal)),
+      ...PIPED_INSTANCES.map((base) => tryPipedMirror(videoId, base, fetchImpl, ctl.signal)),
+      ...INVIDIOUS_INSTANCES.map((base) => tryInvidiousMirror(videoId, base, fetchImpl, ctl.signal)),
+    ]
+    const winner = await Promise.any(racers)
+    ctl.abort()
+    return winner
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function fetchOembedMeta(videoId, fetchImpl = fetch) {
@@ -238,7 +256,7 @@ async function fetchOembedMeta(videoId, fetchImpl = fetch) {
       headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
       signal: AbortSignal.timeout(3000),
     })
-    if (!res.ok) return null
+    if (!res?.ok) return null
     const json = await res.json().catch(() => null)
     if (!json?.title) return null
     return {
@@ -250,7 +268,10 @@ async function fetchOembedMeta(videoId, fetchImpl = fetch) {
   }
 }
 
-async function resolveViaSaavnCatalog(videoId, { titleHint = '', artistHint = '', fetchImpl = fetch, saavnSearchFn = null } = {}) {
+async function resolveViaSaavnCatalog(
+  videoId,
+  { titleHint = '', artistHint = '', fetchImpl = fetch, saavnSearchFn = null } = {}
+) {
   let title = String(titleHint || '').trim()
   let artist = String(artistHint || '').trim()
 
@@ -323,8 +344,7 @@ export async function resolveYoutubeAudioStream(
   }
 
   const resolved =
-    (await resolveViaInnerTube(videoId, fetchImpl)) ||
-    (await resolveViaPipedOrInvidious(videoId, fetchImpl)) ||
+    (await raceDirectAudioExtractors(videoId, fetchImpl)) ||
     (await resolveViaSaavnCatalog(videoId, { titleHint, artistHint, fetchImpl, saavnSearchFn }))
 
   if (resolved && useCache) {

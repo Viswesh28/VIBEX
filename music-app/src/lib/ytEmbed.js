@@ -67,9 +67,9 @@ export function embedUrl(track, { origin = '', autoplay = true } = {}) {
   return `https://www.youtube.com/embed/${id}?${q.toString()}`
 }
 
-/** The line the status bar shows while the embed is open. */
+/** The line the status bar shows while YouTube audio transport is active. */
 export const EMBED_NOTE =
-  'Playing in YouTube’s own player — YouTube’s video and ads, not our audio stream.'
+  'Playing YouTube audio track right here in the player bar.'
 
 /**
  * What YouTube's own player says when it refuses to play.

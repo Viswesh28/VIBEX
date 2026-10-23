@@ -34,13 +34,12 @@ describe('the source registry', () => {
     expect(SOURCES.map((s) => s.id)).toEqual([SOURCE_ID.jiosaavn, SOURCE_ID.ytmusic])
   })
 
-  it('never describes YouTube Music as if it could play here', () => {
+  it('describes YouTube Music songs and videos as pure audio tracks with no video window', () => {
     const yt = sourceOf(SOURCE_ID.ytmusic)
-    expect(yt.plays).toBe('catalogue-only')
-    // It plays — but in YouTube's player, with YouTube's video and ads, never
-    // as audio from here. The note has to carry both halves.
-    expect(yt.note).toMatch(/YouTube’s own player/i)
-    expect(yt.note).toMatch(/video and ads/i)
+    expect(yt.plays).toBe('here')
+    expect(yt.note).toMatch(/pure audio tracks/i)
+    expect(yt.note).not.toMatch(/video and ads/i)
+    expect(yt.note).not.toMatch(/YouTube’s own player/i)
   })
 
   it('falls back to JioSaavn for anything unrecognised', () => {
@@ -183,10 +182,8 @@ describe('playbackPlan', () => {
       if (reason === PLAYBACK_REASON.ok) continue
       const copy = playbackCopy(reason)
       expect(copy, reason).toBeTruthy()
-      // Each refusal points at a way forward rather than just stopping.
-      // `longForm` is the one that is not a refusal: it names YouTube's own
-      // player, which is where that item actually plays.
-      expect(copy).toMatch(/choose JioSaavn|no stream|YouTube’s own player/i)
+      expect(copy).toMatch(/choose JioSaavn|no stream|audio track/i)
+      expect(copy).not.toMatch(/video and ads/i)
     }
   })
 })
