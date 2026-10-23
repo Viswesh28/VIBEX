@@ -25,6 +25,9 @@
     "api/songs/[path].mjs": {
       "maxDuration": 60
     },
+    "api/content/[path].mjs": {
+      "maxDuration": 60
+    },
     "api/canvas.mjs": {
       "maxDuration": 30
     }

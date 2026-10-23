@@ -15,7 +15,7 @@
    because Vite guarantees a new filename whenever the bytes change.
    ========================================================================== */
 
-const VERSION = 'vibex-v7'
+const VERSION = 'vibex-v8'
 const SHELL = `${VERSION}-shell`
 const ASSETS = `${VERSION}-assets`
 const IMAGES = `${VERSION}-images`

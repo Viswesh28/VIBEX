@@ -1,5 +1,5 @@
 import { decodeHtml } from '../lib/format.js'
-import { imgOf } from '../lib/song.js'
+import { artistsOf, imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 
@@ -8,6 +8,8 @@ const fade = (e) => {
 }
 
 function subtitleOf(item, kind) {
+  if (kind === 'song')
+    return [artistsOf(item), item.language || item.year].filter(Boolean).join(' · ')
   if (kind === 'album')
     return [item.year, item.language, item.songCount ? item.songCount + ' songs' : '']
       .filter(Boolean)
@@ -25,7 +27,7 @@ export function Card({ item, kind = 'playlist', onOpen, round = false, dataSaver
       type="button"
       className={'card' + (round ? ' round' : '')}
       onClick={() => onOpen(item)}
-      aria-label={`Open ${decodeHtml(item.name)}`}
+      aria-label={`${kind === 'song' ? 'Play' : 'Open'} ${decodeHtml(item.name)}`}
     >
       <span className="card-media">
         <img src={imgOf(item, dataSaver)} loading="lazy" alt="" onError={fade} />
