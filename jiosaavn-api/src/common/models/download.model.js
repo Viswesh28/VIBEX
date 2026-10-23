@@ -1,5 +1,8 @@
-import { z } from 'zod';
-export const DownloadLinkModel = z.object({
-    quality: z.string(),
-    url: z.string()
+import { z } from "zod";
+const DownloadLinkModel = z.object({
+  quality: z.string(),
+  url: z.string()
 });
+export {
+  DownloadLinkModel
+};

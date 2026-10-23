@@ -1,1 +1,1 @@
-export * from './album.helper.js';
+export * from "./album.helper.js";

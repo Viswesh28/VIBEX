@@ -1,1 +1,1 @@
-export * from './search-albums.use-case.js';
+export * from "./search-albums.use-case.js";

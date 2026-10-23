@@ -6,6 +6,7 @@ import { EVENTS, track } from '../lib/telemetry.js'
 import { Shelf } from './CardGrid.jsx'
 import { Icon } from './Icon.jsx'
 import { EmptyState } from './Spinner.jsx'
+import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
@@ -17,8 +18,16 @@ const FEED = [
   ['Evergreen Classics', 'evergreen hits tamil'],
 ]
 
+const LIVE_SONG_FEEDS = [
+  ['New Releases', '/content/new-releases?languages=tamil,hindi,english,telugu,malayalam&limit=12'],
+  ['Trending Songs', '/content/trending?languages=tamil,hindi,english,telugu,malayalam&limit=12'],
+]
+
 const SKELETON_CARDS = 6
 const MAX_RETRIES = 2
+/** Refresh live catalog shelves automatically every 5 minutes so newly dropped tracks appear live. */
+export const LIVE_FEED_REFRESH_MS = 5 * 60 * 1000
+const VISIBILITY_REFRESH_MS = 3 * 60 * 1000
 
 /** Fixed-height placeholders: the home screen must not reflow when data lands. */
 function ShelfSkeleton({ title }) {
@@ -48,19 +57,20 @@ const backoffMs = (attempt) => Math.min(4000, 350 * 2 ** attempt + Math.random()
 /**
  * Listen Now — the editorial home.
  *
- * The contract mirrors what the shipped players do and what this build needs:
- * every shelf loads independently, a failed shelf is dropped rather than
- * blanking the page, the first-page failure gets a bounded retry with jitter,
- * and every degrade is reported. Silent degradation is invisible without an
- * event, which is the whole reason `home.degraded` exists.
+ * Loads live Newly Released & Trending playable tracks alongside editorial
+ * playlist shelves, and silently refreshes the catalog every 5 minutes (and
+ * on tab focus) so brand-new songs appear automatically without a reload.
  */
 export function FeedView() {
   const [sections, setSections] = useState([])
+  const [liveSongShelves, setLiveSongShelves] = useState([])
   const [loading, setLoading] = useState(true)
   const [degraded, setDegraded] = useState([])
   const [attempt, setAttempt] = useState(0)
   const alive = useRef(true)
   const retryTimer = useRef(null)
+  const lastFetchedAt = useRef(0)
+  const player = usePlayer()
   const { setStatus } = useStatus()
   const { navigate, search } = useUI()
   const { dataSaver } = useSettings()
@@ -72,6 +82,26 @@ export function FeedView() {
     },
     []
   )
+
+  const refreshLiveSongs = useCallback(() => {
+    Promise.allSettled(
+      LIVE_SONG_FEEDS.map(([title, endpoint]) =>
+        api(endpoint).then((d) => ({
+          title,
+          items: (d?.results || []).filter((s) => s && s.id && s.downloadUrl?.length),
+        }))
+      )
+    ).then((settled) => {
+      if (!alive.current) return
+      const fresh = settled
+        .filter((r) => r.status === 'fulfilled' && r.value.items.length > 0)
+        .map((r) => r.value)
+      if (fresh.length) {
+        setLiveSongShelves(fresh)
+        lastFetchedAt.current = Date.now()
+      }
+    })
+  }, [])
 
   const load = useCallback(() => {
     alive.current = true
@@ -114,13 +144,41 @@ export function FeedView() {
       }
       setSections(ok)
       setLoading(false)
+      lastFetchedAt.current = Date.now()
       track(EVENTS.homeLoaded, { sections: ok.length, degraded: dropped.length })
+      refreshLiveSongs()
     })
-  }, [attempt, setStatus])
+  }, [attempt, refreshLiveSongs, setStatus])
 
   useEffect(() => {
     load()
   }, [load])
+
+  // Periodically refresh live New Releases & Trending shelves in the background
+  // and whenever the listener returns to the tab after a break.
+  useEffect(() => {
+    if (!sections.length) return undefined
+    const interval = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+        refreshLiveSongs()
+      }
+    }, LIVE_FEED_REFRESH_MS)
+
+    const onVisibility = () => {
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible' &&
+        Date.now() - lastFetchedAt.current >= VISIBILITY_REFRESH_MS
+      ) {
+        refreshLiveSongs()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [sections.length, refreshLiveSongs])
 
   if (loading) {
     return (
@@ -154,6 +212,10 @@ export function FeedView() {
   const featured = sections[0].items[0]
   const openPlaylist = (item) => navigate({ kind: 'detail', type: 'playlist', id: item.id })
   const moreIn = (section) => search(section.query, 'playlists')
+  const playLiveSong = (shelf, item) => {
+    const idx = Math.max(0, shelf.items.findIndex((s) => s.id === item.id))
+    player?.playFromList(shelf.items, idx)
+  }
 
   return (
     <>
@@ -211,6 +273,18 @@ export function FeedView() {
           </button>
         </div>
       )}
+
+      {liveSongShelves.map((shelf) => (
+        <Shelf
+          key={shelf.title}
+          title={shelf.title}
+          items={shelf.items}
+          kind="song"
+          moreLabel="Play all"
+          onOpen={(song) => playLiveSong(shelf, song)}
+          onMore={() => player?.playFromList(shelf.items, 0)}
+        />
+      ))}
 
       {sections.map((sec) => (
         <Shelf

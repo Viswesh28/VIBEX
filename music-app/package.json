@@ -1,6 +1,6 @@
 {
   "name": "vibex-music-app",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "description": "VIBEX music player \u2014 React front-end and the Node gateway that serves it.",
@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "sync:api": "node ../scripts/sync-jiosaavn-api.mjs",
     "serve": "node server.mjs",
     "start": "npm run build && node server.mjs",
     "test": "vitest run",
