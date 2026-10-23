@@ -1,7 +1,7 @@
 {
   "name": "VIBEX — Music Player",
   "short_name": "VIBEX",
-  "description": "Search millions of songs, stream in high quality, and keep your own library.",
+  "description": "Search millions of songs, stream in high quality, share from any app, and keep your own library.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
@@ -10,6 +10,12 @@
     "standalone",
     "minimal-ui"
   ],
+  "launch_handler": {
+    "client_mode": [
+      "focus-existing",
+      "auto"
+    ]
+  },
   "orientation": "any",
   "background_color": "#09090b",
   "theme_color": "#09090b",
@@ -20,6 +26,62 @@
     "entertainment"
   ],
   "prefer_related_applications": false,
+  "share_target": {
+    "action": "/?vibex_share=1",
+    "method": "GET",
+    "params": {
+      "title": "share_title",
+      "text": "share_text",
+      "url": "share_url"
+    }
+  },
+  "protocol_handlers": [
+    {
+      "protocol": "web+vibex",
+      "url": "/?share_url=%s"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Share / Open Link",
+      "short_name": "Open Link",
+      "description": "Paste or open a YouTube, YT Music, Spotify, or JioSaavn link",
+      "url": "/?v=share-in",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Search Songs",
+      "short_name": "Search",
+      "description": "Search millions of songs across JioSaavn and YouTube Music",
+      "url": "/?v=search",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Your Library & Offline",
+      "short_name": "Library",
+      "description": "Open your Liked Songs, playlists, and pinned offline vault",
+      "url": "/?v=library",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",

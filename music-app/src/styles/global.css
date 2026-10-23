@@ -26,6 +26,8 @@
   --card-strong: #26262e;
   --line: #26262c;
   --line-strong: #35353e;
+  --surface-2: var(--card-strong);
+  --border: var(--line);
   --input-bg: #16161a;
   --input-border: #2e2e37;
   --imgbg: #1d1d22;
@@ -1463,12 +1465,20 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   .src-banner { font-size: 11px; padding: 6px 9px; }
   #searchInput { font-size: 16px; } /* <16px triggers focus-zoom on iOS */
   .search-submit { display: none; }
-  .tabs { order: 3; flex-basis: 100%; }
+  .tabs {
+    order: 3;
+    flex-basis: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
   .tab {
     display: inline-flex; align-items: center; justify-content: center;
     flex: 0 0 auto; min-height: 40px; padding: 7px 13px;
   }
-  .top-actions { order: 1; margin-left: auto; gap: 6px; }
+  .top-actions { order: 1; margin-left: auto; gap: 4px; }
+  .top-cmd-btn { display: none; }
   .icon-btn { width: 40px; height: 40px; }
   #menuBtn { order: 0; }
 
@@ -2174,5 +2184,287 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* ---- Cross-Device Share to VIBEX Modal & Responsive Touch UX ---- */
+.share-vibex-modal {
+  max-width: 560px;
+  width: min(94vw, 560px);
+  max-height: min(88dvh, 760px);
+  overflow-y: auto;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+}
+
+.dsp-modal-card input,
+.dsp-modal-card textarea,
+.share-vibex-modal input {
+  font-size: 16px; /* Prevents automatic viewport focus-zoom on iOS Safari */
+}
+
+.share-intake-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.share-input-row input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 16px;
+}
+
+.share-input-row button {
+  min-height: 44px;
+  min-width: 76px;
+}
+
+.share-quick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.share-quick-row .btn-ghost,
+.share-ios-head .btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+}
+
+.share-detected-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.share-loading-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-size: 13px;
+}
+
+.share-pulse-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.share-resolved-card {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.share-track-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.share-track-hero img {
+  width: 68px;
+  height: 68px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.share-track-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.share-track-info h4 {
+  margin: 4px 0 2px;
+  font-size: 15.5px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-track-info p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-badge-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.share-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.share-action-grid button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  text-align: center;
+}
+
+.share-device-box {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.share-device-toggle {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.share-device-toggle > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.share-device-body {
+  padding-top: 6px;
+}
+
+.share-ios-helper {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.share-ios-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.import-track-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.import-track-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.import-track-list li img {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.imp-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.imp-meta b,
+.imp-meta small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.imp-meta small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+@media (max-width: 520px) {
+  .share-action-grid {
+    grid-template-columns: 1fr;
+  }
+  .share-input-row {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 420px) {
+  .top-eq-btn { display: none; }
+  .topbar-src .src-chip { padding: 6px 8px; font-size: 11px; }
+  .share-hero-card {
+    grid-template-columns: 76px 1fr;
+  }
+  .share-hero-art {
+    width: 76px;
+    height: 76px;
+  }
+  .share-action-grid button {
+    width: 100%;
+    justify-content: center;
+    min-height: 44px;
+  }
+}
+
 
 

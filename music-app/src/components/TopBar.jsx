@@ -25,6 +25,7 @@ export function TopBar({ sleep, onMenu }) {
     clearRecentSearches,
     setCmdOpen,
     setDspOpen,
+    openShareToVibex,
   } = useUI()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -212,6 +213,15 @@ export function TopBar({ sleep, onMenu }) {
         <button
           type="button"
           className="icon-btn"
+          title="Share / Open Link in VIBEX (YouTube, YT Music, Spotify, JioSaavn)"
+          aria-label="Open shared music link"
+          onClick={() => openShareToVibex()}
+        >
+          <Icon name="link" size={18} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn top-cmd-btn"
           title="Command palette (Ctrl+K)"
           aria-label="Open command palette"
           onClick={() => setCmdOpen(true)}
@@ -220,7 +230,7 @@ export function TopBar({ sleep, onMenu }) {
         </button>
         <button
           type="button"
-          className={'icon-btn' + (eqActive ? ' toggled' : '')}
+          className={'icon-btn top-eq-btn' + (eqActive ? ' toggled' : '')}
           title="Studio EQ & Audio FX"
           aria-label="Open Studio EQ"
           aria-pressed={eqActive}

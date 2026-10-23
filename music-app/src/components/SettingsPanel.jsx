@@ -107,7 +107,7 @@ function InstallSection() {
 export function SettingsPanel({ open, sleep }) {
   const s = useSettings()
   const { setStatus } = useStatus()
-  const { setDspOpen, setImportModalOpen } = useUI() || {}
+  const { setDspOpen, setImportModalOpen, openShareToVibex } = useUI() || {}
   const {
     resetHistory,
     hasAccountProvider,
@@ -728,6 +728,29 @@ export function SettingsPanel({ open, sleep }) {
       </div>
 
       <InstallSection />
+
+      {openShareToVibex && (
+        <div className="set-sec">
+          <div className="set-head">
+            <Icon name="link" size={16} />
+            <span>Share to VIBEX (Cross-Device)</span>
+          </div>
+          <p className="set-note">
+            Share songs, albums, or playlists from YouTube, YT Music, Spotify, JioSaavn, or Apple
+            Music directly into VIBEX across Android, iPhone/iPad, Windows, and macOS.
+          </p>
+          <div className="set-row" style={{ marginTop: 8 }}>
+            <span className="set-label">Open link &amp; OS setup</span>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => openShareToVibex()}
+            >
+              Open Share to VIBEX
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="set-sec">
         <div className="set-head">

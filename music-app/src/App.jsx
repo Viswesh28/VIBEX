@@ -20,6 +20,7 @@ import { PlayerBar } from './components/PlayerBar.jsx'
 import { PlaylistModal } from './components/PlaylistModal.jsx'
 import { PlaylistView } from './components/PlaylistView.jsx'
 import { SearchView } from './components/SearchView.jsx'
+import { ShareToVibexModal } from './components/ShareToVibexModal.jsx'
 import { Sidebar } from './components/Sidebar.jsx'
 import { MobileNav } from './components/MobileNav.jsx'
 import { StatsView } from './components/StatsView.jsx'
@@ -74,6 +75,8 @@ export default function App() {
     plModal,
     importModalOpen,
     setImportModalOpen,
+    shareTargetState,
+    closeShareToVibex,
     cmdOpen,
     setCmdOpen,
     dspOpen,
@@ -151,6 +154,7 @@ export default function App() {
   // Escape closes the top-most layer only.
   const onEscape = useCallback(() => {
     if (cmdOpen) setCmdOpen(false)
+    else if (shareTargetState?.open) closeShareToVibex()
     else if (dspOpen) setDspOpen(false)
     else if (importModalOpen) setImportModalOpen(false)
     else if (plModal) closePlaylistModal()
@@ -158,6 +162,8 @@ export default function App() {
     else if (fullOpen) setFullOpen(false)
   }, [
     cmdOpen,
+    shareTargetState,
+    closeShareToVibex,
     dspOpen,
     importModalOpen,
     plModal,
@@ -337,6 +343,7 @@ export default function App() {
       <PlaylistModal />
       <DspRackModal />
       <ImportPlaylistModal />
+      <ShareToVibexModal />
       <CommandPalette />
       <YouTubeEmbed />
       <MediaSessionBridge
