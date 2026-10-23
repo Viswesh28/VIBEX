@@ -222,29 +222,34 @@ async function resolveViaYouTubeMusicSearch(entry, fetchImpl = fetch) {
   }).catch(() => null)
   if (!res?.ok) return null
   const raw = await res.json().catch(() => null)
-  const item = listItemRenderers(raw).map(toResult).filter(Boolean)[0]
-  if (!item?.id) return null
+  const item = listItemRenderers(raw).map((r) => toResult(r)).filter(Boolean)[0]
+  const vid = item?.videoId || item?.id
+  if (!vid) return null
+  const primaryArtists = Array.isArray(item.artists) && item.artists.length
+    ? item.artists.map((a) =>
+        typeof a === 'string'
+          ? { id: '', name: unescapeEntities(a) }
+          : { id: a?.id || '', name: unescapeEntities(a?.name || '') }
+      )
+    : [{ id: '', name: entry.artist || 'YouTube Music' }]
   return {
-    id: `yt:${item.id}`,
+    id: `yt:${vid}`,
     name: unescapeEntities(item.title || entry.title || 'Track'),
     type: 'song',
     duration: Number(item.duration) || 0,
     album: { id: '', name: unescapeEntities(item.album || '') },
     artists: {
-      primary: (item.artists?.length
-        ? item.artists
-        : [{ id: '', name: entry.artist || 'YouTube Music' }]
-      ).map((a) => ({ id: a.id || '', name: unescapeEntities(a.name || '') })),
+      primary: primaryArtists,
       featured: [],
       all: [],
     },
     image: [
       {
         quality: '500x500',
-        url: item.thumbnail || `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
+        url: item.thumbnail || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
       },
     ],
-    downloadUrl: [{ quality: '160kbps', url: `/api/ytaudio?id=${item.id}` }],
+    downloadUrl: [{ quality: '160kbps', url: `/api/ytaudio?id=${vid}` }],
   }
 }
 
@@ -453,13 +458,20 @@ async function importFromYouTubePlaylist(listId, fetchImpl = fetch) {
     raw?.header?.musicDetailHeaderRenderer?.title?.runs?.map((r) => r.text).join('') ||
     'Imported YouTube Playlist'
 
-  const ytItems = listItemRenderers(raw).map(toResult).filter(Boolean).slice(0, MAX_IMPORT_TRACKS)
+  const ytItems = listItemRenderers(raw).map((r) => toResult(r)).filter(Boolean).slice(0, MAX_IMPORT_TRACKS)
   if (!ytItems.length) throw new Error('No playable tracks found in that YouTube playlist.')
 
   const enriched = await enrichResultsWithSaavnAudio(ytItems, { concurrency: 6 })
   const tracks = enriched.map((item) => {
     const matched = item.matchedAudio
-    const vid = item.id
+    const vid = item.videoId || item.id
+    const primaryArtists = Array.isArray(item.artists) && item.artists.length
+      ? item.artists.map((a) =>
+          typeof a === 'string'
+            ? { id: '', name: unescapeEntities(a) }
+            : { id: a?.id || '', name: unescapeEntities(a?.name || '') }
+        )
+      : [{ id: '', name: 'YouTube Music' }]
     return {
       id: matched?.songId || `yt:${vid}`,
       name: unescapeEntities(item.title || matched?.name || 'Track'),
@@ -472,10 +484,7 @@ async function importFromYouTubePlaylist(listId, fetchImpl = fetch) {
         name: unescapeEntities(matched?.album?.name || item.album || ''),
       },
       artists: {
-        primary: (item.artists?.length ? item.artists : [{ name: 'YouTube Music' }]).map((a) => ({
-          id: a.id || '',
-          name: unescapeEntities(a.name || ''),
-        })),
+        primary: primaryArtists,
       },
       image: matched?.image?.length
         ? matched.image
