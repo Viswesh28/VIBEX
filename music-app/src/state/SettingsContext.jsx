@@ -9,16 +9,28 @@ import {
   normaliseLaw,
 } from '../lib/transition.js'
 import { normalizeSource } from '../lib/sources.js'
+import { DEFAULT_DSP, EQ_PRESETS, clampEqGains } from '../lib/audioDsp.js'
 
 const Ctx = createContext(null)
 export const useSettings = () => useContext(Ctx)
 
 const VIZ_STYLES = ['spectrum', 'bars', 'wave', 'orbit']
 const REPEATS = ['off', 'all', 'one']
-// off → on → smart → off. 'smart' keeps the queue in order but slips in one
-// recommendation per N tracks; it is not a random walk.
 const SHUFFLE_MODES = ['off', 'on', 'smart']
 const SHUFFLE_NEXT = { off: 'on', on: 'smart', smart: 'off' }
+const QUALITIES = ['320kbps', '160kbps', '96kbps', '48kbps', '12kbps']
+
+export const AVAILABLE_LANGUAGES = [
+  { id: 'tamil', label: 'Tamil' },
+  { id: 'hindi', label: 'Hindi' },
+  { id: 'english', label: 'English' },
+  { id: 'telugu', label: 'Telugu' },
+  { id: 'malayalam', label: 'Malayalam' },
+  { id: 'kannada', label: 'Kannada' },
+  { id: 'punjabi', label: 'Punjabi' },
+]
+
+export const DEFAULT_LANGUAGES = ['tamil', 'hindi', 'english', 'telugu', 'malayalam']
 
 const readShuffle = () => {
   const v = store.get('svShuffle', '0')
@@ -27,23 +39,29 @@ const readShuffle = () => {
   return 'off'
 }
 
-// 'on' stays "1" so an existing user's stored preference keeps meaning the
-// same thing after the upgrade; only the new state needs a new token.
 const writeShuffle = (mode) => {
   store.set('svShuffle', mode === 'on' ? '1' : mode === 'smart' ? 'smart' : '0')
 }
-// The download tiers JioSaavn advertises, highest first.
-const QUALITIES = ['320kbps', '160kbps', '96kbps', '48kbps', '12kbps']
 
-/**
- * Every preference is mirrored into localStorage under the same `sv*` keys the
- * pre-React build used, so an existing user's settings survive the upgrade.
- */
+function readLanguages() {
+  const saved = store.getJSON('svLangs', null)
+  if (!Array.isArray(saved) || !saved.length) return [...DEFAULT_LANGUAGES]
+  const validIds = new Set(AVAILABLE_LANGUAGES.map((l) => l.id))
+  const filtered = saved.filter((id) => validIds.has(id))
+  return filtered.length ? filtered : [...DEFAULT_LANGUAGES]
+}
+
+function readDsp() {
+  const saved = store.getJSON('svDsp', null)
+  if (!saved || typeof saved !== 'object') return { ...DEFAULT_DSP }
+  return {
+    ...DEFAULT_DSP,
+    ...saved,
+    eqGains: clampEqGains(saved.eqGains),
+  }
+}
+
 export function SettingsProvider({ children }) {
-  // iOS routes <audio> through Web Audio as soon as the live analyser is
-  // attached, and a suspended AudioContext takes the music with it when the
-  // screen locks. Keep the visualiser simulated there so media playback stays
-  // a plain <audio> stream — which is what iOS keeps alive in the background.
   const ios = useMemo(() => isIOS(), [])
   const [dataSaver, setDataSaverState] = useState(() => store.get('svSaver', null) === '1')
   const [saverAuto, setSaverAuto] = useState(false)
@@ -57,10 +75,7 @@ export function SettingsProvider({ children }) {
     normaliseLaw(store.get('svCfl', 'equalPower'))
   )
   const [vizOn, setVizOn] = useState(() => store.get('svViz', '1') === '1')
-  // Canvas video is a cross-source extra (the clip comes from YouTube Music),
-  // so it has its own switch rather than riding on the local visualiser.
   const [canvasOn, setCanvasOn] = useState(() => store.get('svCanvas', '1') === '1')
-  // Which catalogue the listener is browsing. One of SOURCES in lib/sources.js.
   const [source, setSourceState] = useState(() => normalizeSource(store.get('svSource', 'jiosaavn')))
   const [vizStyle, setVizStyle] = useState(() => {
     const v = store.get('svVizStyle', 'spectrum')
@@ -73,27 +88,25 @@ export function SettingsProvider({ children }) {
   })
   const [theme, setTheme] = useState(() => (store.get('svTheme', 'dark') === 'light' ? 'light' : 'dark'))
   const [radio, setRadioState] = useState(() => store.get('svRadio', '0') === '1')
-  // Autoplay is the tail after the user's own queue: similar songs, clearly
-  // marked, never written back into the playlist.
   const [autoplay, setAutoplayState] = useState(() => store.get('svAuto', '1') === '1')
-  // Restored like every other preference. JioSaavn's own tier labels, so an
-  // unknown stored value falls back to the best quality rather than a blank
-  // <select> that matches no <option>.
   const [qualityPref, setQualityPrefState] = useState(() => {
     const v = store.get('svQuality', null)
     return QUALITIES.includes(v) ? v : '320kbps'
   })
   const [liveOK, setLiveOK] = useState(() => !ios)
-  // Private session: playback works exactly as always, nothing is written to
-  // the listening history that drives the personalised feed.
   const [privateSession, setPrivateSessionState] = useState(() => store.get('svPrivate', '0') === '1')
   const [ytApiKey, setYtApiKeyState] = useState(() => store.get('svYtApiKey', '') || '')
   const [excludedArtists, setExcludedArtists] = useState(() => {
     const v = store.getJSON('svExcluded', [])
     return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()) : []
   })
+  const [languages, setLanguagesState] = useState(readLanguages)
+  const [dsp, setDspState] = useState(readDsp)
+  const [customEqPresets, setCustomEqPresets] = useState(() => {
+    const v = store.getJSON('svCustomEq', {})
+    return v && typeof v === 'object' ? v : {}
+  })
 
-  // On a first-ever visit, respect the browser's own data-saving signals.
   useEffect(() => {
     if (store.get('svSaver', null) !== null) return
     try {
@@ -104,18 +117,80 @@ export function SettingsProvider({ children }) {
         store.set('svSaver', '1')
       }
     } catch {
-      /* no Network Information API — leave the default off */
+      /* ignore */
     }
   }, [])
 
   useEffect(() => {
-    // Both roots: tokens hang off body.light, while html.light paints the
-    // canvas behind the page (visible when the installed app rubber-bands).
     document.documentElement.classList.toggle('light', theme === 'light')
     document.body.classList.toggle('light', theme === 'light')
     setThemeColor(theme === 'light' ? '#f7f7f9' : '#09090b')
     store.set('svTheme', theme)
   }, [theme])
+
+  const updateDsp = useCallback((patch) => {
+    setDspState((prev) => {
+      const next = typeof patch === 'function' ? patch(prev) : { ...prev, ...patch }
+      next.eqGains = clampEqGains(next.eqGains)
+      store.setJSON('svDsp', next)
+      return next
+    })
+  }, [])
+
+  const setEqPreset = useCallback(
+    (presetKey) => {
+      const builtin = EQ_PRESETS[presetKey]
+      const custom = customEqPresets[presetKey]
+      const gains = builtin ? builtin.gains : custom?.gains || EQ_PRESETS.flat.gains
+      updateDsp({ eqOn: true, eqPreset: presetKey, eqGains: [...gains] })
+    },
+    [customEqPresets, updateDsp]
+  )
+
+  const setEqBand = useCallback(
+    (bandIndex, gainDb) => {
+      updateDsp((prev) => {
+        const nextGains = [...prev.eqGains]
+        nextGains[bandIndex] = gainDb
+        return { ...prev, eqOn: true, eqPreset: 'custom', eqGains: nextGains }
+      })
+    },
+    [updateDsp]
+  )
+
+  const saveCustomEqPreset = useCallback(
+    (name) => {
+      const clean = String(name || '').trim().slice(0, 32)
+      if (!clean) return null
+      const key = 'user_' + clean.toLowerCase().replace(/[^a-z0-9]+/g, '_')
+      setCustomEqPresets((prev) => {
+        const next = { ...prev, [key]: { label: clean, gains: [...dsp.eqGains] } }
+        store.setJSON('svCustomEq', next)
+        return next
+      })
+      updateDsp({ eqPreset: key })
+      return key
+    },
+    [dsp.eqGains, updateDsp]
+  )
+
+  const toggleLanguage = useCallback((langId) => {
+    setLanguagesState((prev) => {
+      const exists = prev.includes(langId)
+      const next = exists ? prev.filter((x) => x !== langId) : [...prev, langId]
+      const safe = next.length ? next : ['tamil']
+      store.setJSON('svLangs', safe)
+      return safe
+    })
+  }, [])
+
+  const setLanguages = useCallback((list) => {
+    const validIds = new Set(AVAILABLE_LANGUAGES.map((l) => l.id))
+    const clean = (Array.isArray(list) ? list : []).filter((id) => validIds.has(id))
+    const safe = clean.length ? clean : [...DEFAULT_LANGUAGES]
+    setLanguagesState(safe)
+    store.setJSON('svLangs', safe)
+  }, [])
 
   const setDataSaver = useCallback((on) => {
     setDataSaverState(on)
@@ -123,11 +198,6 @@ export function SettingsProvider({ children }) {
     store.set('svSaver', on ? '1' : '0')
   }, [])
 
-  /**
-   * Cycles off → on → smart. Reads as `toggleShuffle` for every existing caller,
-   * but the third state is what makes Smart Shuffle a real mode rather than a
-   * badge on top of random play.
-   */
   const cycleShuffle = useCallback(() => {
     setShuffleMode((mode) => {
       const next = SHUFFLE_NEXT[mode] || 'on'
@@ -136,14 +206,12 @@ export function SettingsProvider({ children }) {
     })
   }, [])
 
-  /** Direct setter for the settings panel's explicit three-way control. */
   const chooseShuffleMode = useCallback((mode) => {
     const next = SHUFFLE_MODES.includes(mode) ? mode : 'off'
     setShuffleMode(next)
     writeShuffle(next)
   }, [])
 
-  // all -> one -> off -> all
   const cycleRepeat = useCallback(() => {
     setRepeat((v) => {
       const next = v === 'all' ? 'one' : v === 'one' ? 'off' : 'all'
@@ -263,6 +331,7 @@ export function SettingsProvider({ children }) {
       cycleRepeat,
       theme,
       toggleTheme: () => setTheme((t) => (t === 'light' ? 'dark' : 'light')),
+      setThemeExplicit: (t) => setTheme(t === 'light' ? 'light' : 'dark'),
       radio,
       setRadio,
       autoplay,
@@ -278,12 +347,24 @@ export function SettingsProvider({ children }) {
       excludeArtist,
       unexcludeArtist,
       isExcluded,
+      languages,
+      toggleLanguage,
+      setLanguages,
+      availableLanguages: AVAILABLE_LANGUAGES,
+      dsp,
+      updateDsp,
+      setEqPreset,
+      setEqBand,
+      customEqPresets,
+      saveCustomEqPreset,
     }),
     [
       dataSaver, setDataSaver, saverAuto, crossfadeOn, crossfadeDur, crossfadeLaw, setCrossfadeLaw,
-      vizOn, vizStyle, canvasOn, source, ytApiKey, setYtApiKey, shuffleMode, cycleShuffle, chooseShuffleMode, repeat, cycleRepeat, theme, radio, setRadio,
-      autoplay, setAutoplay, qualityPref, setQualityPref, liveOK, ios, privateSession,
-      excludedArtists, excludeArtist, unexcludeArtist, isExcluded,
+      vizOn, vizStyle, canvasOn, source, ytApiKey, setYtApiKey, shuffleMode, cycleShuffle, chooseShuffleMode,
+      repeat, cycleRepeat, theme, radio, setRadio, autoplay, setAutoplay, qualityPref, setQualityPref,
+      liveOK, ios, privateSession, excludedArtists, excludeArtist, unexcludeArtist, isExcluded,
+      languages, toggleLanguage, setLanguages, dsp, updateDsp, setEqPreset, setEqBand, customEqPresets,
+      saveCustomEqPreset,
     ]
   )
 

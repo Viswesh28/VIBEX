@@ -4,6 +4,16 @@ import { decodeHtml } from '../lib/format.js'
 import { artistsOf } from '../lib/song.js'
 import { createSyncState, sanitizeTrackForPersistence, trackKey } from '../lib/models.js'
 import {
+  clearAllOfflineAudio,
+  idbDelete,
+  idbGet,
+  idbSet,
+  listOfflineTracks,
+  pinTrackOffline,
+  subscribeOfflineTracks,
+  unpinTrackOffline,
+} from '../lib/offlineStore.js'
+import {
   CONFLICT_POLICY,
   SYNC_STATUS,
   emptyRemoteMirror,
@@ -19,9 +29,10 @@ import { useSettings } from './SettingsContext.jsx'
 const Ctx = createContext(null)
 export const useLibrary = () => useContext(Ctx)
 
-const MAX_LIKED = 300
-const MAX_PL_SONGS = 500
-const MAX_STAT_SONGS = 300
+// Backed by IndexedDB (`vibex_storage_v3`), lifting the legacy 300-song localStorage ceiling.
+const MAX_LIKED = 10_000
+const MAX_PL_SONGS = 5_000
+const MAX_STAT_SONGS = 2_000
 
 const MIRROR_KEY = 'svRemoteMirror'
 const SYNC_STATE_KEY = 'svSyncState'
@@ -33,9 +44,7 @@ function emptyStats() {
 }
 
 export function LibraryProvider({ children, accountProvider = null }) {
-  // Private session suppresses history, not playback. The taste model in
-  // lib/taste.js reads this same store, so one flag covers both.
-  const { privateSession } = useSettings()
+  const { privateSession, qualityPref, dataSaver } = useSettings()
   const privateRef = useRef(false)
   privateRef.current = privateSession
 
@@ -55,28 +64,61 @@ export function LibraryProvider({ children, accountProvider = null }) {
   const [consent, setConsent] = useState(() => store.getJSON(CONSENT_KEY, null))
   const [syncState, setSyncState] = useState(() => store.getJSON(SYNC_STATE_KEY, null))
   const [conflictPolicy, setConflictPolicy] = useState(CONFLICT_POLICY.keepBoth)
+  const [offlineTracks, setOfflineTracks] = useState([])
+  const [offlineBusyIds, setOfflineBusyIds] = useState(() => new Set())
 
   const mirrorRef = useRef(remoteMirror)
   const syncStateRef = useRef(syncState)
   mirrorRef.current = remoteMirror
   syncStateRef.current = syncState
 
-  // Never persist raw expiring URLs or transient credentials in localStorage.
+  // Hydrate unlimited IndexedDB collections on mount if larger than the localStorage mirror.
   useEffect(() => {
-    store.setJSON(
-      'svLiked',
-      localLiked.map(sanitizeTrackForPersistence).filter(Boolean)
-    )
+    let alive = true
+    Promise.all([idbGet('svLiked'), idbGet('svPlaylists')]).then(([idbLiked, idbPlaylists]) => {
+      if (!alive) return
+      if (Array.isArray(idbLiked) && idbLiked.length > localLiked.length) {
+        setLocalLiked(idbLiked)
+      }
+      if (Array.isArray(idbPlaylists) && idbPlaylists.length > localPlaylists.length) {
+        setLocalPlaylists(idbPlaylists)
+      }
+    })
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Subscribe to pinned offline tracks so UI indicators & storage meters update live.
+  useEffect(() => {
+    let alive = true
+    listOfflineTracks().then((items) => {
+      if (alive) setOfflineTracks(items)
+    })
+    const unsub = subscribeOfflineTracks((items) => {
+      if (alive) setOfflineTracks(items)
+    })
+    return () => {
+      alive = false
+      unsub()
+    }
+  }, [])
+
+  // Persist sanitized collections to both IndexedDB (unlimited) and compact localStorage mirror.
+  useEffect(() => {
+    const clean = localLiked.map(sanitizeTrackForPersistence).filter(Boolean)
+    idbSet('svLiked', clean)
+    store.setJSON('svLiked', clean.slice(0, 400))
   }, [localLiked])
 
   useEffect(() => {
-    store.setJSON(
-      'svPlaylists',
-      localPlaylists.map((p) => ({
-        ...p,
-        songs: (p.songs || []).map(sanitizeTrackForPersistence).filter(Boolean),
-      }))
-    )
+    const clean = localPlaylists.map((p) => ({
+      ...p,
+      songs: (p.songs || []).map(sanitizeTrackForPersistence).filter(Boolean),
+    }))
+    idbSet('svPlaylists', clean)
+    store.setJSON('svPlaylists', clean)
   }, [localPlaylists])
 
   const merged = useMemo(
@@ -104,6 +146,65 @@ export function LibraryProvider({ children, accountProvider = null }) {
     return ids
   }, [liked])
 
+  const offlineIds = useMemo(() => new Set(offlineTracks.map((t) => t.id)), [offlineTracks])
+  const offlineBytes = useMemo(
+    () => offlineTracks.reduce((sum, item) => sum + (Number(item.size) || 0), 0),
+    [offlineTracks]
+  )
+
+  const toggleOfflinePin = useCallback(
+    async (song) => {
+      if (!song?.id) return false
+      if (offlineIds.has(song.id)) {
+        await unpinTrackOffline(song.id)
+        return false
+      }
+      setOfflineBusyIds((prev) => new Set(prev).add(song.id))
+      try {
+        await pinTrackOffline(song, { qualityPref, dataSaver })
+        return true
+      } finally {
+        setOfflineBusyIds((prev) => {
+          const next = new Set(prev)
+          next.delete(song.id)
+          return next
+        })
+      }
+    },
+    [dataSaver, offlineIds, qualityPref]
+  )
+
+  const pinPlaylistOffline = useCallback(
+    async (songs = []) => {
+      let savedCount = 0
+      for (const song of songs) {
+        if (!song?.id || offlineIds.has(song.id)) {
+          if (song?.id) savedCount += 1
+          continue
+        }
+        setOfflineBusyIds((prev) => new Set(prev).add(song.id))
+        try {
+          await pinTrackOffline(song, { qualityPref, dataSaver })
+          savedCount += 1
+        } catch {
+          /* continue pinning remaining songs */
+        } finally {
+          setOfflineBusyIds((prev) => {
+            const next = new Set(prev)
+            next.delete(song.id)
+            return next
+          })
+        }
+      }
+      return savedCount
+    },
+    [dataSaver, offlineIds, qualityPref]
+  )
+
+  const clearOfflineDownloads = useCallback(async () => {
+    await clearAllOfflineAudio()
+  }, [])
+
   const toggleLike = useCallback((song) => {
     if (!song) return
     const targetKey = trackKey(song) || song.id
@@ -127,6 +228,18 @@ export function LibraryProvider({ children, accountProvider = null }) {
     return error
   }, [])
 
+  const saveSongsAsPlaylist = useCallback((rawName, songs = []) => {
+    const cleanSongs = (songs || []).filter((s) => s?.id).slice(0, MAX_PL_SONGS)
+    const baseName = String(rawName || 'Imported Playlist').trim() || 'Imported Playlist'
+    const id = 'pl' + Date.now() + Math.floor(Math.random() * 1000)
+    setLocalPlaylists((prev) => {
+      const exists = prev.some((p) => p.name.toLowerCase() === baseName.toLowerCase())
+      const finalName = exists ? `${baseName} (${prev.length + 1})` : baseName
+      return [{ id, name: finalName, songs: cleanSongs }, ...prev]
+    })
+    return id
+  }, [])
+
   const renamePlaylist = useCallback((id, name) => {
     setLocalPlaylists((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)))
   }, [])
@@ -146,7 +259,7 @@ export function LibraryProvider({ children, accountProvider = null }) {
           return p
         }
         if (p.songs.length >= MAX_PL_SONGS) {
-          msg = 'Playlist is full (500 songs).'
+          msg = `Playlist is full (${MAX_PL_SONGS} songs).`
           return p
         }
         msg = `Added to "${decodeHtml(p.name)}".`
@@ -181,10 +294,33 @@ export function LibraryProvider({ children, accountProvider = null }) {
     []
   )
 
+  // Auto-restore Magic Link callback or saved Supabase JWT session on boot.
+  useEffect(() => {
+    if (!accountProvider || typeof accountProvider.restoreSession !== 'function') return undefined
+    let alive = true
+    accountProvider.restoreSession().then((restoredAccount) => {
+      if (!alive || !restoredAccount) return
+      const nextConsent = consent?.granted
+        ? consent
+        : { granted: true, collections: ['liked', 'playlists'], grantedAt: Date.now() }
+      setAccount(restoredAccount)
+      setConsent(nextConsent)
+      store.setJSON(ACCOUNT_KEY, restoredAccount)
+      store.setJSON(CONSENT_KEY, nextConsent)
+    })
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountProvider])
+
   const connectAccount = useCallback(
-    async ({ collections = ['liked', 'playlists'] } = {}) => {
+    async ({ collections = ['liked', 'playlists'], credentials = null } = {}) => {
       if (!accountProvider) {
         throw new Error('No authorized AccountProvider is configured in this build.')
+      }
+      if (credentials && typeof accountProvider.setPendingCredentials === 'function') {
+        accountProvider.setPendingCredentials(credentials)
       }
       const nextConsent = { granted: true, collections, grantedAt: Date.now() }
       const validatedCollections = requireSyncConsent(nextConsent)
@@ -203,6 +339,11 @@ export function LibraryProvider({ children, accountProvider = null }) {
       })
       syncStorage.writeSyncState(initialState)
 
+      // Push current local additions first if provider supports bidirectional cloud storage.
+      if (typeof accountProvider.pushLibrary === 'function' && (localLiked.length || localPlaylists.length)) {
+        await accountProvider.pushLibrary({ liked: localLiked, playlists: localPlaylists }).catch(() => {})
+      }
+
       return runLibrarySync({
         accountProvider,
         account: validAccount,
@@ -210,18 +351,38 @@ export function LibraryProvider({ children, accountProvider = null }) {
         storage: syncStorage,
       })
     },
-    [accountProvider, syncStorage]
+    [accountProvider, localLiked, localPlaylists, syncStorage]
   )
 
   const syncNow = useCallback(async () => {
     if (!accountProvider || !account || !consent?.granted) return null
+    if (typeof accountProvider.pushLibrary === 'function') {
+      await accountProvider.pushLibrary({ liked, playlists }).catch(() => {})
+    }
     return runLibrarySync({
       accountProvider,
       account,
       consent,
       storage: syncStorage,
     })
-  }, [accountProvider, account, consent, syncStorage])
+  }, [accountProvider, account, consent, liked, playlists, syncStorage])
+
+  // Auto-push local library mutations in the background when signed in & sync is active.
+  useEffect(() => {
+    if (
+      !accountProvider ||
+      typeof accountProvider.pushLibrary !== 'function' ||
+      !account ||
+      !consent?.granted ||
+      syncState?.status === SYNC_STATUS.paused
+    ) {
+      return undefined
+    }
+    const timer = setTimeout(() => {
+      accountProvider.pushLibrary({ liked, playlists }).catch(() => {})
+    }, 1500)
+    return () => clearTimeout(timer)
+  }, [accountProvider, account, consent, liked, playlists, syncState?.status])
 
   const pauseSync = useCallback(() => {
     if (!account && !syncStateRef.current) return
@@ -321,8 +482,6 @@ export function LibraryProvider({ children, accountProvider = null }) {
   }, [localLiked, localPlaylists])
 
   // ---- listening stats ----
-  // Kept out of React state: it ticks every 10s and on every play, and nothing
-  // renders from it except the Stats page, which reads on mount.
   const statCur = useRef(null)
   const statT0 = useRef(0)
 
@@ -338,23 +497,20 @@ export function LibraryProvider({ children, accountProvider = null }) {
       keys.slice(MAX_STAT_SONGS).forEach((k) => delete s.songs[k])
     }
     store.setJSON('svStats', s)
+    idbSet('svStats', s)
   }, [])
 
-  /** Credit elapsed listening time to whatever is currently playing. */
   const flushStats = useCallback(() => {
     if (!statCur.current) return
     const sec = Math.min(3600, Math.round((Date.now() - statT0.current) / 1000))
     statT0.current = Date.now()
     if (sec <= 0) return
-    // A private session still advances the internal clock so a later public
-    // session does not inherit a huge, unattributed chunk of time.
     if (privateRef.current) return
     const st = loadStats()
     st.seconds += sec
     const entry = st.songs[statCur.current.id]
     if (entry) {
       entry.sec += sec
-      // Recency is what makes "recent" mean something to the taste model.
       entry.last = Date.now()
     }
     const an = (statCur.current.artist.split(',')[0] || 'Unknown').trim() || 'Unknown'
@@ -375,14 +531,12 @@ export function LibraryProvider({ children, accountProvider = null }) {
         artist: artistsOf(song),
         img: song.image?.length ? song.image[0].url : '',
         artistId: song.artists?.primary?.[0]?.id || null,
+        songObj: sanitizeTrackForPersistence(song),
       }
       statT0.current = Date.now()
       if (privateRef.current) return
       const st = loadStats()
       st.plays++
-      // `dur` turns raw seconds into a completion ratio, and `last` is what
-      // lib/taste.js decays against. Both are needed to weight a skip below a
-      // full listen; without them every play looks identical.
       const e = st.songs[song.id] || (st.songs[song.id] = { n: 0, sec: 0 })
       e.n++
       e.name = statCur.current.name
@@ -391,6 +545,7 @@ export function LibraryProvider({ children, accountProvider = null }) {
       e.dur = Number(song.duration) || e.dur || 0
       e.last = Date.now()
       e.artistId = statCur.current.artistId || e.artistId || null
+      if (statCur.current.songObj) e.song = statCur.current.songObj
       const an = (statCur.current.artist.split(',')[0] || 'Unknown').trim() || 'Unknown'
       const ae = st.artists[an] || (st.artists[an] = { n: 0, sec: 0 })
       ae.n++
@@ -404,17 +559,13 @@ export function LibraryProvider({ children, accountProvider = null }) {
     return () => window.removeEventListener('beforeunload', flushStats)
   }, [flushStats])
 
-  /**
-   * Wipe the listening history. Deliberately narrow: likes and playlists are
-   * the user's library, not a behavioural profile, and are left alone.
-   */
   const resetHistory = useCallback(() => {
     statCur.current = null
     statT0.current = 0
     store.remove('svStats')
+    idbDelete('svStats')
   }, [])
 
-  /** Delete all local library collections, synced mirror copies, and account handles. */
   const deleteLocalLibrary = useCallback(async () => {
     if (accountProvider && typeof accountProvider.deleteAccountData === 'function') {
       try {
@@ -424,24 +575,27 @@ export function LibraryProvider({ children, accountProvider = null }) {
       }
     }
     await disconnectAccount({ deleteMirror: true })
+    await clearAllOfflineAudio()
     setLocalLiked([])
     setLocalPlaylists([])
     store.remove('svLiked')
     store.remove('svPlaylists')
+    await idbDelete('svLiked')
+    await idbDelete('svPlaylists')
   }, [accountProvider, disconnectAccount])
 
-  /** Find a song object by id anywhere we already hold one. */
   const resolveSong = useCallback(
     (id, queue = []) => {
       if (!id) return null
       return (
         queue.find((x) => x.id === id || trackKey(x) === id) ||
         liked.find((x) => x.id === id || trackKey(x) === id) ||
+        offlineTracks.find((x) => x.id === id || trackKey(x.song) === id)?.song ||
         playlists.reduce((f, p) => f || p.songs.find((x) => x.id === id || trackKey(x) === id), null) ||
         null
       )
     },
-    [liked, playlists]
+    [liked, offlineTracks, playlists]
   )
 
   const value = useMemo(
@@ -453,10 +607,18 @@ export function LibraryProvider({ children, accountProvider = null }) {
       playlists,
       localPlaylists,
       createPlaylist,
+      saveSongsAsPlaylist,
       renamePlaylist,
       deletePlaylist,
       addToPlaylist,
       removeFromPlaylist,
+      offlineTracks,
+      offlineIds,
+      offlineBusyIds,
+      offlineBytes,
+      toggleOfflinePin,
+      pinPlaylistOffline,
+      clearOfflineDownloads,
       remoteMirror,
       account,
       consent,
@@ -465,6 +627,7 @@ export function LibraryProvider({ children, accountProvider = null }) {
       conflictPolicy,
       setConflictPolicy,
       hasAccountProvider: Boolean(accountProvider),
+      accountProvider,
       connectAccount,
       syncNow,
       pauseSync,
@@ -489,10 +652,18 @@ export function LibraryProvider({ children, accountProvider = null }) {
       playlists,
       localPlaylists,
       createPlaylist,
+      saveSongsAsPlaylist,
       renamePlaylist,
       deletePlaylist,
       addToPlaylist,
       removeFromPlaylist,
+      offlineTracks,
+      offlineIds,
+      offlineBusyIds,
+      offlineBytes,
+      toggleOfflinePin,
+      pinPlaylistOffline,
+      clearOfflineDownloads,
       remoteMirror,
       account,
       consent,

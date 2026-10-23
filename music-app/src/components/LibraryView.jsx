@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { decodeHtml } from '../lib/format.js'
 import { imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
@@ -10,13 +10,14 @@ import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
-/** Liked songs and the playlists kept on this device. */
+/** Liked songs, offline vault, and user playlists kept on this device & cloud sync. */
 export function LibraryView({ onTitle }) {
-  const { liked, playlists } = useLibrary()
+  const { liked, playlists, offlineTracks, offlineBytes, pinPlaylistOffline } = useLibrary()
   const { setStatus } = useStatus()
   const { playFromList } = usePlayerTransport()
   const { dataSaver } = useSettings()
-  const { navigate, openNewPlaylistModal } = useUI()
+  const { navigate, openNewPlaylistModal, setImportModalOpen } = useUI()
+  const [pinningAll, setPinningAll] = useState(false)
 
   useEffect(() => {
     onTitle?.('Your Library', `(${liked.length} liked)`)
@@ -24,6 +25,16 @@ export function LibraryView({ onTitle }) {
   }, [liked.length, onTitle, setStatus])
 
   const minutes = Math.round(liked.reduce((sum, s) => sum + (s.duration || 0), 0) / 60)
+  const offlineMb = (offlineBytes / 1048576).toFixed(1)
+
+  const handlePinAllLiked = async () => {
+    if (!liked.length || pinningAll) return
+    setPinningAll(true)
+    setStatus(`Caching ${liked.length} liked songs for offline playback…`)
+    const count = await pinPlaylistOffline(liked)
+    setPinningAll(false)
+    setStatus(`Saved ${count} liked songs in your offline vault.`)
+  }
 
   return (
     <div className="lib">
@@ -41,6 +52,7 @@ export function LibraryView({ onTitle }) {
           <div className="hero-meta">
             {liked.length} {liked.length === 1 ? 'song' : 'songs'}
             {liked.length > 0 && ` · ${minutes} min`}
+            {offlineTracks.length > 0 && ` · ${offlineTracks.length} offline (${offlineMb} MB)`}
           </div>
           <div className="hero-actions">
             <button
@@ -56,6 +68,25 @@ export function LibraryView({ onTitle }) {
               <Icon name="plus" size={15} />
               New playlist
             </button>
+            <button
+              type="button"
+              className="btn-ghost on-art"
+              onClick={() => setImportModalOpen(true)}
+            >
+              <Icon name="import" size={15} />
+              Import playlist
+            </button>
+            {liked.length > 0 && (
+              <button
+                type="button"
+                className="btn-ghost on-art"
+                disabled={pinningAll}
+                onClick={handlePinAllLiked}
+              >
+                <Icon name="pin" size={15} />
+                {pinningAll ? 'Saving offline…' : 'Save all offline'}
+              </button>
+            )}
           </div>
         </div>
       </section>
@@ -68,6 +99,15 @@ export function LibraryView({ onTitle }) {
           title="Nothing liked yet"
           hint="Tap the heart on any song to save it here."
         />
+      )}
+
+      {offlineTracks.length > 0 && (
+        <>
+          <SectionTitle>
+            Saved offline <span>{offlineTracks.length}</span>
+          </SectionTitle>
+          <SongList songs={offlineTracks.map((x) => x.song).filter(Boolean)} />
+        </>
       )}
 
       <SectionTitle>
@@ -107,7 +147,8 @@ export function LibraryView({ onTitle }) {
         </div>
       ) : (
         <p className="lib-hint">
-          No playlists yet — create one here or tap <Icon name="plus" size={13} /> on any song.
+          No playlists yet — create one, import from Spotify / YouTube, or tap{' '}
+          <Icon name="plus" size={13} /> on any song.
         </p>
       )}
     </div>

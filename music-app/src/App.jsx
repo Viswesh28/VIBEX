@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { probeApi } from './lib/api.js'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api, probeApi } from './lib/api.js'
 import { dlUrlFor } from './lib/song.js'
 import { isNative } from './lib/config.js'
 import { decodeHtml } from './lib/format.js'
 import { isLocalOrigin } from './lib/platform.js'
 
 import { ArtistView } from './components/ArtistView.jsx'
+import { CommandPalette } from './components/CommandPalette.jsx'
 import { DetailView } from './components/DetailView.jsx'
+import { DspRackModal } from './components/DspRackModal.jsx'
 import { FeedView } from './components/FeedView.jsx'
 import { FullPlayer } from './components/FullPlayer.jsx'
 import { Icon } from './components/Icon.jsx'
+import { ImportPlaylistModal } from './components/ImportPlaylistModal.jsx'
 import { LibraryView } from './components/LibraryView.jsx'
 import { LyricsOverlay } from './components/LyricsOverlay.jsx'
 import { NowPlaying } from './components/NowPlaying.jsx'
@@ -44,20 +47,67 @@ export default function App() {
   const [checking, setChecking] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const [heading, setHeading] = useState({ title: 'Listen Now', count: '' })
+  const handledDeepLinkRef = useRef(false)
 
   const { status, setStatus } = useStatus()
   const {
-    current, currentQuality, isPlaying,
-    togglePlay, nextTrack, prevTrack, seekBy, seekTo, pause, resumeFromSystem,
+    current,
+    currentQuality,
+    isPlaying,
+    playFromList,
+    togglePlay,
+    nextTrack,
+    prevTrack,
+    seekBy,
+    seekTo,
+    pause,
+    resumeFromSystem,
     setSleepGain,
   } = usePlayerTransport()
   const { dataSaver } = useSettings()
   const {
-    view, back, canGoBack, navigate, searchQuery, searchTab,
-    plModal, fullOpen, setFullOpen, lyricsOpen, setLyricsOpen, closePlaylistModal,
+    view,
+    back,
+    canGoBack,
+    navigate,
+    deepLinkPlay,
+    plModal,
+    importModalOpen,
+    setImportModalOpen,
+    cmdOpen,
+    setCmdOpen,
+    dspOpen,
+    setDspOpen,
+    fullOpen,
+    setFullOpen,
+    lyricsOpen,
+    setLyricsOpen,
+    closePlaylistModal,
   } = useUI()
 
-  // The timer fades over the last 20s rather than cutting: see lib/sleep.js.
+  // Deep-link auto-load (`/?play=<trackId>&t=<sec>`) when opening a shared song link.
+  useEffect(() => {
+    if (!deepLinkPlay?.id || handledDeepLinkRef.current) return
+    handledDeepLinkRef.current = true
+    const rawId = String(deepLinkPlay.id)
+    const isYt = rawId.startsWith('yt:')
+    const cleanId = isYt ? rawId.slice(3) : rawId
+    const req = isYt
+      ? api(`/ytmusic?op=song&id=${encodeURIComponent(cleanId)}`).then((d) => d?.song || d)
+      : api(`/songs?ids=${encodeURIComponent(cleanId)}`).then((d) =>
+          Array.isArray(d) ? d[0] : d?.data?.[0] || d?.[0] || null
+        )
+    req
+      .then((song) => {
+        if (!song?.id) return
+        playFromList([song], 0)
+        if (deepLinkPlay.sec > 0) {
+          setTimeout(() => seekTo(deepLinkPlay.sec), 500)
+        }
+      })
+      .catch(() => {})
+  }, [deepLinkPlay, playFromList, seekTo])
+
   const sleep = useSleepTimer(
     useCallback(() => {
       pause()
@@ -66,10 +116,6 @@ export default function App() {
     setSleepGain
   )
 
-  // The failure advice has to match where the app is actually running: the
-  // native shell and the deployed site have no local server to start, and a
-  // phone that is offline needs a different sentence from a dev machine whose
-  // gateway is down.
   const checkApi = useCallback(() => {
     setChecking(true)
     return probeApi().then((ok) => {
@@ -94,8 +140,6 @@ export default function App() {
     checkApi()
   }, [checkApi])
 
-  // An installed app can sit backgrounded for hours. When the connection comes
-  // back, retry the probe instead of leaving the user on the offline screen.
   useEffect(() => {
     const onOnline = () => {
       if (apiOnline === false) checkApi()
@@ -106,17 +150,29 @@ export default function App() {
 
   // Escape closes the top-most layer only.
   const onEscape = useCallback(() => {
-    if (plModal) closePlaylistModal()
+    if (cmdOpen) setCmdOpen(false)
+    else if (dspOpen) setDspOpen(false)
+    else if (importModalOpen) setImportModalOpen(false)
+    else if (plModal) closePlaylistModal()
     else if (lyricsOpen) setLyricsOpen(false)
     else if (fullOpen) setFullOpen(false)
-  }, [plModal, lyricsOpen, fullOpen, closePlaylistModal, setLyricsOpen, setFullOpen])
+  }, [
+    cmdOpen,
+    dspOpen,
+    importModalOpen,
+    plModal,
+    lyricsOpen,
+    fullOpen,
+    setCmdOpen,
+    setDspOpen,
+    setImportModalOpen,
+    closePlaylistModal,
+    setLyricsOpen,
+    setFullOpen,
+  ])
 
-  // Lockscreen / notification controls. Essential once this runs on a phone,
-  // and a genuine upgrade for desktop media keys too.
   const mediaActions = useMemo(
     () => ({
-      // The system play button must recover a torn-down iOS audio session, not
-      // just call play() on a dead element.
       play: () => resumeFromSystem(),
       pause,
       next: nextTrack,
@@ -139,16 +195,16 @@ export default function App() {
     onPrev: prevTrack,
     onSeek: seekBy,
     onEscape,
+    onCommandPalette: useCallback(() => setCmdOpen((v) => !v), [setCmdOpen]),
   })
 
-  // An overlay owns the scroll lock while it is up.
   useEffect(() => {
-    const locked = fullOpen || lyricsOpen
+    const locked = fullOpen || lyricsOpen || cmdOpen || dspOpen || importModalOpen
     document.body.style.overflow = locked ? 'hidden' : ''
     return () => {
       document.body.style.overflow = ''
     }
-  }, [fullOpen, lyricsOpen])
+  }, [fullOpen, lyricsOpen, cmdOpen, dspOpen, importModalOpen])
 
   const onTitle = useCallback((title, count) => setHeading({ title, count: count || '' }), [])
   const onCount = useCallback((count) => setHeading((h) => ({ ...h, count })), [])
@@ -162,10 +218,6 @@ export default function App() {
       })
   }, [view])
 
-  /**
-   * Opening in a named window keeps the click gesture intact, so Chrome treats
-   * the response as a real user-initiated download rather than a popup.
-   */
   const onDownload = useCallback(
     async (e) => {
       e?.preventDefault()
@@ -173,8 +225,6 @@ export default function App() {
         setStatus('No downloadable link for this song — replay it and retry.', true)
         return
       }
-      // Android has no gateway to ask, so it fetches, tags and saves the file
-      // itself using the very same tagger the server uses.
       if (isNative()) {
         try {
           const { downloadSongNative } = await import('./lib/download.js')
@@ -196,8 +246,6 @@ export default function App() {
     [current, currentQuality, setStatus]
   )
 
-  // Library, playlists and stats live entirely on this device, so an installed
-  // app is still useful with no connection. Only catalogue views need the API.
   const offlineSafe =
     view.kind === 'library' || view.kind === 'myplaylist' || view.kind === 'stats'
 
@@ -287,6 +335,9 @@ export default function App() {
       <FullPlayer onDownload={onDownload} />
       <LyricsOverlay />
       <PlaylistModal />
+      <DspRackModal />
+      <ImportPlaylistModal />
+      <CommandPalette />
       <YouTubeEmbed />
       <MediaSessionBridge
         current={current}

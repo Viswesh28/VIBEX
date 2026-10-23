@@ -18,18 +18,11 @@ const FEED = [
   ['Evergreen Classics', 'evergreen hits tamil'],
 ]
 
-const LIVE_SONG_FEEDS = [
-  ['New Releases', '/content/new-releases?languages=tamil,hindi,english,telugu,malayalam&limit=12'],
-  ['Trending Songs', '/content/trending?languages=tamil,hindi,english,telugu,malayalam&limit=12'],
-]
-
 const SKELETON_CARDS = 6
 const MAX_RETRIES = 2
-/** Refresh live catalog shelves automatically every 5 minutes so newly dropped tracks appear live. */
 export const LIVE_FEED_REFRESH_MS = 5 * 60 * 1000
 const VISIBILITY_REFRESH_MS = 3 * 60 * 1000
 
-/** Fixed-height placeholders: the home screen must not reflow when data lands. */
 function ShelfSkeleton({ title }) {
   return (
     <section className="shelf feed-sec skeleton-shelf" aria-hidden="true">
@@ -51,16 +44,8 @@ function ShelfSkeleton({ title }) {
   )
 }
 
-/** Jittered, capped backoff — a herd of clients must not retry in lockstep. */
 const backoffMs = (attempt) => Math.min(4000, 350 * 2 ** attempt + Math.random() * 250)
 
-/**
- * Listen Now — the editorial home.
- *
- * Loads live Newly Released & Trending playable tracks alongside editorial
- * playlist shelves, and silently refreshes the catalog every 5 minutes (and
- * on tab focus) so brand-new songs appear automatically without a reload.
- */
 export function FeedView() {
   const [sections, setSections] = useState([])
   const [liveSongShelves, setLiveSongShelves] = useState([])
@@ -70,10 +55,16 @@ export function FeedView() {
   const alive = useRef(true)
   const retryTimer = useRef(null)
   const lastFetchedAt = useRef(0)
+
   const player = usePlayerTransport()
   const { setStatus } = useStatus()
-  const { navigate, search } = useUI()
-  const { dataSaver } = useSettings()
+  const { navigate, search, setImportModalOpen } = useUI()
+  const { dataSaver, languages, availableLanguages, toggleLanguage } = useSettings()
+
+  const langParam = (languages && languages.length
+    ? languages
+    : ['tamil', 'hindi', 'english', 'telugu', 'malayalam']
+  ).join(',')
 
   useEffect(
     () => () => {
@@ -83,25 +74,32 @@ export function FeedView() {
     []
   )
 
-  const refreshLiveSongs = useCallback((bypassCache = false) => {
-    Promise.allSettled(
-      LIVE_SONG_FEEDS.map(([title, endpoint]) =>
-        api(endpoint, { bypassCache }).then((d) => ({
-          title,
-          items: (d?.results || []).filter((s) => s && s.id && s.downloadUrl?.length),
-        }))
-      )
-    ).then((settled) => {
-      if (!alive.current) return
-      const fresh = settled
-        .filter((r) => r.status === 'fulfilled' && r.value.items.length > 0)
-        .map((r) => r.value)
-      if (fresh.length) {
-        setLiveSongShelves(fresh)
-        lastFetchedAt.current = Date.now()
-      }
-    })
-  }, [])
+  const refreshLiveSongs = useCallback(
+    (bypassCache = false) => {
+      const liveEndpoints = [
+        ['New Releases', `/content/new-releases?languages=${encodeURIComponent(langParam)}&limit=12`],
+        ['Trending Songs', `/content/trending?languages=${encodeURIComponent(langParam)}&limit=12`],
+      ]
+      Promise.allSettled(
+        liveEndpoints.map(([title, endpoint]) =>
+          api(endpoint, { bypassCache }).then((d) => ({
+            title,
+            items: (d?.results || []).filter((s) => s && s.id && s.downloadUrl?.length),
+          }))
+        )
+      ).then((settled) => {
+        if (!alive.current) return
+        const fresh = settled
+          .filter((r) => r.status === 'fulfilled' && r.value.items.length > 0)
+          .map((r) => r.value)
+        if (fresh.length) {
+          setLiveSongShelves(fresh)
+          lastFetchedAt.current = Date.now()
+        }
+      })
+    },
+    [langParam]
+  )
 
   const load = useCallback(() => {
     alive.current = true
@@ -132,7 +130,6 @@ export function FeedView() {
       setDegraded(dropped)
 
       if (!ok.length) {
-        // Nothing rendered: only now is a retry worth the user's time.
         setLoading(false)
         track(EVENTS.homeFailed, { attempt })
         if (attempt < MAX_RETRIES) {
@@ -154,8 +151,6 @@ export function FeedView() {
     load()
   }, [load])
 
-  // Periodically refresh live New Releases & Trending shelves in the background
-  // and whenever the listener returns to the tab after a break.
   useEffect(() => {
     if (!sections.length) return undefined
     const interval = setInterval(() => {
@@ -216,9 +211,34 @@ export function FeedView() {
     const idx = Math.max(0, shelf.items.findIndex((s) => s.id === item.id))
     player?.playFromList(shelf.items, idx)
   }
+  const recentHistory = player?.recentHistory || []
 
   return (
     <>
+      <div className="lang-bar" role="group" aria-label="Preferred music languages">
+        {(availableLanguages || []).map((lang) => {
+          const on = (languages || []).includes(lang.id)
+          return (
+            <button
+              key={lang.id}
+              type="button"
+              className={'chip' + (on ? ' active' : '')}
+              aria-pressed={on}
+              onClick={() => toggleLanguage(lang.id)}
+            >
+              {lang.label}
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          className="chip lang-import-btn"
+          onClick={() => setImportModalOpen(true)}
+        >
+          <Icon name="import" size={13} /> Import playlist
+        </button>
+      </div>
+
       <section className="hero feature" aria-labelledby="featureTitle">
         <div
           className="hero-wash"
@@ -278,6 +298,20 @@ export function FeedView() {
             Reload feed
           </button>
         </div>
+      )}
+
+      {recentHistory.length > 0 && (
+        <Shelf
+          title="Jump Back In"
+          items={recentHistory.slice(0, 12)}
+          kind="song"
+          moreLabel="Play all"
+          onOpen={(song) => {
+            const idx = Math.max(0, recentHistory.findIndex((s) => s.id === song.id))
+            player?.playFromList(recentHistory, idx)
+          }}
+          onMore={() => player?.playFromList(recentHistory, 0)}
+        />
       )}
 
       {liveSongShelves.map((shelf) => (

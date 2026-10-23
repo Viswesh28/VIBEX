@@ -5,12 +5,8 @@ import { isYtTrack } from '../lib/sources.js'
 import { Icon } from './Icon.jsx'
 
 /**
- * One row in any song list. `onRemove` swaps the "add to playlist" control for
- * a remove button when the row is shown inside a user playlist.
- *
- * Handlers accept `(song, index)` so parent lists can pass one stable reference
- * across hundreds of rows without breaking React.memo, while direct unit callers
- * passing zero-arg handlers continue to work identically.
+ * One row in any song list. Supports instant play, Play Next, Offline Pin,
+ * Like, Add/Remove Playlist, Artist Exclude, and Radio.
  */
 export const SongRow = memo(function SongRow({
   song,
@@ -18,8 +14,12 @@ export const SongRow = memo(function SongRow({
   num,
   playing,
   liked,
+  pinned = false,
+  pinning = false,
   dataSaver,
   onPlay,
+  onPlayNext,
+  onTogglePin,
   onLike,
   onAddToPlaylist,
   onRemove,
@@ -37,7 +37,10 @@ export const SongRow = memo(function SongRow({
   return (
     <div
       className={
-        'song-row' + (playing ? ' playing' : '') + (onExclude ? ' with-exclude' : '')
+        'song-row' +
+        (playing ? ' playing' : '') +
+        (onExclude ? ' with-exclude' : '') +
+        (onPlayNext || onTogglePin ? ' with-queue-ops' : '')
       }
       onClick={firePlay}
       aria-current={playing ? 'true' : undefined}
@@ -71,14 +74,15 @@ export const SongRow = memo(function SongRow({
         <div className="s-title">
           {num ? `${num}. ` : ''}
           {title}
+          {pinned && (
+            <span className="src-badge offline-badge" title="Saved offline in browser vault">
+              Offline
+            </span>
+          )}
           {isYtTrack(song) && (
             <span
               className="src-badge"
-              title={
-                song.downloadUrl?.length
-                  ? 'Matched from YouTube Music — plays as pure audio'
-                  : 'From YouTube Music — plays in the app only'
-              }
+              title="Matched from YouTube Music — plays as pure audio"
             >
               YT
             </span>
@@ -88,6 +92,32 @@ export const SongRow = memo(function SongRow({
       </div>
 
       <div className="s-album">{decodeHtml(song.album?.name || '')}</div>
+
+      {onPlayNext && (
+        <button
+          type="button"
+          className="qnext-btn"
+          title="Play next"
+          aria-label={`Play ${title} next`}
+          onClick={stop(onPlayNext)}
+        >
+          <Icon name="queueNext" size={17} />
+        </button>
+      )}
+
+      {onTogglePin && (
+        <button
+          type="button"
+          className={'pin-btn' + (pinned ? ' pinned' : '')}
+          title={pinned ? 'Remove offline copy' : 'Save offline'}
+          aria-label={pinned ? `Remove offline copy of ${title}` : `Save ${title} offline`}
+          aria-pressed={!!pinned}
+          disabled={pinning}
+          onClick={stop(onTogglePin)}
+        >
+          <Icon name="pin" size={17} />
+        </button>
+      )}
 
       <button
         type="button"

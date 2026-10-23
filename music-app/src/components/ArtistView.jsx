@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
 import { decodeHtml, fmtNum } from '../lib/format.js'
+import { shareVibexLink } from '../lib/shareUrl.js'
 import { imgOf } from '../lib/song.js'
 import { CardGrid } from './CardGrid.jsx'
 import { Icon } from './Icon.jsx'
@@ -100,6 +101,20 @@ export function ArtistView({ id, onTitle }) {
             <button type="button" className="btn-ghost on-art" onClick={() => startArtistRadio(songs)}>
               <Icon name="radio" size={15} />
               Artist radio
+            </button>
+            <button
+              type="button"
+              className="btn-ghost on-art"
+              onClick={async () => {
+                const out = await shareVibexLink({
+                  title: decodeHtml(data.name),
+                  pathOrUrl: `/?v=artist&id=${encodeURIComponent(id)}`,
+                })
+                if (out.copied) setStatus('Copied artist link to clipboard.')
+              }}
+            >
+              <Icon name="share" size={15} />
+              Share
             </button>
             <button
               type="button"

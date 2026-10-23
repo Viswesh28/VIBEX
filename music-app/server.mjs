@@ -11,6 +11,7 @@ import { addTags } from './tagger.mjs'
 import ytmusicHandler from '../api/ytmusic.mjs'
 import ytaudioHandler from '../api/ytaudio.mjs'
 import canvasHandler from '../api/canvas.mjs'
+import importPlaylistHandler from '../api/import-playlist.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 8000)
@@ -121,6 +122,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/canvas') {
       await runFunctionHandler(canvasHandler, req, res, url)
+      return
+    }
+    if (url.pathname === '/api/import-playlist') {
+      await runFunctionHandler(importPlaylistHandler, req, res, url)
       return
     }
 

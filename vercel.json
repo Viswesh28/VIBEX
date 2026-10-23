@@ -30,12 +30,35 @@
     },
     "api/canvas.mjs": {
       "maxDuration": 30
+    },
+    "api/import-playlist.mjs": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
     {
       "source": "/dl",
       "destination": "/api/dl"
+    },
+    {
+      "source": "/artist/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/album/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/playlist/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/search",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/library",
+      "destination": "/index.html"
     }
   ],
   "headers": [
