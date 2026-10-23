@@ -342,7 +342,7 @@ function computeTitleSimilarity(targetTitle, candidateTitle) {
 }
 
 /** Score a JioSaavn candidate against a source track (`0` = incompatible). */
-export function scoreSaavnCandidate(sourceTrack, candidate) {
+export function scoreSaavnCandidate(sourceTrack, candidate, { allowVideoToTrack = false } = {}) {
   if (!candidate?.id || !Array.isArray(candidate.downloadUrl) || !candidate.downloadUrl.length) {
     return { score: 0, titleScore: 0 }
   }
@@ -393,17 +393,22 @@ export function scoreSaavnCandidate(sourceTrack, candidate) {
     if (diff <= 8) durationAdj = 0.14
     else if (diff <= 25) durationAdj = 0.08
     else if (diff <= 60) durationAdj = 0.02
-    else if (diff > 110) durationAdj = -0.25
+    else if (!allowVideoToTrack && diff > 110) durationAdj = -0.25
   }
 
-  // Edition guardrail: don't replace an explicit remix/cover/lofi/karaoke request
-  // with an unrelated studio cut (or vice versa) unless the edition matches.
+  // Edition guardrail: in strict Pass 1, keep exact editions separate;
+  // in Pass 2 (`allowVideoToTrack: true`), convert music videos / live / lofi /
+  // acoustic uploads cleanly to the studio audio track when no exact cut exists.
   let editionAdj = 0
-  for (const mod of target.modifiers) {
-    if (!candParts.modifiers.has(mod)) editionAdj -= 0.28
-  }
-  for (const mod of candParts.modifiers) {
-    if (!target.modifiers.has(mod)) editionAdj -= 0.18
+  if (!allowVideoToTrack) {
+    for (const mod of target.modifiers) {
+      if (!candParts.modifiers.has(mod)) editionAdj -= 0.28
+    }
+    for (const mod of candParts.modifiers) {
+      if (!target.modifiers.has(mod)) editionAdj -= 0.18
+    }
+  } else if (titleScore < 0.72 && contextOverlap === 0) {
+    return { score: 0, titleScore }
   }
 
   const total = Math.max(0, Math.min(1, titleScore * 0.85 + contextBonus + durationAdj + editionAdj))
@@ -411,12 +416,13 @@ export function scoreSaavnCandidate(sourceTrack, candidate) {
 }
 
 /** Return the best confident studio audio match (`score >= 0.68`) or `null`. */
-export function matchSaavnTrack(sourceTrack, candidates, { minScore = 0.68 } = {}) {
+export function matchSaavnTrack(sourceTrack, candidates, { minScore = 0.68, allowVideoToTrack = false } = {}) {
   if (!sourceTrack || !Array.isArray(candidates) || !candidates.length) return null
+  const threshold = allowVideoToTrack ? Math.min(minScore, 0.62) : minScore
   let best = null
   for (const candidate of candidates) {
-    const { score, titleScore } = scoreSaavnCandidate(sourceTrack, candidate)
-    if (score >= minScore && (!best || score > best.score)) {
+    const { score, titleScore } = scoreSaavnCandidate(sourceTrack, candidate, { allowVideoToTrack })
+    if (score >= threshold && (!best || score > best.score)) {
       best = { song: candidate, score, titleScore }
     }
   }

@@ -20,15 +20,12 @@ export function YouTubeEmbed() {
     closeEmbed,
     reportEmbed,
     registerEmbedCommand,
-    nextTrack,
-    prevTrack,
     volume,
   } = usePlayer()
   const open = Boolean(embedTrack)
   const frame = useRef(null)
   const volRef = useRef(volume)
   const [failure, setFailure] = useState('')
-  const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
     volRef.current = volume
@@ -163,48 +160,15 @@ export function YouTubeEmbed() {
   return (
     <div
       id="ytEmbed"
-      className={expanded ? 'is-expanded' : 'is-docked'}
-      role="dialog"
-      aria-modal={expanded ? 'true' : 'false'}
-      aria-label="YouTube player"
+      className={failure ? 'has-error' : 'is-audio-only'}
+      role="region"
+      aria-label="YouTube audio transport"
     >
       <div id="ytEmbedHead">
         <div id="ytEmbedMeta">
           <Icon name="music" size={15} />
           <b>{title}</b>
           {artist && <span>{artist}</span>}
-        </div>
-        <div id="ytEmbedNav">
-          <button
-            type="button"
-            title="Previous"
-            aria-label="Previous track"
-            onClick={() => {
-              closeEmbed()
-              prevTrack()
-            }}
-          >
-            <Icon name="chevronLeft" size={16} />
-          </button>
-          <button
-            type="button"
-            title="Next"
-            aria-label="Next track"
-            onClick={() => {
-              closeEmbed()
-              nextTrack()
-            }}
-          >
-            <Icon name="chevronRight" size={16} />
-          </button>
-          <button
-            type="button"
-            title={expanded ? 'Dock mini player' : 'Expand video'}
-            aria-label={expanded ? 'Dock mini player' : 'Expand video'}
-            onClick={() => setExpanded((v) => !v)}
-          >
-            <Icon name={expanded ? 'chevronDown' : 'chevronUp'} size={16} />
-          </button>
         </div>
         <button
           type="button"
@@ -223,7 +187,6 @@ export function YouTubeEmbed() {
           src={src}
           title={title}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowFullScreen
           referrerPolicy="strict-origin-when-cross-origin"
         />
       </div>
@@ -236,7 +199,7 @@ export function YouTubeEmbed() {
         </p>
       ) : (
         <p id="ytEmbedNote">
-          Synced with player bar controls.
+          Audio-only playback active in player bar.
         </p>
       )}
     </div>

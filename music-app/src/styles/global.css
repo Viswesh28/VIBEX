@@ -1634,91 +1634,68 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   }
 }
 
-/* ---------- long-form YouTube embed ------------------------------------- */
-/* Docked compactly above the player bar by default so unmatched YouTube items
-   never block browsing or VIBEX's bottom player controls, with one-click
-   theater expansion when wanted. */
-#ytEmbed {
+/* ---------- pure audio-track YouTube transport -------------------------- */
+/* Runs off-screen (`is-audio-only`) so YouTube videos play purely as audio
+   tracks inside VIBEX's player bar with zero visible video window, surfacing
+   a compact banner only if YouTube reports a playback restriction (`has-error`). */
+#ytEmbed.is-audio-only {
+  position: fixed;
+  left: -9999px;
+  bottom: 0;
+  width: 200px;
+  height: 200px;
+  opacity: 0.001;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: -1;
+}
+#ytEmbed.has-error {
   position: fixed;
   right: 16px;
   bottom: calc(var(--player-h, 88px) + 14px);
-  width: min(320px, calc(100vw - 24px));
+  width: min(340px, calc(100vw - 24px));
   z-index: 390;
   display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
-  gap: 8px; padding: 10px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  gap: 8px; padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
   background: rgba(12, 10, 14, 0.96); color: #fff;
   backdrop-filter: blur(18px);
   animation: fadeIn 0.2s ease;
 }
-#ytEmbed.is-expanded {
-  inset: 0;
-  width: auto;
-  border-radius: 0;
-  border: 0;
-  z-index: 430;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 18px;
-  background: rgba(6, 3, 5, 0.95);
-}
 #ytEmbedHead {
   width: 100%;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-}
-#ytEmbed.is-expanded #ytEmbedHead {
-  width: min(96vw, 1100px);
-  gap: 12px;
 }
 #ytEmbedMeta { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
 #ytEmbedMeta b {
   font-size: 12.5px; font-weight: 650;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-#ytEmbed.is-expanded #ytEmbedMeta b { font-size: 14px; }
 #ytEmbedMeta span {
   font-size: 11px; color: rgba(255, 255, 255, 0.66);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-#ytEmbedNav { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-#ytEmbedNav button {
-  width: 30px; height: 30px; border-radius: 8px;
-  display: inline-flex; align-items: center; justify-content: center;
-  color: #fff; background: rgba(255, 255, 255, 0.08);
-}
-#ytEmbed.is-expanded #ytEmbedNav button { width: 38px; height: 38px; border-radius: 10px; }
-#ytEmbedNav button:hover { background: rgba(255, 255, 255, 0.16); }
 #ytEmbedClose {
   flex: 0 0 auto; width: 30px; height: 30px; border-radius: 8px;
   display: inline-flex; align-items: center; justify-content: center;
   color: #fff; background: rgba(255, 255, 255, 0.08);
 }
-#ytEmbed.is-expanded #ytEmbedClose { width: 38px; height: 38px; border-radius: 10px; }
 #ytEmbedClose:hover { background: rgba(255, 255, 255, 0.16); }
-#ytEmbedStage {
-  width: 100%; aspect-ratio: 16 / 9;
-  background: #000; border-radius: 10px; overflow: hidden;
+#ytEmbed.has-error #ytEmbedStage {
+  position: fixed; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none;
 }
-#ytEmbed.is-expanded #ytEmbedStage {
-  width: min(96vw, 1100px); border-radius: 14px;
+#ytEmbedStage {
+  width: 200px; height: 200px; overflow: hidden;
 }
 #ytEmbedFrame { display: block; width: 100%; height: 100%; border: 0; }
 #ytEmbedError {
   width: 100%; margin: 0;
   font-size: 11.5px; line-height: 1.5; color: #ffd9a8;
 }
-#ytEmbed.is-expanded #ytEmbedError { width: min(96vw, 1100px); font-size: 12.5px; }
 #ytEmbedError a { color: #fff; text-decoration: underline; }
 #ytEmbedNote {
   width: 100%; margin: 0;
   font-size: 10.5px; line-height: 1.4; color: rgba(255, 255, 255, 0.5);
-}
-#ytEmbed.is-expanded #ytEmbedNote { width: min(96vw, 1100px); font-size: 11.5px; }
-@media (max-width: 640px) {
-  #ytEmbed { right: 12px; width: calc(100vw - 24px); padding: 8px; gap: 6px; }
-  #ytEmbed.is-expanded { right: 0; width: auto; padding: 10px; gap: 10px; }
-  #ytEmbedStage { width: 100%; border-radius: 10px; }
 }

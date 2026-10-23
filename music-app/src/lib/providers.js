@@ -7,6 +7,7 @@
 // ==========================================================================
 
 import { api as defaultApi, apiFetch as defaultApiFetch } from './api.js'
+import { apiUrl as defaultApiUrl } from './config.js'
 import {
   DEFAULT_PROVIDER,
   compositeKey,
@@ -21,7 +22,7 @@ import { effQ, streamOf } from './song.js'
 import { SOURCE_ID, cataloguePath, isYtTrack, mapYtResults } from './sources.js'
 import { isExpired, parseExpiry } from './stream.js'
 import { buildMatchQueries, matchSaavnTrack } from './trackMatch.js'
-import { embedUrl, isLongForm, videoIdOf } from './ytEmbed.js'
+import { embedUrl, videoIdOf } from './ytEmbed.js'
 
 export class ProviderError extends Error {
   constructor(message, { category = PLAYBACK_FAILURE.ProviderUnavailable, status = 0, retryAfterMs = null } = {}) {
@@ -408,6 +409,7 @@ export function createYtMusicEmbedResolver({
 export function createYtMusicStreamResolver({
   apiFn = defaultApi,
   apiFetchFn = defaultApiFetch,
+  apiUrlFn = defaultApiUrl,
   getOrigin = () => (typeof window !== 'undefined' ? window.location.origin : ''),
   cache = new MetadataCache(),
   now = () => Date.now(),
@@ -447,16 +449,47 @@ export function createYtMusicStreamResolver({
     }
   }
 
+  const resolveYoutubeDirectAudio = async (videoId, track) => {
+    if (!videoId) return null
+    try {
+      const probeParams = new URLSearchParams({ id: videoId, meta: '1' })
+      const title = track?.name || track?.title || ''
+      const artist = track?.artists?.primary?.[0]?.name || track?.subtitle || ''
+      if (title) probeParams.set('title', title)
+      if (artist) probeParams.set('artist', artist)
+
+      const res = await apiFetchFn(`/ytaudio?${probeParams.toString()}`, {
+        headers: { accept: 'application/json' },
+      })
+      if (!res?.ok) return null
+      const payload = await res.json().catch(() => null)
+      if (!payload?.success || !payload?.data?.playable) return null
+
+      const streamParams = new URLSearchParams({ id: videoId })
+      if (title) streamParams.set('title', title)
+      if (artist) streamParams.set('artist', artist)
+      const q = payload.data.quality || '160kbps'
+      return {
+        mode: 'stream',
+        uri: apiUrlFn(`/ytaudio?${streamParams.toString()}`),
+        mimeType: payload.data.mimeType || 'audio/mp4',
+        quality: q,
+        expiresAtEpochMs: now() + 80 * 1000,
+        matchedSong: null,
+        requestHeaders: {},
+        license: null,
+      }
+    } catch {
+      return null
+    }
+  }
+
   return validateStreamResolver({
     id: SOURCE_ID.ytmusic,
 
     async resolve(trackId, quality = '320kbps', { track = null, forceRefresh = false, dataSaver = false } = {}) {
       const parsed = parseCompositeKey(trackId || track?.id)
       const videoId = videoIdOf(track || { videoId: parsed.id })
-
-      if (track && isLongForm(track)) {
-        return buildEmbedFallback(videoId)
-      }
 
       if (!forceRefresh && track?.downloadUrl?.length) {
         const inline = buildStreamResult(track, quality, dataSaver)
@@ -477,14 +510,13 @@ export function createYtMusicStreamResolver({
             if (resolved) return resolved
           }
         } catch {
-          /* fall through to metadata match or embed fallback */
+          /* fall through to metadata match or direct audio stream */
         }
       }
 
       const cacheKey = videoId ? `ytmatch:${videoId}` : null
       if (!forceRefresh && cacheKey) {
         const cached = cache.get(cacheKey)
-        if (cached?.unmatched) return buildEmbedFallback(videoId)
         if (cached?.songId) {
           try {
             const r = await apiFetchFn(`/songs/${encodeURIComponent(cached.songId)}`, {
@@ -505,21 +537,37 @@ export function createYtMusicStreamResolver({
 
       if (track && (track.name || track.title)) {
         const queries = buildMatchQueries(track)
+        const collected = []
         for (const q of queries) {
           try {
             const data = await apiFn(`/search/songs?query=${encodeURIComponent(q)}&limit=10`)
             const candidates = Array.isArray(data?.results) ? data.results : []
-            const hit = matchSaavnTrack(track, candidates)
-            if (hit?.song) {
-              if (cacheKey) cache.set(cacheKey, { songId: hit.song.id })
-              const resolved = buildStreamResult(hit.song, quality, dataSaver)
-              if (resolved) return resolved
+            if (candidates.length) {
+              collected.push(...candidates)
+              const hit = matchSaavnTrack(track, candidates)
+              if (hit?.song) {
+                if (cacheKey) cache.set(cacheKey, { songId: hit.song.id })
+                const resolved = buildStreamResult(hit.song, quality, dataSaver)
+                if (resolved) return resolved
+              }
             }
           } catch {
-            /* upstream search failed — fall through cleanly to YouTube embed */
+            /* try next candidate query */
+          }
+        }
+        if (collected.length) {
+          const videoTrackHit = matchSaavnTrack(track, collected, { allowVideoToTrack: true })
+          if (videoTrackHit?.song) {
+            if (cacheKey) cache.set(cacheKey, { songId: videoTrackHit.song.id })
+            const resolved = buildStreamResult(videoTrackHit.song, quality, dataSaver)
+            if (resolved) return resolved
           }
         }
       }
+
+      // Convert YouTube video directly to a pure audio track stream via `/api/ytaudio`.
+      const directAudio = await resolveYoutubeDirectAudio(videoId, track)
+      if (directAudio) return directAudio
 
       if (cacheKey) cache.set(cacheKey, { unmatched: true }, 60 * 1000)
       return buildEmbedFallback(videoId)

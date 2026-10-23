@@ -2,7 +2,7 @@
 // missing fields, because search, album, playlist and artist endpoints each
 // return slightly different objects.
 import { decodeHtml } from './format.js'
-import { dlUrl } from './config.js'
+import { apiUrl, dlUrl } from './config.js'
 
 export function imgOf(s, dataSaver = false, pickLast = true) {
   if (!s?.image?.length) return ''
@@ -49,12 +49,26 @@ export function dlBaseName(s) {
   return `${safeName(artistsOf(s))} - ${safeName(decodeHtml(s.name))}`
 }
 
-/** URL for the gateway's /dl endpoint, which tags the file before sending it. */
+/** URL for the gateway's /dl endpoint (or `/api/ytaudio?download=1` for YouTube audio tracks). */
 export function dlUrlFor(s, quality) {
+  const stream = streamOf(s, quality)
+  const ytId = typeof s?.id === 'string' && s.id.startsWith('yt:') ? s.id.slice(3) : ''
+  if (ytId && (!stream || stream.includes('/ytaudio'))) {
+    const params = new URLSearchParams({
+      id: ytId,
+      download: '1',
+      name: dlBaseName(s),
+    })
+    const title = decodeHtml(s?.name || '')
+    const artist = artistsOf(s)
+    if (title) params.set('title', title)
+    if (artist && artist !== 'Unknown artist') params.set('artist', artist)
+    return apiUrl(`/ytaudio?${params.toString()}`)
+  }
   const params = new URLSearchParams({
     songId: s._matchedSaavnId || s.id,
     q: quality,
-    url: streamOf(s, quality),
+    url: stream,
     name: dlBaseName(s),
   })
   return dlUrl(params.toString())
