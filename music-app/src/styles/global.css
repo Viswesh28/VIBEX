@@ -1699,3 +1699,19 @@ body.light .rec-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   width: 100%; margin: 0;
   font-size: 10.5px; line-height: 1.4; color: rgba(255, 255, 255, 0.5);
 }
+
+/* Rendering & layout containment: skip off-screen row layout/paint in large
+   playlists & queues while keeping scroll height smooth and GPU-compositing
+   transport progress fills. */
+.song-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 60px;
+}
+.q-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 52px;
+}
+#progress, #npProgFill, #fpProgFill {
+  will-change: width;
+}
+

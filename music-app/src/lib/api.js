@@ -1,35 +1,58 @@
-// Talks to the JioSaavn API — over HTTP on the web, in-process on Android.
-//
-// On the web the gateway serves the app and proxies /api, so a relative fetch
-// is right. In the native app there is no gateway at all: the same API runs
-// inside the bundle (see embedded-api.js) and we call it directly. Callers
-// below this line can't tell the difference.
+// Talks to the JioSaavn API — over HTTP on the web, in-process on Android,
+// with in-flight request deduplication and bounded stale-while-revalidate RAM
+// caching so tab switches, back-navigation, and prefetched detail pages render
+// in 0ms without redundant network waterfalls.
 import { apiUrl, isNative } from './config.js'
 import { store } from './storage.js'
 
-// The embedded API is ~145 kB gzipped and useless in a browser (CORS), so it
-// is a dynamic import — web visitors never download the chunk.
 let embedded = null
+
+const FRESH_TTL_MS = 60_000
+const STALE_TTL_MS = 240_000
+const MAX_CACHE_ENTRIES = 120
+
+const responseCache = new Map()
+const inflightRequests = new Map()
+
+function buildEffectiveRequest(path) {
+  const headers = { accept: 'application/json' }
+  let effectivePath = path
+  let cacheKey = path
+  if (typeof path === 'string' && path.startsWith('/ytmusic')) {
+    const customYtKey = String(store.get('svYtApiKey', '') || '').trim()
+    if (customYtKey) {
+      headers['x-youtube-api-key'] = customYtKey
+      cacheKey = `${path}::${customYtKey}`
+    }
+    effectivePath = `${path}${path.includes('?') ? '&' : '?'}v=9`
+  }
+  return { effectivePath, headers, cacheKey }
+}
+
+function storeCachedEntry(key, data, fetchRef) {
+  if (responseCache.has(key)) responseCache.delete(key)
+  responseCache.set(key, { data, at: Date.now(), fetchRef })
+  if (responseCache.size > MAX_CACHE_ENTRIES) {
+    const oldest = responseCache.keys().next().value
+    if (oldest !== undefined) responseCache.delete(oldest)
+  }
+}
+
+export function clearApiCache() {
+  responseCache.clear()
+  inflightRequests.clear()
+}
 
 export async function apiFetch(path, init) {
   if (isNative()) {
     if (!embedded) embedded = import('./embedded-api.js')
     const { embeddedFetch } = await embedded
-    // The embedded router mounts its controllers under /api, exactly like the
-    // hosted one — apiUrl() adds the same prefix on the web.
     return embeddedFetch(`/api${path}`, init)
   }
   return fetch(apiUrl(path), init)
 }
 
-export async function api(path) {
-  const headers = { accept: 'application/json' }
-  let effectivePath = path
-  if (typeof path === 'string' && path.startsWith('/ytmusic')) {
-    const customYtKey = String(store.get('svYtApiKey', '') || '').trim()
-    if (customYtKey) headers['x-youtube-api-key'] = customYtKey
-    effectivePath = `${path}${path.includes('?') ? '&' : '?'}v=8`
-  }
+async function fetchFreshJson(effectivePath, headers, cacheKey, fetchRef) {
   let response
   try {
     response = await apiFetch(effectivePath, { headers })
@@ -45,7 +68,54 @@ export async function api(path) {
   if (!response.ok || !payload?.success) {
     throw new Error(payload?.message || `API request failed (${response.status})`)
   }
+  storeCachedEntry(cacheKey, payload.data, fetchRef)
   return payload.data
+}
+
+export async function api(path, opts = {}) {
+  const currentFetchRef = globalThis.fetch
+  const { effectivePath, headers, cacheKey } = buildEffectiveRequest(path)
+
+  if (!opts.bypassCache) {
+    const cached = responseCache.get(cacheKey)
+    if (cached && cached.fetchRef === currentFetchRef) {
+      const age = Date.now() - cached.at
+      if (age <= FRESH_TTL_MS) {
+        return cached.data
+      }
+      if (age <= STALE_TTL_MS) {
+        if (!inflightRequests.has(cacheKey)) {
+          const bg = fetchFreshJson(effectivePath, headers, cacheKey, currentFetchRef)
+            .catch(() => cached.data)
+            .finally(() => {
+              const cur = inflightRequests.get(cacheKey)
+              if (cur?.promise === bg) inflightRequests.delete(cacheKey)
+            })
+          inflightRequests.set(cacheKey, { promise: bg, fetchRef: currentFetchRef })
+        }
+        return cached.data
+      }
+      responseCache.delete(cacheKey)
+    }
+  }
+
+  const existing = inflightRequests.get(cacheKey)
+  if (existing && existing.fetchRef === currentFetchRef) {
+    return existing.promise
+  }
+
+  const promise = fetchFreshJson(effectivePath, headers, cacheKey, currentFetchRef).finally(() => {
+    const cur = inflightRequests.get(cacheKey)
+    if (cur?.promise === promise) inflightRequests.delete(cacheKey)
+  })
+  inflightRequests.set(cacheKey, { promise, fetchRef: currentFetchRef })
+  return promise
+}
+
+/** Fire-and-forget warm-up on pointer hover / keyboard focus for 0ms navigation. */
+export function prefetchApi(path) {
+  if (!path || typeof path !== 'string') return
+  api(path).catch(() => {})
 }
 
 /** One cheap query to decide whether to show the app or the "API offline" state. */

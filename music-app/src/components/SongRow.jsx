@@ -8,12 +8,13 @@ import { Icon } from './Icon.jsx'
  * One row in any song list. `onRemove` swaps the "add to playlist" control for
  * a remove button when the row is shown inside a user playlist.
  *
- * The row itself is clickable, and the artwork carries a real play button so
- * the same action is reachable with a keyboard. Every icon-only control has an
- * aria-label: `title` alone is not announced reliably by TalkBack.
+ * Handlers accept `(song, index)` so parent lists can pass one stable reference
+ * across hundreds of rows without breaking React.memo, while direct unit callers
+ * passing zero-arg handlers continue to work identically.
  */
 export const SongRow = memo(function SongRow({
   song,
+  index = 0,
   num,
   playing,
   liked,
@@ -25,9 +26,10 @@ export const SongRow = memo(function SongRow({
   onRadio,
   onExclude,
 }) {
+  const firePlay = () => onPlay?.(song, index)
   const stop = (fn) => (e) => {
     e.stopPropagation()
-    fn()
+    fn?.(song, index)
   }
   const title = decodeHtml(song.name)
   const artist = decodeHtml(artistsOf(song))
@@ -37,13 +39,14 @@ export const SongRow = memo(function SongRow({
       className={
         'song-row' + (playing ? ' playing' : '') + (onExclude ? ' with-exclude' : '')
       }
-      onClick={onPlay}
+      onClick={firePlay}
       aria-current={playing ? 'true' : undefined}
     >
       <div className="s-art">
         <img
           src={imgOf(song, dataSaver)}
           loading="lazy"
+          decoding="async"
           alt=""
           onError={(e) => {
             e.currentTarget.style.opacity = 0.25
@@ -68,7 +71,6 @@ export const SongRow = memo(function SongRow({
         <div className="s-title">
           {num ? `${num}. ` : ''}
           {title}
-          {/* Which catalogue this came from, so a mixed list stays readable. */}
           {isYtTrack(song) && (
             <span
               className="src-badge"

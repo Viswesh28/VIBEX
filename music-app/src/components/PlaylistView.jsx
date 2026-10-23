@@ -6,7 +6,7 @@ import { SongList } from './SongList.jsx'
 import { EmptyState } from './Spinner.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
@@ -14,7 +14,7 @@ import { useUI } from '../state/UIContext.jsx'
 export function PlaylistView({ id, onTitle }) {
   const { playlists, deletePlaylist, removeFromPlaylist } = useLibrary()
   const { setStatus } = useStatus()
-  const { playFromList } = usePlayer()
+  const { playFromList } = usePlayerTransport()
   const { dataSaver } = useSettings()
   const { navigate, openRenameModal } = useUI()
   const [armed, setArmed] = useState(false)
