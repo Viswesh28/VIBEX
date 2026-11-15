@@ -29,6 +29,21 @@ gateway that consumes it.
 
 Upstream project: <https://github.com/sumitkolhe/jiosaavn-api>
 
+### Modern Web Guidance (coding-agent skills)
+
+| | |
+|---|---|
+| **Component** | `.agents/skills/modern-web-guidance/` and `.agents/skills/chrome-extensions/` (linked from `.claude/skills/`) |
+| **Upstream project** | [GoogleChrome/modern-web-guidance](https://github.com/GoogleChrome/modern-web-guidance), commit `4dd968349e54ca45a05dd5c818fb035c9054b022` |
+| **Owner** | **Google Chrome**, with the Microsoft Edge, Mozilla Firefox and MDN teams and contributors |
+| **License** | Apache-2.0 — full text at [`.agents/skills/LICENSE`](.agents/skills/LICENSE) |
+| **Modifications made here** | None. The files are installed by the `skills` CLI and checked byte for byte against `skills-lock.json` by `npm run verify:modern-web`. |
+
+These are instructions for coding agents. They are not part of the app and are
+never bundled or served. The matching command-line tool, `modern-web-guidance`
+(Apache-2.0), is a development-only dependency of `music-app/`; see
+[`docs/MODERN-WEB.md`](docs/MODERN-WEB.md).
+
 ---
 
 ## 2. Runtime dependencies of `jiosaavn-api/`

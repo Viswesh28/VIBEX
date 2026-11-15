@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { decodeHtml } from '../lib/format.js'
+import { isSubmitEnter } from '../lib/keys.js'
 import { Icon } from './Icon.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
@@ -106,7 +107,7 @@ export function PlaylistModal() {
             aria-label="Playlist name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            onKeyDown={(e) => isSubmitEnter(e) && submit()}
           />
           <button type="button" className="btn-primary" onClick={submit}>
             {mode === 'rename' ? 'Save' : 'Create'}

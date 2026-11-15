@@ -98,9 +98,10 @@ is meaningless at the repo root.
 
 ```bash
 cd music-app
-npm test              # 258 offline unit/integration tests (vitest + jsdom)
+npm test              # 480 offline unit/integration tests (vitest + jsdom)
 npm run verify:mobile # phone layout, 5 viewports — needs Playwright + a running gateway
 npm run verify:ux     # contrast, accessible names, tap spacing — same prerequisites
+npm run verify:modern-web # agent skills intact + Modern Web Guidance legacy-scan — Node 22+, offline
 ```
 
 `npm test` needs no network and no browser: it covers the LRC parser, the song
@@ -114,10 +115,18 @@ the recommendation ladder, and the stream-recovery classifier — plus the home
 feed's degrade-don't-blank behaviour. See
 [`docs/ENGINE.md`](docs/ENGINE.md).
 
-The two `verify:*` scripts drive a real Chromium and exit non-zero without
+`verify:mobile` and `verify:ux` drive a real Chromium and exit non-zero without
 pretending otherwise if Playwright or the gateway is missing.
 
-A ready-to-run CI workflow covering all three lives at
+`verify:modern-web` needs neither. The repository vendors Google Chrome's
+[Modern Web Guidance](https://github.com/GoogleChrome/modern-web-guidance)
+skills for coding agents (Claude Code, Codex, Cursor, Copilot, Gemini CLI; rules
+in [`AGENTS.md`](AGENTS.md)). This check confirms the vendored skills still
+match `skills-lock.json`, then runs the pinned `legacy-scan` over the whole
+repository. See [`docs/MODERN-WEB.md`](docs/MODERN-WEB.md) for the setup and the
+latest report.
+
+A ready-to-run CI workflow covering all of these lives at
 [`docs/ci.yml.example`](docs/ci.yml.example). It is not active in this
 repository: adding a file under `.github/workflows/` needs the `workflows`
 permission, which the bot that opened this branch does not have. To turn it on,
@@ -216,7 +225,10 @@ VIBEX/
 ├── jiosaavn-api/       # music metadata + stream backend (Bun + Hono)
 │   └── run-local.mjs   # local runner (port 3001)
 ├── docs/ENGINE.md      # how transitions, recommendations and recovery work
+├── docs/MODERN-WEB.md  # agent skills + legacy-scan check, with the latest report
 ├── docs/screenshots/   # README product screenshots
+├── .agents/skills/     # Modern Web Guidance agent skills (vendored, Apache-2.0)
+├── AGENTS.md           # instructions for coding agents (CLAUDE.md imports it)
 └── setup.sh            # local dependency installer
 ```
 

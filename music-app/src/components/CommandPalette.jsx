@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { decodeHtml } from '../lib/format.js'
+import { isSubmitEnter } from '../lib/keys.js'
 import { shareVibexLink } from '../lib/shareUrl.js'
 import { Icon } from './Icon.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
@@ -220,7 +221,7 @@ export function CommandPalette() {
               } else if (e.key === 'ArrowUp') {
                 e.preventDefault()
                 setSelectedIdx((i) => Math.max(0, i - 1))
-              } else if (e.key === 'Enter') {
+              } else if (isSubmitEnter(e)) {
                 e.preventDefault()
                 execute(commands[selectedIdx])
               }

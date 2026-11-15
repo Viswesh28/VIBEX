@@ -5,6 +5,7 @@ import { artistsOf, imgOf } from '../lib/song.js'
 import { SettingsPanel } from './SettingsPanel.jsx'
 import { SourceBanner, SourceSwitch } from './SourceSwitch.jsx'
 import { Icon } from './Icon.jsx'
+import { isSubmitEnter } from '../lib/keys.js'
 import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
@@ -107,7 +108,8 @@ export function TopBar({ sleep, onMenu }) {
             setSuggestOpen(true)
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
+            // Not while an IME is confirming a word (Tamil, Hindi, CJK input).
+            if (isSubmitEnter(e)) submit()
           }}
         />
         {searchQuery.length > 0 && (

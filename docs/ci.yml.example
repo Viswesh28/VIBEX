@@ -113,3 +113,32 @@ jobs:
 
       - name: Accessibility audit (both themes, 1.3x text)
         run: npm run verify:ux
+
+  # Vendored agent skills and Modern Web Guidance's legacy-scan
+  # (docs/MODERN-WEB.md). The pinned `modern-web-guidance` devDependency needs
+  # Node 22, so this job alone runs on it. The jobs above install the same
+  # package on Node 20, where npm prints an EBADENGINE warning but carries on.
+  # No build, browser or network is needed; the CLI's telemetry is off for
+  # the run.
+  modern-web:
+    name: Modern Web Guidance
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: music-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the vendored API's runtime dependencies
+        working-directory: jiosaavn-api
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Install the front-end and gateway
+        run: npm ci
+
+      - name: Skills match skills-lock.json, .mwgrc is valid, legacy-scan is clean
+        run: npm run verify:modern-web
