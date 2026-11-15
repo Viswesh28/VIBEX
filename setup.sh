@@ -41,3 +41,4 @@ echo "Checks:"
 echo '  npm test              offline unit + integration tests (from music-app/)'
 echo '  npm run verify:mobile phone layout, 5 viewports (needs: npx playwright install chromium)'
 echo '  npm run verify:ux     contrast / accessible names / tap spacing'
+echo '  npm run verify:modern-web  agent skills intact + Modern Web Guidance legacy-scan (Node 22+)'
