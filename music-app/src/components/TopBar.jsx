@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { SettingsPanel } from './SettingsPanel.jsx'
 import { SourceBanner, SourceSwitch } from './SourceSwitch.jsx'
 import { Icon } from './Icon.jsx'
+import { isSubmitEnter } from '../lib/keys.js'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
@@ -49,7 +50,8 @@ export function TopBar({ sleep, onMenu }) {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
+            // Not while an IME is confirming a word (Tamil, Hindi, CJK input).
+            if (isSubmitEnter(e)) submit()
           }}
         />
         <button type="button" className="search-submit" onClick={submit}>
