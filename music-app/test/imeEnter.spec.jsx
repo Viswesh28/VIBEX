@@ -15,8 +15,10 @@ import { fixtures } from './fixtures/api.js'
  *
  * Found by `npm run verify:modern-web` (guide `ime-safe-enter-submit`). With a
  * Tamil, Hindi or CJK input method, Enter picks the conversion candidate. The
- * old `key === 'Enter'` handlers then searched for — or saved a playlist as —
- * the half-composed text. These tests pin both inputs that submit on Enter.
+ * old `key === 'Enter'` handlers then acted on the half-composed text: they ran
+ * a search, saved a playlist or an EQ preset under it, or ran whichever
+ * command-palette row was highlighted. These tests pin every text input that
+ * acts on Enter.
  */
 const jsonResponse = (payload) => ({ ok: true, status: 200, json: async () => payload })
 
@@ -118,7 +120,8 @@ describe('Enter in the search box', () => {
     expect(screen.getByText(/Featured playlist/i)).toBeInTheDocument()
 
     fireEvent.keyDown(input, { key: 'Enter', keyCode: 13 })
-    await waitFor(() => expect(searched()).toBe(true))
+    // Views are lazy-loaded, so the request can trail the keypress on a slow machine.
+    await waitFor(() => expect(searched()).toBe(true), { timeout: 3000 })
   })
 })
 
@@ -143,5 +146,53 @@ describe('Enter in the playlist name field', () => {
       expect(screen.queryByRole('dialog', { name: 'New playlist' })).not.toBeInTheDocument()
     )
     expect(sidebarPlaylists()).toContain('Kadhal mix')
+  })
+})
+
+describe('Enter in the custom EQ preset name', () => {
+  it('does not save while an IME confirms a word, and saves on a real Enter', async () => {
+    const user = userEvent.setup()
+    mount()
+    await screen.findByText(/Featured playlist/i)
+
+    await user.click(screen.getByRole('button', { name: 'Open Studio EQ' }))
+    const dialog = screen.getByRole('dialog', { name: 'Studio Audio Equalizer and DSP' })
+    const input = within(dialog).getByLabelText('Custom preset name')
+    fireEvent.change(input, { target: { value: 'Kuthu bass' } })
+    const presets = () => within(dialog).getByRole('group', { name: 'Equalizer presets' })
+
+    for (const [, init] of COMPOSING) fireEvent.keyDown(input, init)
+    expect(within(presets()).queryByRole('button', { name: 'Kuthu bass' })).not.toBeInTheDocument()
+    expect(input).toHaveValue('Kuthu bass')
+
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 13 })
+    expect(await within(presets()).findByRole('button', { name: 'Kuthu bass' })).toBeInTheDocument()
+    expect(input).toHaveValue('')
+  })
+})
+
+describe('Enter in the command palette', () => {
+  it('does not run the highlighted command while an IME confirms a word, and runs it on a real Enter', async () => {
+    const user = userEvent.setup()
+    mount()
+    await screen.findByText(/Featured playlist/i)
+
+    await user.click(screen.getByRole('button', { name: 'Open command palette' }))
+    const palette = () => screen.queryByRole('dialog', { name: 'Command palette' })
+    const input = within(palette()).getByLabelText('Type a command or search query')
+    // A query no other test uses: searches are cached, so a repeat would make no request.
+    fireEvent.change(input, { target: { value: 'cmdprobe' } })
+    // With a query typed, the highlighted first row is “Search cmdprobe”.
+    expect(within(palette()).getAllByRole('option')[0]).toHaveTextContent('cmdprobe')
+    const searched = () => fetchMock.mock.calls.some(([url]) => String(url).includes('cmdprobe'))
+
+    for (const [, init] of COMPOSING) fireEvent.keyDown(input, init)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(palette()).toBeInTheDocument()
+    expect(searched()).toBe(false)
+
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 13 })
+    await waitFor(() => expect(palette()).not.toBeInTheDocument())
+    await waitFor(() => expect(searched()).toBe(true), { timeout: 3000 })
   })
 })

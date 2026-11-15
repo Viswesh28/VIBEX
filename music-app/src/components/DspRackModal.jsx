@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { EQ_BANDS, EQ_PRESETS } from '../lib/audioDsp.js'
+import { isSubmitEnter } from '../lib/keys.js'
 import { Icon } from './Icon.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
@@ -149,7 +150,7 @@ export function DspControls() {
             value={presetName}
             onChange={(e) => setPresetName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSaveCustom()
+              if (isSubmitEnter(e)) handleSaveCustom()
             }}
           />
           <button
