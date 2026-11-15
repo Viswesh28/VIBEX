@@ -98,7 +98,7 @@ is meaningless at the repo root.
 
 ```bash
 cd music-app
-npm test              # 436 offline unit/integration tests (vitest + jsdom)
+npm test              # 480 offline unit/integration tests (vitest + jsdom)
 npm run verify:mobile # phone layout, 5 viewports — needs Playwright + a running gateway
 npm run verify:ux     # contrast, accessible names, tap spacing — same prerequisites
 npm run verify:modern-web # agent skills intact + Modern Web Guidance legacy-scan — Node 22+, offline

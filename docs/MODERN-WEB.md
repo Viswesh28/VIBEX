@@ -15,7 +15,7 @@ and checks itself against the scanner with `npm run verify:modern-web`.
 | Path | What it is |
 |---|---|
 | `.agents/skills/modern-web-guidance/` | The skill: `SKILL.md` and 209 guides. Agents search and retrieve them through the `modern-web-guidance` CLI. |
-| `.agents/skills/chrome-extensions/` | Companion skill for Manifest V3 extensions (`extension/`): `SKILL.md` and 23 references. |
+| `.agents/skills/chrome-extensions/` | Companion skill for Manifest V3 browser extensions: `SKILL.md` and 23 references. Nothing in the repository uses it today (see the end of this page). |
 | `.agents/skills/LICENSE` | Upstream Apache-2.0 licence for both skills (see `NOTICE.md`). |
 | `.claude/skills/*` | Symlinks into `.agents/skills/`, which is where Claude Code looks for skills. |
 | `skills-lock.json` | Source and content hash of each skill (`skills` CLI, lock format v2). |
@@ -64,8 +64,8 @@ For any HTML, CSS or client-side JS task the skill makes the agent:
 4. end its reply with a `### Modern Web Guidance` section naming the guides it
    applied.
 
-`AGENTS.md` makes this mandatory for `music-app/` and points work on
-`extension/` at the `chrome-extensions` skill.
+`AGENTS.md` makes this mandatory for `music-app/` and points any
+browser-extension work at the `chrome-extensions` skill.
 
 ## The repository check: `npm run verify:modern-web`
 
@@ -83,7 +83,7 @@ Project config (.mwgrc)
 
 Legacy web-platform patterns (legacy-scan)
   scanner: modern-web-guidance 1.0.0, guides 2026_11_09-5bcc021b
-  [  ok  ] legacy-scan — 0 open findings (35 rules from 33 guides, 54 docs/tests skipped)
+  [  ok  ] legacy-scan — 0 open findings (35 rules from 33 guides, 64 docs/tests skipped)
 
 ============================================================
 PASS 0 findings
@@ -111,24 +111,36 @@ agent workflow above, and by review, as below.
 
 ### `legacy-scan`
 
-- **Before:** 1 finding. `ime-safe-enter-submit` at
-  `music-app/src/components/TopBar.jsx:52`, where the search box ran
-  `if (e.key === 'Enter') submit()`.
-- **Reviewing the same rule found a second case the scanner missed.**
-  `music-app/src/components/PlaylistModal.jsx:109` used
-  `e.key === 'Enter' && submit()` in the playlist name field. A probe file
-  confirmed that the 1.0.0 rule flags the `if (…)` form but not this
-  short-circuit form.
+The scan ran on the commit this work started from (`3600af5`), and again after
+merging `main` (`7b898cd`, 49 commits later).
+
+- **Before:** the scanner flagged `ime-safe-enter-submit` twice, and a review
+  of the same rule by hand found two more cases it missed. The last two inputs
+  arrived from `main` in v3.0.0 (`087beb7`).
+
+  | Input | File (`music-app/src/components/`) | Scanner 1.0.0 | Handler before the fix |
+  |---|---|---|---|
+  | Search box | `TopBar.jsx` | flagged | `if (e.key === 'Enter') submit()` |
+  | Playlist name | `PlaylistModal.jsx` | missed | `e.key === 'Enter' && submit()` |
+  | Custom EQ preset name | `DspRackModal.jsx` | flagged | `if (e.key === 'Enter') handleSaveCustom()` |
+  | Command palette | `CommandPalette.jsx` | missed | `} else if (e.key === 'Enter') { … }` |
+
+  The 1.0.0 rule matched the `if (…) call()` handlers but neither of the other
+  two forms; a probe file confirmed this for the short-circuit form.
 - **Why it matters here:** input methods (IMEs) use Enter to confirm the word
   being composed. That covers Japanese, Chinese and Korean, and the
-  transliteration IMEs used to type Tamil or Hindi. Both inputs submitted the
-  half-typed text: a search for a fragment, or a playlist saved under it.
+  transliteration IMEs used to type Tamil or Hindi. Every one of these inputs
+  acted on the half-typed text: it searched for a fragment, saved a playlist or
+  an EQ preset under it, or ran whichever command-palette row was highlighted.
 - **Fix:** `isSubmitEnter()` in `music-app/src/lib/keys.js` ignores an Enter
   that arrives with `isComposing` set, or with `keyCode === 229`. The 229 check
   is for Safari, which delivers `compositionend` before the confirming key
-  (WebKit bug 165004). Both inputs use it.
-  `music-app/test/imeEnter.spec.jsx` adds 7 tests; its two whole-app tests fail
-  against the old handlers.
+  (WebKit bug 165004). All four inputs use it.
+  `music-app/test/imeEnter.spec.jsx` adds 9 tests; each of its four whole-app
+  tests fails against the old handler.
+- **Not affected:** the Enter/Space handler on lyric lines (`LyricsBody.jsx`)
+  activates a non-editable `role="button"`, so there is no composition to cut
+  short.
 - **After:** 0 findings.
 
 ### Review against the rest of the catalogue
@@ -146,22 +158,19 @@ or structure and need a browser-based check before they ship.
 | Below-the-fold images | `optimize-image-priority` | ✅ | `loading="lazy"` on card, song-row and queue art; hero art loads eagerly. |
 | Canvas video | `lazy-load-video-and-audio` | ✅ | `preload="none"`, muted, `playsInline`, no poster; only rendered when a clip exists. |
 | Viewport height | `responsive-design` | ✅ | `100dvh` with a `100vh` fallback. |
-| Modal overlays | `dialog`, `accessibility`, `light-dismiss-a-dialog`, `prevent-page-scroll-under-modal-dialog` | ⚠️ | Full player, lyrics, playlist picker and YouTube player are `div role="dialog" aria-modal="true"`. Nothing makes the page behind them inert, so Tab can reach controls underneath. Native `<dialog>` + `showModal()` provides that, plus Esc handling, focus return and `closedby="any"` light dismiss. At minimum, set `inert` on the app shell while an overlay is open. The settings panel is a non-modal `role="dialog"` and would suit `popover`. Largest item: it touches the Escape stack in `App.jsx` and `test/app.spec.jsx`. |
-| Seek bars | `slider` | ⚠️ | Three custom `div role="slider"` seek bars (`PlayerBar.jsx:41`, `FullPlayer.jsx:127`, `NowPlaying.jsx:73`). The guide asks for a native `<input type="range">`, which volume and crossfade already use. |
-| Scrollbars | `customize-scrollbar-color-and-thickness` | ⚠️ | The global scrollbar is styled only with `::-webkit-scrollbar` (`global.css:149-152`); there is no `scrollbar-color`, so Firefox gets no theming. The scanner has a rule for this, but its rubric drops any stylesheet that declares `scrollbar-width` somewhere, and `global.css` does (line 587 and the `.tabs` strip). Moving to the standard properties drops the thumb radius and hover colour in Chromium, and the guide asks for 3:1 thumb contrast, so it needs a visual review. |
+| Modal overlays | `dialog`, `accessibility`, `light-dismiss-a-dialog`, `prevent-page-scroll-under-modal-dialog` | ⚠️ | Seven overlays are `div role="dialog" aria-modal="true"`: full player, lyrics, playlist picker, command palette, Studio EQ, playlist import and Share to VIBEX. Nothing makes the page behind them inert, so Tab can reach controls underneath. Native `<dialog>` + `showModal()` provides that, plus Esc handling, focus return and `closedby="any"` light dismiss. At minimum, set `inert` on the app shell while an overlay is open. The settings panel is a non-modal `role="dialog"` and would suit `popover`. Largest item: it touches the Escape stack in `App.jsx` and `test/app.spec.jsx`. |
+| Seek bars | `slider` | ⚠️ | Three custom `div role="slider"` seek bars (`PlayerBar.jsx:31`, `FullPlayer.jsx:36`, `NowPlaying.jsx:23`). The guide asks for a native `<input type="range">`, which volume, crossfade and the EQ already use. |
+| Scrollbars | `customize-scrollbar-color-and-thickness` | ⚠️ | The global scrollbar is styled only with `::-webkit-scrollbar` (`global.css:151-154`); there is no `scrollbar-color`, so Firefox gets no theming. The scanner has a rule for this, but its rubric drops any stylesheet that declares `scrollbar-width` somewhere, and `global.css` does (line 589 and the `.tabs` strip). Moving to the standard properties drops the thumb radius and hover colour in Chromium, and the guide asks for 3:1 thumb contrast, so it needs a visual review. |
 | Colour scheme | `dark-mode`, `dark-mode-toggle` | ⚠️ | `<meta name="color-scheme" content="dark light">` and a per-theme `color-scheme` are in place. A first visit is always dark, though; the guide asks to follow the system preference by default and store only an explicit override. This may be a deliberate product choice. |
-| LCP image | `optimize-image-priority` | ⚠️ measure first | No `fetchpriority` anywhere. The likely LCP element is the feed hero (`.hero-cover` and `.hero-wash` share one URL), but it hasn't been measured. Confirm with a performance trace, then add `fetchpriority="high"` (lowercase under React 18). |
+| LCP image | `optimize-image-priority` | ✅ | `main` added `fetchpriority="high"` (lowercase, as React 18 needs) to the hero art of the feed, detail and artist views; the playlist view's hero has none. Not yet confirmed with a performance trace that the hero is the LCP element. |
 
-### Extension (`chrome-extensions` skill)
+### The `chrome-extensions` skill
 
-`legacy-scan` covered `extension/` too, with no findings. Against the skill's
-mandatory rules: Manifest V3 throughout, no icon files referenced, no `eval` or
-`new Function`, and no state kept in the service worker between events. One
-item for the store-review checklist ("No unused permissions — leftover
-permissions cause rejection"): nothing calls `chrome.scripting`, and
-`tabs.create`, `tabs.remove` and `tabs.sendMessage` do not need the `tabs`
-permission. So `"scripting"` and `"tabs"` look removable; confirm in a browser
-before changing `manifest.json`.
+The first scan also covered the Manifest V3 extension in `extension/`, with no
+findings. `main` has since deleted `extension/` (ADR 0008), so nothing in the
+repository uses this skill today. It stays vendored because it ships with Modern
+Web Guidance, and agents load it only for extension work. To drop it, see
+“Removing a skill” below.
 
 ## Keeping it current
 

@@ -6,12 +6,13 @@ verification results, are in [docs/MODERN-WEB.md](docs/MODERN-WEB.md).
 
 ## Repository map
 
-- `music-app/` — React 18 + Vite front-end (`src/`, `index.html`, `public/`) and
-  the Node gateway (`server.mjs`). Every npm script runs from here.
+- `music-app/` — React 18 + Vite front-end (`src/`, `index.html`, `public/`),
+  the Node gateway (`server.mjs`) and the Capacitor Android project
+  (`android/`). Every npm script runs from here.
 - `jiosaavn-api/` — vendored API fork (MIT, Sumit Kolhe), mounted in-process.
 - `api/` — Vercel serverless entry points (see `docs/DEPLOY.md`).
-- `extension/` — Manifest V3 browser extension, "VIBEX stream helper".
-- `docs/` — deploy, engine and mobile notes, ADRs, the CI workflow template.
+- `scripts/` — the Android APK build and the upstream `jiosaavn-api` sync.
+- `docs/` — deploy, engine and mobile notes, ADRs, GitHub Actions templates.
 
 ## Web platform guidance
 
@@ -24,7 +25,7 @@ read that folder directly, and Claude Code reaches it through the
 | Skill | Use it for |
 |---|---|
 | `modern-web-guidance` | Every HTML, CSS or client-side JS change: `music-app/src`, `music-app/index.html`, `music-app/public`. Follow its `SKILL.md`: search, retrieve, check your change against the guide, and end your reply with a `### Modern Web Guidance` section. |
-| `chrome-extensions` | Every change under `extension/`. |
+| `chrome-extensions` | Any browser-extension work. The repository has none today: ADR 0008 deleted `extension/`. |
 
 - **Browser support:** Baseline Widely available, recorded in `.mwgrc`. A
   feature outside that set needs the fallback its guide prescribes. The same
