@@ -329,52 +329,36 @@ this deployment) while its **audio** is refused (ADR 0001). `src/lib/sources.js`
 holds the whole policy — `cataloguePath`, `mapYtResult`, `playbackPlan` — and the
 player prints the reason it refuses rather than a generic failure. See ADR 0003.
 
-### The device mints YouTube audio; the server still does not
+### Provider adapters, playback state machine, and opt-in sync
 
-ADR 0001 stands: no server-side session, no proxy, no residential relay. What
-changed in ADR 0004 is *where* the mint happens. The Android app loads the watch
-page in the offscreen WebView it already owns for canvas, lets the page's own
-player do the signature decipher and `n` transform, reads the resulting
-`googlevideo` URL off the network layer, and hands it to the existing
-`<audio>` deck. The page is then thrown away.
+Catalog browsing, playback resolution, and library synchronization sit behind
+three explicit interfaces in `src/lib/providers.js`, backed by composite
+`<provider>:<providerTrackId>` keys in `src/lib/models.js` (see ADR 0007 and
+ADR 0008):
 
-Three rules hold that together, all in `src/lib/ytStream.js`:
+* **`CatalogProvider`** (`search`, `getTrack`, `getPlaylist`) — normalises
+  results into `TrackSummary` records with cursor pagination (`nextPageToken`)
+  and caches non-sensitive metadata in a bounded TTL `MetadataCache`.
+* **`StreamResolver`** (`resolve -> ResolvedPlayback`) — resolves authorised
+  playback URIs at runtime. JioSaavn resolves stream URLs (refreshing from
+  `/songs/<id>` when a restored queue item has no valid URL); YouTube Music
+  resolves strictly to YouTube's own IFrame embed (`mode: 'embed'`). Raw
+  expiring stream URLs (`?expire=`) and credentials are stripped before
+  `localStorage` writes (`sanitizeTrackForPersistence`).
+* **`PlaybackState` machine** (`src/lib/playbackState.js`) — transitions cleanly
+  across `Idle → Resolving → Ready → Buffering → Playing ↔ Paused → Ended` plus
+  `Failed` across seven typed categories (`NetworkRetryable`,
+  `ExpiredPlaybackReference` [re-resolved strictly once],
+  `AuthorizationRequired`, `NotAvailableInRegion`, `Rights/DRM`,
+  `UnsupportedFormat`, `ProviderUnavailable`). Entitlement, region, and auth
+  failures never auto-loop and never silently substitute another track.
+* **`AccountProvider` & resumable cursor sync** (`src/lib/sync.js`) — requires
+  explicit user opt-in per collection (`liked`, `playlists`), rejects passwords
+  and browser cookies (`SAPISIDHASH`), writes into a dedicated `svRemoteMirror`,
+  commits `SyncState.cursor` only after page writes succeed, and never deletes
+  local-only favorites or playlists on partial or failed syncs.
 
-* **A URL is not accepted until it has been range-probed.** A one-byte request
-  says what total the server will serve; a request for the last kilobyte is what
-  a preview URL refuses. A minted URL that fails is a typed failure with its own
-  sentence, never a track that stops 61 s in.
-* **Only audio-only formats.** A muxed `video/*` rendition would play sound and
-  also stream several times the bytes; a track with no audio-only format is
-  refused rather than downgraded.
-* **One re-mint, ever.** A dead URL gets a second attempt because that is
-  latency. A bot challenge, a preview, or a page that fetched nothing is
-  terminal — a fallback to JioSaavn is the success case, and repeat mints are
-  what get an address flagged.
-
-On the web the mint needs the **helper extension** (`extension/`), because a
-page cannot reach either endpoint: the player API 403s a foreign `Origin`
-including the preflight, and `googlevideo` grants CORS only to YouTube's own
-origins — so a page can *play* a minted URL but cannot *probe* it, which would
-ship exactly the truncation bug the gate exists to catch. The extension runs the
-same harvest in a hidden tab at `document_start` (real injection, which Android
-could not do) and probes from its service worker, where host permissions bypass
-CORS. The app's logic is unchanged: one seam, one gate. See ADR 0005.
-
-Without the extension, web stays browse-only for track audio — and the picker
-says which of the three situations applies rather than a blanket refusal.
-
-One exception, and it is not a mint: **anything longer than twenty minutes
-plays in YouTube's own embed.** An hour-long mix is not a track, and streaming
-it here would mean pulling 70–200 MB through a `<audio>` element that has no
-business holding it. `playbackPlan(..., { embed: true })` returns
-`mode: 'embed'` for those, `PlayerContext` pauses the local decks and opens
-`YouTubeEmbed`, and nothing is probed, minted or cached. It is video, it carries
-YouTube's advertising, and it exists only in a browser tab — a WebView origin is
-not one YouTube's embed accepts, and the app has a real mint anyway. The
-threshold lives in `src/lib/ytEmbed.js` as `LONG_FORM_SEC`. See ADR 0006.
-
-The choice itself lives in the **sticky top bar**, not in the song results: with
+The source switch lives in the **sticky top bar**, not in the song results: with
 it beside the results, a listener only discovered the app had two catalogues
 after searching, and a listener on the home feed never discovered it at all.
 While YouTube Music is selected a slim banner states the limit in the same

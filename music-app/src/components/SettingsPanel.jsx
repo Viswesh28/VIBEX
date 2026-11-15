@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import { LAW_HINTS, LAW_LABELS, MAX_CROSSFADE_SEC, describePlan, planTransition } from '../lib/transition.js'
+import {
+  LAW_HINTS,
+  LAW_LABELS,
+  MAX_CROSSFADE_SEC,
+  describePlan,
+  planTransition,
+} from '../lib/transition.js'
 import { DEFAULT_REC, REC_REASON_SENTENCE } from '../lib/recommend.js'
 import { estimate } from '../lib/song.js'
 import { describeSleep } from '../lib/sleep.js'
@@ -11,18 +17,19 @@ import {
   mediaPlan,
   summary,
 } from '../lib/capabilities.js'
-import { BROWSE_ONLY_NOTE, DEVICE_SOURCE_NOTE, SOURCES } from '../lib/sources.js'
-import { streamMintBridge } from '../lib/ytStream.js'
+import { BROWSE_ONLY_NOTE, SOURCES } from '../lib/sources.js'
 import { Icon } from './Icon.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { usePlayer } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
-import { needsIOSInstallHint, isStandalone } from '../lib/platform.js'
+import { useStatus } from '../state/StatusContext.jsx'
+import { useUI } from '../state/UIContext.jsx'
+import { needsIOSInstallHint, isStandalone, isNativeShell } from '../lib/platform.js'
 import { promptInstall, subscribeInstall } from '../lib/install.js'
+import { ANDROID_APK_URL, ANDROID_APP_VERSION } from '../lib/config.js'
+import { requestNativeNotificationPermission } from '../lib/native.js'
 
 const SLEEP_OPTIONS = [0, 15, 30, 60]
-// Icons for the capability matrix. `unavailable` is a plain cross on purpose:
-// it is a fact about the source, not an error the user caused.
 const CAP_ICONS = {
   [STATUS.available]: 'check',
   [STATUS.strength]: 'sparkle',
@@ -32,16 +39,11 @@ const CAP_ICONS = {
 }
 const IOS_STEPS = 'Tap the Share button in Safari, scroll down, then choose “Add to Home Screen”.'
 
-/**
- * Installed web apps get the whole iPhone treatment: no Safari bars, a real
- * home-screen icon, a launch screen, and audio that can keep playing with the
- * screen off. Safari has no one-tap install API, so on iOS this explains the
- * share-sheet flow instead of showing a button that does nothing.
- */
 function InstallSection() {
   const [canPrompt, setCanPrompt] = useState(false)
   const [installed, setInstalled] = useState(false)
   const [note, setNote] = useState('')
+  const nativeApp = isNativeShell()
   const standalone = isStandalone()
   const iosHint = needsIOSInstallHint()
 
@@ -57,7 +59,8 @@ function InstallSection() {
   const install = async () => {
     const result = await promptInstall()
     if (result === 'accepted') setNote('Installing VIBEX…')
-    else if (result === 'dismissed') setNote('Install dismissed — you can try again from the browser menu.')
+    else if (result === 'dismissed')
+      setNote('Install dismissed — you can try again from the browser menu.')
     else setNote('Open your browser menu and choose “Install app”.')
   }
 
@@ -67,35 +70,68 @@ function InstallSection() {
         <Icon name="download" size={16} />
         <span>Install VIBEX</span>
       </div>
-      {standalone || installed ? (
-        <p className="set-note">
-          Installed. VIBEX opens full screen and keeps playing with the screen locked.
-        </p>
+      {nativeApp ? (
+        <>
+          <p className="set-note">
+            VIBEX Android App v{ANDROID_APP_VERSION} active — foreground lock-screen media controls,
+            Bluetooth earbuds, Share Sheet &amp; tagged Music/VIBEX downloads enabled.
+          </p>
+          <button
+            type="button"
+            className="set-install-btn"
+            onClick={() => {
+              requestNativeNotificationPermission()
+              setNote('Notification & lock-screen media controls enabled.')
+            }}
+          >
+            <Icon name="check" size={15} />
+            Verify Lock-Screen Controls
+          </button>
+          {note && <p className="set-note">{note}</p>}
+        </>
       ) : (
         <>
-          {canPrompt && (
-            <button type="button" className="set-install-btn" onClick={install}>
-              <Icon name="download" size={15} />
-              Install app
-            </button>
-          )}
-          {iosHint && (
-            <button
-              type="button"
-              className="set-install-btn"
-              aria-expanded={!!note}
-              onClick={() => setNote(note ? '' : IOS_STEPS)}
-            >
-              <Icon name="share" size={15} />
-              How to install on iPhone
-            </button>
-          )}
-          {!canPrompt && !iosHint && (
-            <p className="set-note">Open this page in Safari, then Share → Add to Home Screen.</p>
+          <a
+            href={ANDROID_APK_URL}
+            download={`VIBEX-v${ANDROID_APP_VERSION}-universal.apk`}
+            className="set-install-btn"
+            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          >
+            <Icon name="download" size={15} />
+            Download Android App (.apk)
+          </a>
+          {standalone || installed ? (
+            <p className="set-note">
+              Installed. VIBEX opens full screen and keeps playing with the screen locked.
+            </p>
+          ) : (
+            <>
+              {canPrompt && (
+                <button type="button" className="set-install-btn" onClick={install}>
+                  <Icon name="download" size={15} />
+                  Install app
+                </button>
+              )}
+              {iosHint && (
+                <button
+                  type="button"
+                  className="set-install-btn"
+                  aria-expanded={!!note}
+                  onClick={() => setNote(note ? '' : IOS_STEPS)}
+                >
+                  <Icon name="share" size={15} />
+                  How to install on iPhone
+                </button>
+              )}
+              {!canPrompt && !iosHint && (
+                <p className="set-note">Open this page in Safari, then Share → Add to Home Screen.</p>
+              )}
+            </>
           )}
           {note && <p className="set-note">{note}</p>}
           <p className="set-note">
-            Full screen, a home-screen icon, launch screen and lock-screen controls.
+            Native Android APK includes background screen-off streaming, lock-screen seek bar,
+            Bluetooth headphone controls, OS Share Sheet &amp; Music/VIBEX downloads.
           </p>
         </>
       )}
@@ -103,18 +139,76 @@ function InstallSection() {
   )
 }
 
-/** Playback preferences. Everything here persists across reloads. */
+/** Playback preferences, Studio Audio FX, Offline Vault & Live Cloud Sync. */
 export function SettingsPanel({ open, sleep }) {
   const s = useSettings()
-  const { resetHistory } = useLibrary()
+  const { setStatus } = useStatus()
+  const { setDspOpen, setImportModalOpen, openShareToVibex } = useUI() || {}
+  const {
+    resetHistory,
+    hasAccountProvider,
+    accountProvider,
+    account,
+    syncState,
+    connectAccount,
+    syncNow,
+    pauseSync,
+    resumeSync,
+    disconnectAccount,
+    clearRemoteMirror,
+    downloadLibraryExport,
+    deleteLocalLibrary,
+    offlineTracks,
+    offlineBytes,
+    clearOfflineDownloads,
+  } = useLibrary()
   const { current, currentQuality } = usePlayer()
   const est = estimate(currentQuality, current?.duration)
   const plan = mediaPlan({ dataSaver: s.dataSaver, qualityPref: s.qualityPref })
   const visual = describeVisual({ enabled: s.viz.on, style: s.viz.style, liveOK: s.liveOK })
   const caps = summary()
-  // Two-step reset: a history wipe is irreversible, so the first tap only arms
-  // the button and tells the listener exactly what will survive.
+
   const [resetArmed, setResetArmed] = useState(false)
+  const [deleteLibArmed, setDeleteLibArmed] = useState(false)
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [emailInput, setEmailInput] = useState('')
+  const [passwordInput, setPasswordInput] = useState('')
+  const [cloudMsg, setCloudMsg] = useState('')
+
+  const isSupabaseCloud = Boolean(accountProvider?.isSupabase)
+
+  const handleCloudAuth = async (mode) => {
+    if (!emailInput.trim()) {
+      setCloudMsg('Enter your email address first.')
+      return
+    }
+    setSyncBusy(true)
+    setCloudMsg('')
+    try {
+      if (mode === 'magic') {
+        await accountProvider.sendMagicLink(emailInput.trim())
+        setCloudMsg('Magic sign-in link sent! Check your email inbox.')
+        setStatus('Sent magic sign-in link to your email.')
+      } else {
+        if (!passwordInput || passwordInput.length < 6) {
+          setCloudMsg('Password must be at least 6 characters.')
+          setSyncBusy(false)
+          return
+        }
+        await connectAccount({
+          collections: ['liked', 'playlists'],
+          credentials: { mode, email: emailInput.trim(), password: passwordInput },
+        })
+        setPasswordInput('')
+        setCloudMsg('Connected! Your library is now synced to Supabase Cloud.')
+        setStatus('Cloud sync active.')
+      }
+    } catch (err) {
+      setCloudMsg(err?.message || 'Sign-in failed. Check your email and password.')
+    } finally {
+      setSyncBusy(false)
+    }
+  }
 
   return (
     <div
@@ -126,9 +220,55 @@ export function SettingsPanel({ open, sleep }) {
     >
       <div className="set-sec">
         <div className="set-head">
+          <Icon name="sliders" size={16} />
+          <span>Studio EQ &amp; Audio DSP</span>
+        </div>
+        <label className="switch-row">
+          <span>Slowed + Reverb (0.84x + Hall)</span>
+          <span>
+            <input
+              type="checkbox"
+              aria-label="Slowed and reverb audio mode"
+              checked={Boolean(s.dsp?.slowedReverb)}
+              onChange={(e) => s.updateDsp({ slowedReverb: e.target.checked })}
+            />
+            <span className="switch" />
+          </span>
+        </label>
+        <label className="switch-row">
+          <span>Loudness normalizer</span>
+          <span>
+            <input
+              type="checkbox"
+              aria-label="Loudness normalizer"
+              checked={Boolean(s.dsp?.loudnessNorm)}
+              onChange={(e) => s.updateDsp({ loudnessNorm: e.target.checked })}
+            />
+            <span className="switch" />
+          </span>
+        </label>
+        <div className="set-row" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => setDspOpen(true)}
+          >
+            Open 10-Band EQ ({s.dsp?.eqPreset || 'flat'})
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => setImportModalOpen(true)}
+          >
+            Import playlist
+          </button>
+        </div>
+      </div>
+
+      <div className="set-sec">
+        <div className="set-head">
           <Icon name="download" size={16} />
-          <span>Data saver</span>
-          <em style={{ fontStyle: 'normal', fontSize: 10.5, color: 'var(--muted)' }}>Beta</em>
+          <span>Data saver &amp; Offline vault</span>
         </div>
         <label className="switch-row">
           <span>Smaller art and audio</span>
@@ -143,17 +283,27 @@ export function SettingsPanel({ open, sleep }) {
           </span>
         </label>
         <p className="set-note">
-          {s.saverAuto && s.dataSaver
-            ? 'Auto-enabled: your browser reports a slow connection.'
-            : s.dataSaver
-              ? 'On — lowest audio quality and smaller artwork.'
-              : 'Locks the lowest quality and small artwork. Auto-enables on slow connections.'}
-        </p>
-        <p className="set-note">
           {(s.dataSaver ? 'Saver on: ' : 'Now: ') +
             `${currentQuality} ≈ ${est.perMin.toFixed(1)} MB/min ≈ ${est.songMB.toFixed(1)} MB/song` +
             (plan.artwork === 'small' ? ' · small artwork' : '')}
         </p>
+        <div className="set-row">
+          <span className="set-label">
+            Offline audio ({offlineTracks.length} saved · {(offlineBytes / 1048576).toFixed(1)} MB)
+          </span>
+          {offlineTracks.length > 0 && (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={async () => {
+                await clearOfflineDownloads()
+                setStatus('Cleared offline cached songs.')
+              }}
+            >
+              Clear offline
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="set-sec">
@@ -203,26 +353,21 @@ export function SettingsPanel({ open, sleep }) {
           </select>
         </label>
         <p className="set-note">
-          {s.crossfade.dur === 0
-            ? 'Gapless: the next track is cut in exactly at the boundary. Not a 0-second crossfade — no ramp at all.'
-            : LAW_HINTS[s.crossfade.law]}
-        </p>
-        <p className="set-note">
+          {s.crossfade.dur === 0 ? 'Gapless cut at track boundary.' : LAW_HINTS[s.crossfade.law]}{' '}
           {describePlan(
             planTransition({
               crossfadeOn: s.crossfade.on,
               crossfadeSec: s.crossfade.dur,
               law: s.crossfade.law,
             })
-          )}{' '}
-          · A manual skip uses a short {Math.round(0.35 * 1000)}ms hand-over instead.
+          )}
         </p>
       </div>
 
       <div className="set-sec">
         <div className="set-head">
           <Icon name="shuffle" size={16} />
-          <span>Suggestions</span>
+          <span>Suggestions &amp; Languages</span>
         </div>
         <div className="set-row">
           <select
@@ -247,14 +392,26 @@ export function SettingsPanel({ open, sleep }) {
             <span className="switch" />
           </span>
         </label>
+        <div className="exclude-list" role="group" aria-label="Preferred home languages">
+          {(s.availableLanguages || []).map((lang) => {
+            const on = (s.languages || []).includes(lang.id)
+            return (
+              <button
+                key={lang.id}
+                type="button"
+                className={'chip' + (on ? ' active' : '')}
+                aria-pressed={on}
+                onClick={() => s.toggleLanguage(lang.id)}
+              >
+                {lang.label}
+              </button>
+            )
+          })}
+        </div>
         <p className="set-note">
           {s.shuffleMode === 'smart'
-            ? `One suggestion every ${DEFAULT_REC.insertEvery} tracks, and only in queues longer than ${DEFAULT_REC.minTracks}. They are marked in the queue and never added to your playlist.`
-            : `Autoplay adds ${REC_REASON_SENTENCE.same_artist.toLowerCase()} once your own queue runs out. Every added track is marked, and you can dismiss it with −.`}
-        </p>
-        <p className="set-note">
-          A skip in the first {DEFAULT_REC.earlySkipSec} seconds counts as “not this”, and dismissed
-          suggestions stay away for {DEFAULT_REC.dismissDays} days.
+            ? `One suggestion every ${DEFAULT_REC.insertEvery} tracks, marked in your queue.`
+            : `Autoplay adds ${REC_REASON_SENTENCE.same_artist.toLowerCase()} once your queue ends.`}
         </p>
       </div>
 
@@ -301,7 +458,11 @@ export function SettingsPanel({ open, sleep }) {
           </span>
         </label>
         <div className="set-row">
-          <select aria-label="Visualiser style" value={s.viz.style} onChange={(e) => s.setVizStyle(e.target.value)}>
+          <select
+            aria-label="Visualiser style"
+            value={s.viz.style}
+            onChange={(e) => s.setVizStyle(e.target.value)}
+          >
             <option value="spectrum">Live spectrum (real audio data)</option>
             <option value="bars">Bars (simulated)</option>
             <option value="wave">Waves (simulated)</option>
@@ -320,29 +481,15 @@ export function SettingsPanel({ open, sleep }) {
             <span className="switch" />
           </span>
         </label>
-        <p className="set-note">
-          {s.dataSaver
-            ? 'Off while Data Saver is on — the clip would be a second download.'
-            : s.canvas
-              ? 'Looks up a looping clip on YouTube Music when you open the full player. Audio stays on JioSaavn; falls back to artwork if none is found. YouTube needs a signed-in session for music tracks, which this server does not have, so artwork is what you will see.'
-              : 'Off — the full player shows artwork only, and nothing is requested from YouTube.'}
-        </p>
-        <p className="set-note">
-          {visual.reason === 'live_audio_unavailable'
-            ? s.ios
-              ? 'On iPhone the spectrum is simulated: routing audio through Web Audio stops playback when the screen locks.'
-              : 'Live spectrum blocked by the stream’s CORS headers — using simulated visuals.'
-            : visual.note}{' '}
-          It is drawn on this device from audio that is already playing, so Data Saver leaves it
-          alone — hiding it would save no data.
-        </p>
+        <p className="set-note">{visual.note}</p>
       </div>
 
       <div className="set-sec">
         <div className="set-head">
-          <Icon name="alert" size={16} />
-          <span>Privacy &amp; history</span>
+          <Icon name="cloud" size={16} />
+          <span>Cloud Sync &amp; Privacy</span>
         </div>
+
         <label className="switch-row">
           <span>Private session</span>
           <span>
@@ -355,21 +502,137 @@ export function SettingsPanel({ open, sleep }) {
             <span className="switch" />
           </span>
         </label>
-        <p className="set-note">
-          {s.privateSession
-            ? 'Private: nothing played from now on is added to your history, your taste mix or your stats. Likes and playlists are unaffected.'
-            : 'Playback is counted on this device only. Turn this on for a session nothing is recorded from.'}
-        </p>
+
+        {hasAccountProvider ? (
+          <>
+            <div className="set-row">
+              <span className="set-label">
+                Account sync{account ? ` (${account.displayName})` : ''}
+              </span>
+              {account ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={syncBusy}
+                  onClick={async () => {
+                    setSyncBusy(true)
+                    try {
+                      await syncNow()
+                    } finally {
+                      setSyncBusy(false)
+                    }
+                  }}
+                >
+                  Sync now
+                </button>
+              ) : !isSupabaseCloud ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={syncBusy}
+                  onClick={async () => {
+                    setSyncBusy(true)
+                    try {
+                      await connectAccount({ collections: ['liked', 'playlists'] })
+                    } finally {
+                      setSyncBusy(false)
+                    }
+                  }}
+                >
+                  Opt in &amp; connect
+                </button>
+              ) : null}
+            </div>
+
+            {!account && isSupabaseCloud && (
+              <div className="cloud-auth-box">
+                <input
+                  type="email"
+                  aria-label="Cloud sync email address"
+                  placeholder="you@example.com"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                />
+                <input
+                  type="password"
+                  aria-label="Cloud sync password"
+                  placeholder="Password (min 6 chars — optional for Magic Link)"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                />
+                <div className="cloud-auth-btns">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={syncBusy}
+                    onClick={() => handleCloudAuth('signin')}
+                  >
+                    Sign in
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    disabled={syncBusy}
+                    onClick={() => handleCloudAuth('signup')}
+                  >
+                    Create account
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    disabled={syncBusy}
+                    onClick={() => handleCloudAuth('magic')}
+                  >
+                    Magic Link
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {account && (
+              <div className="set-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                {syncState?.status === 'paused' ? (
+                  <button type="button" className="btn-ghost" onClick={() => resumeSync()}>
+                    Resume sync
+                  </button>
+                ) : (
+                  <button type="button" className="btn-ghost" onClick={() => pauseSync()}>
+                    Pause sync
+                  </button>
+                )}
+                <button type="button" className="btn-ghost" onClick={() => clearRemoteMirror()}>
+                  Clear synced copy
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => disconnectAccount({ deleteMirror: false })}
+                >
+                  Disconnect account
+                </button>
+              </div>
+            )}
+
+            {cloudMsg && <p className="set-note">{cloudMsg}</p>}
+            <p className="set-note">
+              {syncState?.status === 'auth_required'
+                ? 'Provider session expired or was revoked — sign in again to resume sync.'
+                : account
+                  ? `Synced live across devices (${syncState?.status || 'idle'}). Local items stay safe offline.`
+                  : 'Sign in with Email + Password or 1-tap Magic Link to sync likes & playlists across devices.'}
+            </p>
+          </>
+        ) : (
+          <p className="set-note">
+            Local-first storage active. Export or import portable JSON snapshots anytime below.
+          </p>
+        )}
 
         <div className="set-row">
           <span className="set-label">Excluded artists</span>
           <span className="set-count">{s.excludedArtists.length}</span>
         </div>
-        {s.excludedArtists.length === 0 ? (
-          <p className="set-note">
-            None. Use “Don’t suggest this artist” on any row in your mix, or on an artist page.
-          </p>
-        ) : (
+        {s.excludedArtists.length > 0 && (
           <div className="exclude-list" aria-label="Artists excluded from suggestions">
             {s.excludedArtists.map((name) => (
               <button
@@ -404,11 +667,32 @@ export function SettingsPanel({ open, sleep }) {
             {resetArmed ? 'Tap again to erase' : 'Reset history'}
           </button>
         </div>
-        <p className="set-note">
-          {resetArmed
-            ? 'This erases plays, minutes and the taste profile. Likes and playlists stay.'
-            : 'Reset erases plays, minutes and the taste profile — likes and playlists stay.'}
-        </p>
+
+        <div className="set-row">
+          <span className="set-label">Library backup</span>
+          <button type="button" className="btn-ghost" onClick={() => downloadLibraryExport()}>
+            Export library
+          </button>
+        </div>
+
+        <div className="set-row">
+          <span className="set-label">Local library data</span>
+          <button
+            type="button"
+            className={'btn-ghost' + (deleteLibArmed ? ' danger' : '')}
+            onClick={() => {
+              if (!deleteLibArmed) {
+                setDeleteLibArmed(true)
+                return
+              }
+              deleteLocalLibrary()
+              setDeleteLibArmed(false)
+            }}
+            onBlur={() => setDeleteLibArmed(false)}
+          >
+            {deleteLibArmed ? 'Tap again to delete library' : 'Delete library copy'}
+          </button>
+        </div>
       </div>
 
       <div className="set-sec">
@@ -429,11 +713,22 @@ export function SettingsPanel({ open, sleep }) {
             ))}
           </select>
         </div>
+        {s.source === 'ytmusic' && (
+          <label className="set-field" style={{ marginTop: 8 }}>
+            <span>YouTube Data API key (optional)</span>
+            <input
+              type="password"
+              aria-label="YouTube Data API v3 key"
+              placeholder="Built-in search active — paste key to override"
+              value={s.ytApiKey || ''}
+              onChange={(e) => s.setYtApiKey(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+        )}
         <p className="set-note">
           {s.source === 'ytmusic'
-            ? streamMintBridge()
-              ? DEVICE_SOURCE_NOTE
-              : BROWSE_ONLY_NOTE
+            ? BROWSE_ONLY_NOTE
             : 'JioSaavn provides both the catalogue and the audio, on every device.'}
         </p>
       </div>
@@ -441,14 +736,12 @@ export function SettingsPanel({ open, sleep }) {
       <div className="set-sec">
         <div className="set-head">
           <Icon name="info" size={16} />
-          <span>What VIBEX can and can’t do</span>
+          <span>Capabilities</span>
         </div>
         <p className="set-note">
-          Audio comes from one source, {SOURCE.label} — up to {SOURCE.maxKbps} kbps {SOURCE.format}.{' '}
-          {caps.available} of {caps.total} capabilities below work; the rest are listed because no
-          setting would produce them. Canvas video is the one cross-source extra — the clip would
-          come from YouTube Music, but YouTube will not describe music tracks without a signed-in
-          session, so it stays artwork.
+          Audio streams natively from {SOURCE.label} and YouTube Music — up to {SOURCE.maxKbps} kbps{' '}
+          {SOURCE.format}, with YouTube items streamed strictly as pure audio tracks.{' '}
+          {caps.available} of {caps.total} capabilities below are active.
         </p>
         <ul className="cap-list">
           {FEATURES.map((f) => (
@@ -461,8 +754,6 @@ export function SettingsPanel({ open, sleep }) {
                   <span className="cap-label">{f.label}</span>
                   <span className="cap-claim">{f.claim}</span>
                 </span>
-                {/* Detail only where it has to justify an absence — a full
-                    detail column would be the wall of text this avoids. */}
                 {f.status !== STATUS.available && f.status !== STATUS.strength && (
                   <span className="cap-detail">{f.detail}</span>
                 )}
@@ -470,13 +761,43 @@ export function SettingsPanel({ open, sleep }) {
             </li>
           ))}
         </ul>
-        <p className="set-note">
-          Nothing above changes by switching quality or toggling anything else — there is no
-          higher tier to unlock here.
-        </p>
       </div>
 
       <InstallSection />
+
+      {openShareToVibex && (
+        <div className="set-sec">
+          <div className="set-head">
+            <Icon name="link" size={16} />
+            <span>Share to VIBEX (Cross-Device)</span>
+          </div>
+          <p className="set-note">
+            Share songs, albums, or playlists from YouTube, YT Music, Spotify, JioSaavn, or Apple
+            Music directly into VIBEX across Android, iPhone/iPad, Windows, and macOS.
+          </p>
+          <div className="set-row" style={{ marginTop: 8 }}>
+            <span className="set-label">Open link &amp; OS setup</span>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => openShareToVibex()}
+            >
+              Open Share to VIBEX
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="set-sec">
+        <div className="set-head">
+          <Icon name="info" size={16} />
+          <span>Independent service notice</span>
+        </div>
+        <p className="set-note">
+          VIBEX is an independent application and is not affiliated with, endorsed by, or sponsored
+          by Google, YouTube, YouTube Music, JioSaavn, or any music provider.
+        </p>
+      </div>
     </div>
   )
 }

@@ -1,7 +1,8 @@
 # 0006 — Long-form YouTube plays in YouTube's player, not ours
 
-Status: **accepted**. Built and tested; the embed itself is **unverified in a
-browser** (no browser in the build environment).
+Status: **superseded by 0007** — the embed is now the only route for YouTube
+items, so the twenty-minute threshold no longer decides anything. Kept for the
+reasoning about size, binding and shape, which still holds.
 
 ## The question
 

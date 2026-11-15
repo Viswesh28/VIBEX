@@ -1,1 +1,1 @@
-export * from './album.model.js';
+export * from "./album.model.js";

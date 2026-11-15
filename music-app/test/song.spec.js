@@ -121,9 +121,9 @@ describe('download naming', () => {
     expect(dlBaseName({})).toBe('Unknown artist - song')
   })
 
-  it('points at the gateway /dl endpoint with an id, quality, url and name', () => {
+  it('points at the gateway /api/dl endpoint with an id, quality, url and name', () => {
     const url = new URL(dlUrlFor(song, '320kbps'), 'http://localhost')
-    expect(url.pathname).toBe('/dl')
+    expect(url.pathname).toBe('/api/dl')
     expect(url.searchParams.get('songId')).toBe('abc123')
     expect(url.searchParams.get('q')).toBe('320kbps')
     expect(url.searchParams.get('url')).toBe('https://cdn/320')

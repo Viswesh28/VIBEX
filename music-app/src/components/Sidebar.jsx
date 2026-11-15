@@ -1,29 +1,25 @@
 import { decodeHtml } from '../lib/format.js'
+import { ANDROID_APK_URL, ANDROID_APP_VERSION } from '../lib/config.js'
+import { isNativeShell } from '../lib/platform.js'
 import { useLibrary } from '../state/LibraryContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 import { Icon, Logo } from './Icon.jsx'
 
-/**
- * Primary destinations. The `icon` name maps into Icon.jsx; keeping the list
- * here means the desktop rail and the phone tab bar can never drift apart.
- */
 export const NAV = [
   { kind: 'feed', icon: 'home', label: 'Listen Now' },
   { kind: 'search', icon: 'search', label: 'Search' },
   { kind: 'library', icon: 'library', label: 'Library' },
-  // "For you" sits next to Stats on purpose: both are about your own
-  // listening, one is the record and the other is the mix built from it.
   { kind: 'taste', icon: 'sparkle', label: 'For you' },
   { kind: 'stats', icon: 'stats', label: 'Stats' },
 ]
 
 export function Sidebar({ apiOnline, open = false, onClose }) {
-  const { liked, playlists } = useLibrary()
+  const { liked, playlists, account } = useLibrary()
   const { dataSaver } = useSettings()
-  const { view, navigate, search, openNewPlaylistModal } = useUI()
+  const { view, navigate, search, openNewPlaylistModal, setImportModalOpen, openShareToVibex } =
+    useUI()
 
-  // Artist and detail pages are reached from a search, so Search stays lit.
   const activeKind = view.kind === 'artist' || view.kind === 'detail' ? 'search' : view.kind
 
   const go = (kind) => {
@@ -62,15 +58,48 @@ export function Sidebar({ apiOnline, open = false, onClose }) {
 
       <div className="side-label side-extra">
         <span>Playlists</span>
-        <button type="button" onClick={openNewPlaylistModal} aria-label="Create a playlist">
-          <Icon name="plus" size={13} />
-          New
-        </button>
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => {
+              onClose?.()
+              openShareToVibex?.('')
+            }}
+            aria-label="Open shared song or playlist link"
+            title="Play or import a shared link"
+          >
+            <Icon name="link" size={13} />
+            Link
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose?.()
+              setImportModalOpen(true)
+            }}
+            aria-label="Import playlist"
+            title="Import Spotify / YouTube / JioSaavn playlist"
+          >
+            <Icon name="import" size={13} />
+            Import
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose?.()
+              openNewPlaylistModal()
+            }}
+            aria-label="Create a playlist"
+          >
+            <Icon name="plus" size={13} />
+            New
+          </button>
+        </div>
       </div>
 
       <div id="plNav" className="side-extra" aria-label="Your playlists">
         {playlists.length === 0 ? (
-          <div className="nav-hint">No playlists yet. Use + on any song to start one.</div>
+          <div className="nav-hint">No playlists yet. Use + on any song or Import above.</div>
         ) : (
           playlists.map((p) => (
             <button
@@ -97,20 +126,45 @@ export function Sidebar({ apiOnline, open = false, onClose }) {
         <span className={'mode-badge' + (apiOnline ? ' live' : '')}>
           {apiOnline === null ? 'Connecting' : apiOnline ? 'Live catalogue' : 'Offline'}
         </span>
+        {account && (
+          <span className="mode-badge live" title={`Synced as ${account.displayName}`}>
+            Cloud synced
+          </span>
+        )}
         {dataSaver && (
           <span id="saverBadge" style={{ display: 'inline-block' }}>
             Data saver
           </span>
         )}
         <span id="apiUrl" className="side-extra">
-          Same-origin /api — no keys, no tracking.
+          {account ? `Synced: ${account.displayName}` : 'Local-first + optional Cloud Sync'}
         </span>
       </div>
 
+      {!isNativeShell() && (
+        <a
+          href={ANDROID_APK_URL}
+          download={`VIBEX-v${ANDROID_APP_VERSION}-universal.apk`}
+          className="nav-item side-apk-btn"
+          style={{
+            margin: '8px 10px 2px',
+            textDecoration: 'none',
+            border: '1px solid rgba(168,85,247,0.32)',
+            background: 'linear-gradient(135deg, rgba(168,85,247,0.14), rgba(59,130,246,0.1))',
+            fontSize: 12.5,
+            fontWeight: 600,
+          }}
+          title="Download signed Android app (.apk)"
+        >
+          <Icon name="download" size={16} />
+          <span className="nav-label">Android App (.apk)</span>
+        </a>
+      )}
+
       <div className="side-foot side-extra">
-        VIBEX · personal listening
+        VIBEX · studio streaming
         <br />
-        <span className="kbd-hint">Space play · N/P skip · ←/→ seek 10s</span>
+        <span className="kbd-hint">Ctrl+K commands · Space play · N/P skip</span>
       </div>
     </aside>
   )

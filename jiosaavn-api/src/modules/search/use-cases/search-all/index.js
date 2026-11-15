@@ -1,1 +1,1 @@
-export * from './search-all.use-case.js';
+export * from "./search-all.use-case.js";

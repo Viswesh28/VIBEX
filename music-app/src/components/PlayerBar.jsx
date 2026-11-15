@@ -1,27 +1,18 @@
 import { decodeHtml, fmt } from '../lib/format.js'
+import { shareVibexLink } from '../lib/shareUrl.js'
 import { artistsOf, dlUrlFor, imgOf } from '../lib/song.js'
 import { Icon } from './Icon.jsx'
 import { RecBadge, TransitionBadge } from './Provenance.jsx'
 import { useLibrary } from '../state/LibraryContext.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerClock, usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
+import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
-/** The persistent transport. Left: what is playing. Middle: controls. Right: utilities. */
-export function PlayerBar({ onDownload }) {
-  const {
-    current, currentIndex, isPlaying, clock, volume, currentQuality, transition,
-    togglePlay, nextTrack, prevTrack, seekFrac, setVolume, reloadActive,
-    dismissRecommendation, clearForcedQuality,
-  } = usePlayer()
-  const { likedIds, toggleLike } = useLibrary()
-  const s = useSettings()
-  const { setFullOpen, setLyricsOpen } = useUI()
-
+/** Isolated clock slider: updates smoothly on `timeupdate` without re-rendering PlayerBar buttons. */
+function PlayerProgressSlider({ seekFrac }) {
+  const clock = usePlayerClock()
   const pct = clock.dur ? (clock.cur / clock.dur) * 100 : 0
-  const liked = current ? likedIds.has(current.id) : false
-  const openFull = () => current && setFullOpen(true)
-  const name = current ? decodeHtml(current.name) : ''
 
   const seekFromEvent = (e) => {
     const r = e.currentTarget.getBoundingClientRect()
@@ -35,21 +26,78 @@ export function PlayerBar({ onDownload }) {
   }
 
   return (
+    <div
+      id="progressWrap"
+      role="slider"
+      tabIndex={0}
+      aria-label="Seek"
+      aria-valuemin={0}
+      aria-valuemax={Math.max(1, Math.round(clock.dur || 0))}
+      aria-valuenow={Math.round(clock.cur || 0)}
+      aria-valuetext={`${fmt(clock.cur)} of ${fmt(clock.dur)}`}
+      onClick={seekFromEvent}
+      onKeyDown={seekFromKey}
+    >
+      <div id="progress" style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
+function PlayerTimeReadout() {
+  const clock = usePlayerClock()
+  return (
+    <div id="pTime">
+      {fmt(clock.cur)} / {fmt(clock.dur)}
+    </div>
+  )
+}
+
+/** The persistent transport. Subscribes strictly to transport state — zero `timeupdate` churn. */
+export function PlayerBar({ onDownload }) {
+  const {
+    current,
+    currentIndex,
+    isPlaying,
+    volume,
+    currentQuality,
+    transition,
+    togglePlay,
+    nextTrack,
+    prevTrack,
+    seekFrac,
+    setVolume,
+    reloadActive,
+    dismissRecommendation,
+    clearForcedQuality,
+    pipSupported,
+    pipActive,
+    togglePip,
+  } = usePlayerTransport()
+  const { likedIds, toggleLike } = useLibrary()
+  const s = useSettings()
+  const { setStatus } = useStatus()
+  const { setFullOpen, setLyricsOpen, setDspOpen } = useUI()
+
+  const liked = current ? likedIds.has(current.id) : false
+  const openFull = () => current && setFullOpen(true)
+  const name = current ? decodeHtml(current.name) : ''
+  const eqActive = Boolean(
+    s.dsp?.eqOn || s.dsp?.loudnessNorm || s.dsp?.slowedReverb || Number(s.dsp?.reverbMix) > 0
+  )
+
+  const handleShare = async () => {
+    if (!current) return
+    const out = await shareVibexLink({
+      title: `${name} — ${decodeHtml(artistsOf(current))}`,
+      text: `Listen to “${name}” on VIBEX`,
+      pathOrUrl: `/?play=${encodeURIComponent(current.id)}`,
+    })
+    if (out.copied) setStatus('Copied song deep link to clipboard.')
+  }
+
+  return (
     <footer id="playerBar" className="player-bar">
-      <div
-        id="progressWrap"
-        role="slider"
-        tabIndex={0}
-        aria-label="Seek"
-        aria-valuemin={0}
-        aria-valuemax={Math.max(1, Math.round(clock.dur || 0))}
-        aria-valuenow={Math.round(clock.cur || 0)}
-        aria-valuetext={`${fmt(clock.cur)} of ${fmt(clock.dur)}`}
-        onClick={seekFromEvent}
-        onKeyDown={seekFromKey}
-      >
-        <div id="progress" style={{ width: `${pct}%` }} />
-      </div>
+      <PlayerProgressSlider seekFrac={seekFrac} />
 
       <div className="pb-left">
         <img
@@ -72,16 +120,18 @@ export function PlayerBar({ onDownload }) {
               />
             )}
           </div>
-          <div id="pTime">
-            {fmt(clock.cur)} / {fmt(clock.dur)}
-          </div>
+          <PlayerTimeReadout />
         </div>
       </div>
 
       <div className="controls">
         <button
           type="button"
-          className={'cbtn' + (s.shuffleMode !== 'off' ? ' toggled' : '') + (s.shuffleMode === 'smart' ? ' smart' : '')}
+          className={
+            'cbtn' +
+            (s.shuffleMode !== 'off' ? ' toggled' : '') +
+            (s.shuffleMode === 'smart' ? ' smart' : '')
+          }
           title={
             s.shuffleMode === 'smart'
               ? 'Smart shuffle: queue order kept, suggestions mixed in'
@@ -101,7 +151,13 @@ export function PlayerBar({ onDownload }) {
         >
           <Icon name={s.shuffleMode === 'smart' ? 'sparkle' : 'shuffle'} size={18} />
         </button>
-        <button type="button" className="cbtn" title="Previous" aria-label="Previous track" onClick={prevTrack}>
+        <button
+          type="button"
+          className="cbtn"
+          title="Previous"
+          aria-label="Previous track"
+          onClick={prevTrack}
+        >
           <Icon name="prev" size={18} />
         </button>
         <button
@@ -113,7 +169,13 @@ export function PlayerBar({ onDownload }) {
         >
           <Icon name={isPlaying ? 'pause' : 'play'} size={20} />
         </button>
-        <button type="button" className="cbtn" title="Next" aria-label="Next track" onClick={nextTrack}>
+        <button
+          type="button"
+          className="cbtn"
+          title="Next"
+          aria-label="Next track"
+          onClick={nextTrack}
+        >
           <Icon name="next" size={18} />
         </button>
         <button
@@ -148,9 +210,7 @@ export function PlayerBar({ onDownload }) {
           value={currentQuality}
           onChange={(e) => {
             s.setQualityPref(e.target.value)
-            // An explicit choice outranks an automatic downgrade.
             clearForcedQuality()
-            // Defer: the context value the engine reads updates on the next tick.
             setTimeout(reloadActive, 0)
           }}
         >
@@ -170,6 +230,39 @@ export function PlayerBar({ onDownload }) {
           value={Math.round(volume * 100)}
           onChange={(e) => setVolume(e.target.value / 100)}
         />
+        <button
+          type="button"
+          className={'icon-btn' + (eqActive ? ' toggled' : '')}
+          title="Studio EQ & Audio FX"
+          aria-label="Open Studio EQ and audio effects"
+          aria-pressed={eqActive}
+          onClick={() => setDspOpen(true)}
+        >
+          <Icon name="sliders" size={18} />
+        </button>
+        {pipSupported && (
+          <button
+            type="button"
+            className={'icon-btn' + (pipActive ? ' toggled' : '')}
+            title="Floating Mini Player"
+            aria-label="Toggle floating mini player"
+            aria-pressed={pipActive}
+            onClick={togglePip}
+          >
+            <Icon name="pip" size={18} />
+          </button>
+        )}
+        {current && (
+          <button
+            type="button"
+            className="icon-btn"
+            title="Share deep link"
+            aria-label="Share song link"
+            onClick={handleShare}
+          >
+            <Icon name="share" size={18} />
+          </button>
+        )}
         <a
           id="dlBtn"
           title="Download audio"

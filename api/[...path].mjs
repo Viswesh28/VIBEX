@@ -37,6 +37,23 @@ export default async function handler(req, res) {
   const url = new URL(req.url || '/', `${protocol}://${host}`)
   const method = req.method || 'GET'
 
+  res.setHeader('access-control-allow-origin', '*')
+  res.setHeader('access-control-allow-methods', 'GET, HEAD, POST, OPTIONS')
+  res.setHeader(
+    'access-control-allow-headers',
+    'accept, content-type, range, x-youtube-api-key, authorization'
+  )
+  res.setHeader(
+    'access-control-expose-headers',
+    'content-disposition, content-length, content-range, accept-ranges'
+  )
+
+  if (method === 'OPTIONS') {
+    res.statusCode = 204
+    res.end()
+    return
+  }
+
   try {
     const body = method === 'GET' || method === 'HEAD' ? undefined : await readBody(req)
     const response = await app.fetch(

@@ -6,6 +6,7 @@ import { EVENTS, track } from '../lib/telemetry.js'
 import { Shelf } from './CardGrid.jsx'
 import { Icon } from './Icon.jsx'
 import { EmptyState } from './Spinner.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
@@ -19,8 +20,9 @@ const FEED = [
 
 const SKELETON_CARDS = 6
 const MAX_RETRIES = 2
+export const LIVE_FEED_REFRESH_MS = 5 * 60 * 1000
+const VISIBILITY_REFRESH_MS = 3 * 60 * 1000
 
-/** Fixed-height placeholders: the home screen must not reflow when data lands. */
 function ShelfSkeleton({ title }) {
   return (
     <section className="shelf feed-sec skeleton-shelf" aria-hidden="true">
@@ -42,28 +44,27 @@ function ShelfSkeleton({ title }) {
   )
 }
 
-/** Jittered, capped backoff — a herd of clients must not retry in lockstep. */
 const backoffMs = (attempt) => Math.min(4000, 350 * 2 ** attempt + Math.random() * 250)
 
-/**
- * Listen Now — the editorial home.
- *
- * The contract mirrors what the shipped players do and what this build needs:
- * every shelf loads independently, a failed shelf is dropped rather than
- * blanking the page, the first-page failure gets a bounded retry with jitter,
- * and every degrade is reported. Silent degradation is invisible without an
- * event, which is the whole reason `home.degraded` exists.
- */
 export function FeedView() {
   const [sections, setSections] = useState([])
+  const [liveSongShelves, setLiveSongShelves] = useState([])
   const [loading, setLoading] = useState(true)
   const [degraded, setDegraded] = useState([])
   const [attempt, setAttempt] = useState(0)
   const alive = useRef(true)
   const retryTimer = useRef(null)
+  const lastFetchedAt = useRef(0)
+
+  const player = usePlayerTransport()
   const { setStatus } = useStatus()
-  const { navigate, search } = useUI()
-  const { dataSaver } = useSettings()
+  const { navigate, search, setImportModalOpen } = useUI()
+  const { dataSaver, languages, availableLanguages, toggleLanguage } = useSettings()
+
+  const langParam = (languages && languages.length
+    ? languages
+    : ['tamil', 'hindi', 'english', 'telugu', 'malayalam']
+  ).join(',')
 
   useEffect(
     () => () => {
@@ -71,6 +72,33 @@ export function FeedView() {
       if (retryTimer.current) clearTimeout(retryTimer.current)
     },
     []
+  )
+
+  const refreshLiveSongs = useCallback(
+    (bypassCache = false) => {
+      const liveEndpoints = [
+        ['New Releases', `/content/new-releases?languages=${encodeURIComponent(langParam)}&limit=12`],
+        ['Trending Songs', `/content/trending?languages=${encodeURIComponent(langParam)}&limit=12`],
+      ]
+      Promise.allSettled(
+        liveEndpoints.map(([title, endpoint]) =>
+          api(endpoint, { bypassCache }).then((d) => ({
+            title,
+            items: (d?.results || []).filter((s) => s && s.id && s.downloadUrl?.length),
+          }))
+        )
+      ).then((settled) => {
+        if (!alive.current) return
+        const fresh = settled
+          .filter((r) => r.status === 'fulfilled' && r.value.items.length > 0)
+          .map((r) => r.value)
+        if (fresh.length) {
+          setLiveSongShelves(fresh)
+          lastFetchedAt.current = Date.now()
+        }
+      })
+    },
+    [langParam]
   )
 
   const load = useCallback(() => {
@@ -102,7 +130,6 @@ export function FeedView() {
       setDegraded(dropped)
 
       if (!ok.length) {
-        // Nothing rendered: only now is a retry worth the user's time.
         setLoading(false)
         track(EVENTS.homeFailed, { attempt })
         if (attempt < MAX_RETRIES) {
@@ -114,13 +141,39 @@ export function FeedView() {
       }
       setSections(ok)
       setLoading(false)
+      lastFetchedAt.current = Date.now()
       track(EVENTS.homeLoaded, { sections: ok.length, degraded: dropped.length })
+      refreshLiveSongs()
     })
-  }, [attempt, setStatus])
+  }, [attempt, refreshLiveSongs, setStatus])
 
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    if (!sections.length) return undefined
+    const interval = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+        refreshLiveSongs(true)
+      }
+    }, LIVE_FEED_REFRESH_MS)
+
+    const onVisibility = () => {
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible' &&
+        Date.now() - lastFetchedAt.current >= VISIBILITY_REFRESH_MS
+      ) {
+        refreshLiveSongs(true)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [sections.length, refreshLiveSongs])
 
   if (loading) {
     return (
@@ -154,9 +207,38 @@ export function FeedView() {
   const featured = sections[0].items[0]
   const openPlaylist = (item) => navigate({ kind: 'detail', type: 'playlist', id: item.id })
   const moreIn = (section) => search(section.query, 'playlists')
+  const playLiveSong = (shelf, item) => {
+    const idx = Math.max(0, shelf.items.findIndex((s) => s.id === item.id))
+    player?.playFromList(shelf.items, idx)
+  }
+  const recentHistory = player?.recentHistory || []
 
   return (
     <>
+      <div className="lang-bar" role="group" aria-label="Preferred music languages">
+        {(availableLanguages || []).map((lang) => {
+          const on = (languages || []).includes(lang.id)
+          return (
+            <button
+              key={lang.id}
+              type="button"
+              className={'chip' + (on ? ' active' : '')}
+              aria-pressed={on}
+              onClick={() => toggleLanguage(lang.id)}
+            >
+              {lang.label}
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          className="chip lang-import-btn"
+          onClick={() => setImportModalOpen(true)}
+        >
+          <Icon name="import" size={13} /> Import playlist
+        </button>
+      </div>
+
       <section className="hero feature" aria-labelledby="featureTitle">
         <div
           className="hero-wash"
@@ -164,7 +246,13 @@ export function FeedView() {
           style={{ backgroundImage: `url("${imgOf(featured, dataSaver)}")` }}
         />
         <div className="hero-scrim" aria-hidden="true" />
-        <img className="hero-cover" src={imgOf(featured, dataSaver)} alt="" />
+        <img
+          className="hero-cover"
+          src={imgOf(featured, dataSaver)}
+          fetchpriority="high"
+          decoding="async"
+          alt=""
+        />
         <div className="hero-body">
           <span className="eyebrow">
             <span className="dot" aria-hidden="true" />
@@ -211,6 +299,32 @@ export function FeedView() {
           </button>
         </div>
       )}
+
+      {recentHistory.length > 0 && (
+        <Shelf
+          title="Jump Back In"
+          items={recentHistory.slice(0, 12)}
+          kind="song"
+          moreLabel="Play all"
+          onOpen={(song) => {
+            const idx = Math.max(0, recentHistory.findIndex((s) => s.id === song.id))
+            player?.playFromList(recentHistory, idx)
+          }}
+          onMore={() => player?.playFromList(recentHistory, 0)}
+        />
+      )}
+
+      {liveSongShelves.map((shelf) => (
+        <Shelf
+          key={shelf.title}
+          title={shelf.title}
+          items={shelf.items}
+          kind="song"
+          moreLabel="Play all"
+          onOpen={(song) => playLiveSong(shelf, song)}
+          onMore={() => player?.playFromList(shelf.items, 0)}
+        />
+      ))}
 
       {sections.map((sec) => (
         <Shelf

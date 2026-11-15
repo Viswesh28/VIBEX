@@ -79,18 +79,13 @@ describe('the capability matrix', () => {
     expect(f.detail).toMatch(/not yet confirmed|unconfirmed/i)
   })
 
-  it('does not sell the second source as a way to hear YouTube Music', () => {
-    // The catalogue is real; the audio is not, and the row has to say both.
+  it('advertises YouTube Music songs and videos as pure audio playback with no video window', () => {
     const f = feature('sources')
-    expect(f.status).toBe(STATUS.blocked)
-    expect(f.claim).toMatch(/browse/i)
-    // The distinction that matters: the device can mint, a server cannot.
-    expect(f.detail).toMatch(/minted on the device/i)
-    expect(f.detail).toMatch(/extension/i)
-    // And the one thing web *can* play is named for what it is: an embed,
-    // not audio-only, and only above the long-form threshold.
-    expect(f.detail).toMatch(/twenty minutes/i)
-    expect(f.detail).toMatch(/embed/i)
+    expect(f.status).toBe(STATUS.available)
+    expect(f.claim).toMatch(/pure audio/i)
+    expect(f.detail).toMatch(/pure audio tracks/i)
+    expect(f.detail).not.toMatch(/video and ads/i)
+    expect(f.detail).not.toMatch(/YouTube’s own player/i)
   })
 
   it('counts only what actually ships', () => {

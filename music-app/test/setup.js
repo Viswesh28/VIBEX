@@ -10,7 +10,14 @@ import { cleanup } from '@testing-library/react'
 const hasDom = typeof window !== 'undefined' && !!window.HTMLMediaElement
 
 if (hasDom) {
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    try {
+      window.history.replaceState(null, '', '/')
+    } catch {
+      /* ignore */
+    }
+  })
   patchMediaStack()
 }
 
@@ -68,6 +75,29 @@ function patchMediaStack() {
     }
     createMediaElementSource() { return { connect() {}, disconnect() {}, __src: true } }
     createGain() { return { gain: param(), connect() {}, disconnect() {} } }
+    createBiquadFilter() {
+      return { type: 'peaking', frequency: param(), Q: param(), gain: param(), connect() {}, disconnect() {} }
+    }
+    createDynamicsCompressor() {
+      return {
+        threshold: param(),
+        knee: param(),
+        ratio: param(),
+        attack: param(),
+        release: param(),
+        connect() {},
+        disconnect() {},
+      }
+    }
+    createConvolver() { return { buffer: null, connect() {}, disconnect() {} } }
+    createBuffer(channels, length, sampleRate) {
+      return {
+        numberOfChannels: channels,
+        length,
+        sampleRate,
+        getChannelData: () => new Float32Array(length),
+      }
+    }
     resume() { this.state = 'running'; return Promise.resolve() }
     close() { this.state = 'closed'; return Promise.resolve() }
   }

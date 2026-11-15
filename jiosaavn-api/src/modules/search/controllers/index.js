@@ -1,1 +1,1 @@
-export * from './search.controller.js';
+export * from "./search.controller.js";

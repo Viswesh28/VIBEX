@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
 import { decodeHtml, fmtNum } from '../lib/format.js'
+import { shareVibexLink } from '../lib/shareUrl.js'
 import { imgOf } from '../lib/song.js'
 import { CardGrid } from './CardGrid.jsx'
 import { Icon } from './Icon.jsx'
 import { SongList } from './SongList.jsx'
 import { EmptyState, SectionTitle, Spinner } from './Spinner.jsx'
 import { useStatus } from '../state/StatusContext.jsx'
-import { usePlayer } from '../state/PlayerContext.jsx'
+import { usePlayerTransport } from '../state/PlayerContext.jsx'
 import { useSettings } from '../state/SettingsContext.jsx'
 import { useUI } from '../state/UIContext.jsx'
 
@@ -15,7 +16,7 @@ export function ArtistView({ id, onTitle }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const { setStatus } = useStatus()
-  const { playFromList, startArtistRadio } = usePlayer()
+  const { playFromList, startArtistRadio } = usePlayerTransport()
   const { dataSaver, isExcluded, excludeArtist, unexcludeArtist } = useSettings()
   const { navigate } = useUI()
 
@@ -61,7 +62,13 @@ export function ArtistView({ id, onTitle }) {
           style={{ backgroundImage: `url("${imgOf(data, dataSaver)}")` }}
         />
         <div className="hero-scrim" aria-hidden="true" />
-        <img className="hero-cover round" src={imgOf(data, dataSaver)} alt="" />
+        <img
+          className="hero-cover round"
+          src={imgOf(data, dataSaver)}
+          fetchpriority="high"
+          decoding="async"
+          alt=""
+        />
         <div className="hero-body">
           <span className="eyebrow">
             <span className="dot" aria-hidden="true" />
@@ -94,6 +101,20 @@ export function ArtistView({ id, onTitle }) {
             <button type="button" className="btn-ghost on-art" onClick={() => startArtistRadio(songs)}>
               <Icon name="radio" size={15} />
               Artist radio
+            </button>
+            <button
+              type="button"
+              className="btn-ghost on-art"
+              onClick={async () => {
+                const out = await shareVibexLink({
+                  title: decodeHtml(data.name),
+                  pathOrUrl: `/?v=artist&id=${encodeURIComponent(id)}`,
+                })
+                if (out.copied) setStatus('Copied artist link to clipboard.')
+              }}
+            >
+              <Icon name="share" size={15} />
+              Share
             </button>
             <button
               type="button"

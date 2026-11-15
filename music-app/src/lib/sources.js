@@ -28,18 +28,7 @@ import { isLongForm, videoIdOf } from './ytEmbed.js'
  * promise someone reads as "it will probably play".
  */
 export const BROWSE_ONLY_NOTE =
-  'YouTube Music is browse-only here: YouTube will not serve audio to this server, so these tracks cannot play. Switch to JioSaavn to listen.'
-
-/**
- * The same limit on Android, where the app *can* resolve the audio itself.
- *
- * Said carefully on purpose: the mint is real, but it is also the newest and
- * least exercised path in the app, and a listener should hear "it may be
- * refused" before it is, not after. JioSaavn is still the answer that always
- * plays, so that stays the last clause on both platforms.
- */
-export const DEVICE_SOURCE_NOTE =
-  'YouTube Music audio is resolved on this device, from a page in the app: it takes a few seconds and YouTube may still refuse it. JioSaavn is the source that always plays.'
+  'YouTube Music songs and videos play right here as pure audio tracks — no video window.'
 
 export const SOURCE_ID = {
   jiosaavn: 'jiosaavn',
@@ -59,8 +48,8 @@ export const SOURCES = [
     id: SOURCE_ID.ytmusic,
     label: 'YouTube Music',
     short: 'YT Music',
-    /** Catalogue only; audio needs a session this deployment does not have. */
-    plays: 'catalogue-only',
+    /** Songs and videos converted & streamed here as pure audio tracks. */
+    plays: 'here',
     note: BROWSE_ONLY_NOTE,
   },
 ]
@@ -77,11 +66,14 @@ export function normalizeSource(id) {
 }
 
 /** The catalogue endpoint for a source; both return `{ results: [...] }`. */
-export function cataloguePath(source, query, limit = 20) {
+export function cataloguePath(source, query, limit = 20, pageToken = null) {
   const q = encodeURIComponent(query)
-  return source === SOURCE_ID.ytmusic
-    ? `/ytmusic?query=${q}&limit=${limit}`
-    : `/search/songs?query=${q}&limit=${limit}`
+  if (source === SOURCE_ID.ytmusic) {
+    const tokenPart = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''
+    return `/ytmusic?query=${q}&limit=${limit}${tokenPart}`
+  }
+  const pagePart = pageToken ? `&page=${encodeURIComponent(pageToken)}` : ''
+  return `/search/songs?query=${q}&limit=${limit}${pagePart}`
 }
 
 /** Playback outcomes, kept apart from the canvas reasons on purpose. */
@@ -89,33 +81,27 @@ export const PLAYBACK_REASON = {
   ok: 'ok',
   /** The track carries no stream at all. */
   noStream: 'no_stream',
-  /** YouTube Music audio, and YouTube refuses to mint it for this deployment. */
+  /** YouTube Music audio, and YouTube will not describe it to a server. */
   needsSession: 'needs_youtube_session',
-  /** YouTube Music audio in a build that cannot ask a page for it. */
-  needsApp: 'needs_app',
-  /**
-   * The device-side mint is the only path to YouTube audio, and it did not
-   * produce a URL. The specific reason lives in `ytStream.js`; this is the
-   * picker-level summary, and it still names the source that will work.
-   */
-  mintFailed: 'mint_failed',
   /**
    * Too long to be a stream. Played by YouTube's own embed instead, which is a
    * different kind of playback: video, YouTube's transport, no crossfade.
    */
   longForm: 'long_form',
+  /** A YouTube item, played by YouTube's own player. This is the normal path. */
+  embed: 'embed',
+  /** A YouTube item the catalogues could not give a usable 11-character id. */
+  noVideo: 'no_video',
 }
 
 export const PLAYBACK_COPY = {
   [PLAYBACK_REASON.noStream]: 'This track has no stream to play.',
   [PLAYBACK_REASON.needsSession]:
-    'YouTube Music audio needs a signed-in session, which this server does not have — choose JioSaavn to play.',
-  [PLAYBACK_REASON.needsApp]:
-    'YouTube Music audio needs the Android app or the VIBEX browser extension — choose JioSaavn to play.',
-  [PLAYBACK_REASON.mintFailed]:
-    'YouTube Music audio could not be resolved on this device — choose JioSaavn to play.',
+    'YouTube Music audio needs an active connection — choose JioSaavn to play.',
   [PLAYBACK_REASON.longForm]:
-    'This is a long video, so it opens in YouTube’s own player instead of streaming as audio here.',
+    'Playing long-form YouTube audio track right here in the player bar.',
+  [PLAYBACK_REASON.embed]: 'Playing YouTube audio track right here in the player bar.',
+  [PLAYBACK_REASON.noVideo]: 'This YouTube item has no playable track id — choose JioSaavn to play.',
 }
 
 /** True when a track came from the YouTube Music catalogue. */
@@ -128,41 +114,40 @@ export function isYtTrack(track) {
 }
 
 /**
- * Can this track play, here?
+ * Can this track play here, and if not, where does it go?
  *
- * A YouTube track carries no URL, so this can never answer "yes" for one —
- * what it answers is *how it will be attempted*. On Android the app mints a URL
- * from a real page on the device (see `ytStream.js`), so `willMint` is true and
- * the caller owns the async attempt; anywhere else the refusal is final and
- * says so. `playable` stays false either way, because playing it is not a fact
- * until a URL lands.
+ * A YouTube track carries no URL, so this can never answer "yes" for one.
+ * What it answers is *where the item plays*: an `mode: 'embed'` plan hands the
+ * video id to YouTube's own player, and `playable` stays false because the
+ * embed is not our transport, our playhead or our crossfade.
  *
- * `embed` says the caller has YouTube's own player available (a browser tab).
- * It changes one thing: a YouTube item past `LONG_FORM_SEC` comes back as
- * `mode: 'embed'` rather than as a mint, because an hour-long mix is not a
- * track and streaming it here serves nobody.
+ * YouTube items are embed-only. There is no minting path any more: every
+ * client — browser tab, Android WebView, anything else — hands a YouTube item
+ * to YouTube's own player. Extraction of any kind is out of scope by decision,
+ * so `willMint` is never returned for one.
+ *
+ * `embed` still has to be passed, because a caller without YouTube's player
+ * available cannot do anything with the item; such a caller gets a named
+ * refusal rather than a silent no-op.
  */
 export function playbackPlan(track, { native = false, canMint = false, embed = false } = {}) {
   if (!track) return { playable: false, reason: PLAYBACK_REASON.noStream }
   if (isYtTrack(track)) {
-    // Long-form first: no mint is attempted for it at all, because a real file
-    // that size is the worst case for both the listener and the provider. Only
-    // a browser tab has an origin YouTube's embed will accept, so the app
-    // (`native`) keeps minting and never takes this branch.
-    if (embed && !native && isLongForm(track)) {
-      return {
-        playable: false,
-        mode: 'embed',
-        videoId: videoIdOf(track),
-        reason: PLAYBACK_REASON.longForm,
-      }
+    const videoId = videoIdOf(track)
+    if (!videoId) {
+      // Nothing to hand to the iframe, so this is a real refusal.
+      return { playable: false, reason: PLAYBACK_REASON.noVideo }
     }
-    // `canMint` is the browser extension. Native always can; a plain tab never.
-    const mint = native || canMint
+    if (!embed) {
+      return { playable: false, reason: PLAYBACK_REASON.embed }
+    }
+    // Long-form is still worth naming separately: it explains why the item is
+    // a video rather than a track, which is what the copy says.
     return {
       playable: false,
-      ...(mint ? { willMint: true } : {}),
-      reason: mint ? PLAYBACK_REASON.mintFailed : PLAYBACK_REASON.needsApp,
+      mode: 'embed',
+      videoId,
+      reason: isLongForm(track) ? PLAYBACK_REASON.longForm : PLAYBACK_REASON.embed,
     }
   }
   if (!track?.downloadUrl?.length) {
@@ -188,17 +173,38 @@ export function mapYtResult(raw) {
   if (!raw?.videoId || !raw?.title) return null
   const artists = Array.isArray(raw.artists) ? raw.artists.filter(Boolean) : []
   const artist = artists.join(', ') || 'Unknown artist'
+  const matched = raw.matchedAudio && Array.isArray(raw.matchedAudio.downloadUrl) && raw.matchedAudio.downloadUrl.length
+    ? raw.matchedAudio
+    : null
+  const ytImages = raw.thumbnail ? [{ quality: '500x500', url: raw.thumbnail }] : []
+  // Always keep YouTube's own thumbnail when available so search rows, queue,
+  // player bar, and full-screen cover always show the exact item selected.
+  const images = ytImages.length ? ytImages : matched?.image || []
+  const primaryArtists = matched?.artists?.primary?.length
+    ? artists.length
+      ? artists.map((name, i) => ({
+          name,
+          ...(matched.artists.primary[i]?.id ? { id: matched.artists.primary[i].id } : {}),
+        }))
+      : matched.artists.primary
+    : artists.map((name) => ({ name }))
+
   return {
     id: `yt:${raw.videoId}`,
+    key: `ytmusic:${raw.videoId}`,
+    provider: SOURCE_ID.ytmusic,
+    providerTrackId: raw.videoId,
     videoId: raw.videoId,
     source: SOURCE_ID.ytmusic,
+    ...(matched?.songId ? { _matchedSaavnId: matched.songId } : {}),
     name: raw.title,
-    subtitle: raw.subtitle || [artist, raw.album].filter(Boolean).join(' • '),
-    duration: Number(raw.duration) || 0,
-    album: raw.album ? { name: raw.album } : null,
-    artists: { primary: artists.map((name) => ({ name })), all: [] },
-    image: raw.thumbnail ? [{ quality: '500x500', url: raw.thumbnail }] : [],
-    downloadUrl: [],
+    subtitle: raw.subtitle || [artist, raw.album || matched?.album?.name].filter(Boolean).join(' • '),
+    duration: Number(raw.duration) || Number(matched?.duration) || 0,
+    explicitContent: raw.explicit ? 1 : 0,
+    album: raw.album ? { name: raw.album } : matched?.album || null,
+    artists: { primary: primaryArtists, all: matched?.artists?.all || [] },
+    image: images,
+    downloadUrl: matched ? matched.downloadUrl : [],
     url: `https://music.youtube.com/watch?v=${raw.videoId}`,
   }
 }

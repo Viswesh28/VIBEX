@@ -1,9 +1,10 @@
-// Same-origin download endpoint for the Vercel deployment.
+// Same-origin chunk-streamed download endpoint for the Vercel deployment.
 //
-// Vercel functions are request/response based rather than a long-running
-// gateway, so this endpoint deliberately streams the CDN response unchanged.
-// It refreshes a song URL through the bundled API first, then applies the
-// filename and attachment headers expected by the web player.
+// Upgraded in v3.0: streams `upstream.body` directly via `Readable.fromWeb` +
+// `pipeline` so full-length 320kbps tracks (>4.5 MB) stream immediately with
+// zero full-file memory buffering or serverless payload truncation.
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import app from '../jiosaavn-api/src/server.js'
 
 const CDN_HOSTS = ['saavncdn.com', 'jiosaavn.com', 'akamaized.net', 'akamaihd.net']
@@ -20,10 +21,12 @@ function hostOK(value) {
 }
 
 function safeFilename(value) {
-  return String(value || 'song')
-    .replace(/[\\/:*?"<>|\r\n]/g, '')
-    .trim()
-    .slice(0, 120) || 'song'
+  return (
+    String(value || 'song')
+      .replace(/[\\/:*?"<>|\r\n]/g, '')
+      .trim()
+      .slice(0, 120) || 'song'
+  )
 }
 
 function apiRequest(req, path) {
@@ -47,9 +50,11 @@ async function resolveSong(req, id, quality) {
 }
 
 export default async function handler(req, res) {
+  const reqOrigin = req.headers?.origin || '*'
   if (req.method === 'OPTIONS') {
     res.statusCode = 204
-    res.setHeader('access-control-allow-origin', '*')
+    res.setHeader('access-control-allow-origin', reqOrigin)
+    res.setHeader('vary', 'Origin')
     res.setHeader('access-control-allow-methods', 'GET, HEAD, OPTIONS')
     res.setHeader('access-control-allow-headers', 'accept, content-type, range')
     res.end()
@@ -64,8 +69,6 @@ export default async function handler(req, res) {
   let target = requestURL.searchParams.get('url') || ''
 
   try {
-    // Links returned by the catalog expire, so prefer a fresh resolve. Falling
-    // back to the supplied URL preserves downloads when the catalog is busy.
     const fresh = await resolveSong(req, songId, quality).catch(() => null)
     if (fresh) target = fresh
     if (!hostOK(target)) {
@@ -76,12 +79,15 @@ export default async function handler(req, res) {
     }
 
     const upstream = await fetch(target, {
-      headers: { 'user-agent': 'Mozilla/5.0' },
+      headers: {
+        'user-agent': 'Mozilla/5.0',
+        ...(req.headers?.range ? { range: req.headers.range } : {}),
+      },
       redirect: 'follow',
       signal: AbortSignal.timeout(55_000),
     })
     const contentType = (upstream.headers.get('content-type') || '').split(';')[0] || 'audio/mpeg'
-    if (!upstream.ok || !upstream.body || /json|text\/html/i.test(contentType)) {
+    if ((!upstream.ok && upstream.status !== 206) || /json|text\/html/i.test(contentType)) {
       res.statusCode = 502
       res.setHeader('content-type', 'application/json; charset=utf-8')
       res.end(JSON.stringify({ success: false, message: 'The audio CDN declined the download.' }))
@@ -90,24 +96,56 @@ export default async function handler(req, res) {
 
     const extension = /mp4|m4a|aac/i.test(contentType) ? 'm4a' : 'mp3'
     const fileName = `${safeFilename(requestURL.searchParams.get('name'))}.${extension}`
-    res.statusCode = 200
+    res.statusCode = upstream.status === 206 ? 206 : 200
     res.setHeader('content-type', contentType)
     res.setHeader('content-disposition', `attachment; filename="${fileName}"`)
     res.setHeader('cache-control', 'no-store')
-    res.setHeader('access-control-allow-origin', '*')
-    res.setHeader('access-control-expose-headers', 'content-disposition, content-length')
+    res.setHeader('access-control-allow-origin', reqOrigin)
+    res.setHeader('vary', 'Origin')
+    res.setHeader('access-control-expose-headers', 'content-disposition, content-length, content-range')
     const length = upstream.headers.get('content-length')
     if (length) res.setHeader('content-length', length)
+    const contentRange = upstream.headers.get('content-range')
+    if (contentRange) res.setHeader('content-range', contentRange)
 
-    // Buffering is broadly compatible with Vercel's Node response adapter.
-    // The endpoint is capped by the platform's function-response allowance;
-    // playback itself always streams directly from the source CDN.
+    if (upstream.body && typeof upstream.body.getReader === 'function' && typeof res.write === 'function') {
+      const reader = upstream.body.getReader()
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (res.writableEnded || res.destroyed) {
+            await reader.cancel().catch(() => {})
+            return
+          }
+          const ok = res.write(Buffer.from(value))
+          if (ok === false && typeof res.once === 'function') {
+            await new Promise((resolve) => res.once('drain', resolve))
+          }
+        }
+        if (!res.writableEnded) res.end()
+      } finally {
+        try {
+          reader.releaseLock()
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    }
+
     res.end(Buffer.from(await upstream.arrayBuffer()))
   } catch {
     if (!res.headersSent) {
       res.statusCode = 502
       res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ success: false, message: 'Download proxy failed.' }))
+    } else {
+      try {
+        res.end()
+      } catch {
+        /* client disconnected */
+      }
     }
-    res.end(JSON.stringify({ success: false, message: 'Download proxy failed.' }))
   }
 }

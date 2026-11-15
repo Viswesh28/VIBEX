@@ -41,11 +41,13 @@ export function isStandalone(win) {
   }
 }
 
-/** The Capacitor shell (Android today) is not a browser and not a PWA. */
+/** The native shell (VIBEX Android JNI bridge or Capacitor) is not a browser tab or PWA. */
 export function isNativeShell(win) {
   const w = getWin(win)
   if (!w) return false
-  return !!w.Capacitor?.isNativePlatform?.() || w.__VIBEX_NATIVE === true
+  return Boolean(
+    w.Capacitor?.isNativePlatform?.() || w.__VIBEX_NATIVE === true || w.VibexAndroid
+  )
 }
 
 /**

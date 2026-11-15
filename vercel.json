@@ -10,6 +10,9 @@
     "api/dl.mjs": {
       "maxDuration": 60
     },
+    "api/ytaudio.mjs": {
+      "maxDuration": 60
+    },
     "api/ytmusic.mjs": {
       "maxDuration": 30
     },
@@ -22,14 +25,47 @@
     "api/songs/[path].mjs": {
       "maxDuration": 60
     },
+    "api/content/[path].mjs": {
+      "maxDuration": 60
+    },
     "api/canvas.mjs": {
+      "maxDuration": 30
+    },
+    "api/import-playlist.mjs": {
+      "maxDuration": 60
+    },
+    "api/apk.mjs": {
       "maxDuration": 30
     }
   },
   "rewrites": [
     {
+      "source": "/download/vibex.apk",
+      "destination": "/downloads/VIBEX-v3.2.0-universal.apk"
+    },
+    {
       "source": "/dl",
       "destination": "/api/dl"
+    },
+    {
+      "source": "/artist/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/album/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/playlist/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/search",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/library",
+      "destination": "/index.html"
     }
   ],
   "headers": [
@@ -56,6 +92,15 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=3600"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
         }
       ]
     },

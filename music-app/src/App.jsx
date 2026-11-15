@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { probeApi } from './lib/api.js'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api, probeApi } from './lib/api.js'
 import { dlUrlFor } from './lib/song.js'
-import { isNative } from './lib/config.js'
+import { isNative, isNativeApp } from './lib/config.js'
 import { decodeHtml } from './lib/format.js'
 import { isLocalOrigin } from './lib/platform.js'
 
 import { ArtistView } from './components/ArtistView.jsx'
+import { CommandPalette } from './components/CommandPalette.jsx'
 import { DetailView } from './components/DetailView.jsx'
+import { DspRackModal } from './components/DspRackModal.jsx'
 import { FeedView } from './components/FeedView.jsx'
 import { FullPlayer } from './components/FullPlayer.jsx'
 import { Icon } from './components/Icon.jsx'
+import { ImportPlaylistModal } from './components/ImportPlaylistModal.jsx'
 import { LibraryView } from './components/LibraryView.jsx'
 import { LyricsOverlay } from './components/LyricsOverlay.jsx'
 import { NowPlaying } from './components/NowPlaying.jsx'
@@ -17,6 +20,7 @@ import { PlayerBar } from './components/PlayerBar.jsx'
 import { PlaylistModal } from './components/PlaylistModal.jsx'
 import { PlaylistView } from './components/PlaylistView.jsx'
 import { SearchView } from './components/SearchView.jsx'
+import { ShareToVibexModal } from './components/ShareToVibexModal.jsx'
 import { Sidebar } from './components/Sidebar.jsx'
 import { MobileNav } from './components/MobileNav.jsx'
 import { StatsView } from './components/StatsView.jsx'
@@ -28,30 +32,87 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts.js'
 import { useMediaSession } from './hooks/useMediaSession.js'
 import { useAndroidBack } from './hooks/useAndroidBack.js'
 import { useSleepTimer } from './hooks/useSleepTimer.js'
-import { usePlayer } from './state/PlayerContext.jsx'
+import { usePlayerClock, usePlayerTransport } from './state/PlayerContext.jsx'
 import { useSettings } from './state/SettingsContext.jsx'
 import { useStatus } from './state/StatusContext.jsx'
 import { useUI } from './state/UIContext.jsx'
+
+function MediaSessionBridge({ current, isPlaying, dataSaver, actions }) {
+  const clock = usePlayerClock()
+  useMediaSession({ current, isPlaying, clock, dataSaver, actions })
+  return null
+}
 
 export default function App() {
   const [apiOnline, setApiOnline] = useState(null)
   const [checking, setChecking] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const [heading, setHeading] = useState({ title: 'Listen Now', count: '' })
+  const handledDeepLinkRef = useRef(false)
 
   const { status, setStatus } = useStatus()
   const {
-    current, currentQuality, isPlaying, clock,
-    togglePlay, nextTrack, prevTrack, seekBy, seekTo, play, pause, resumeFromSystem,
+    current,
+    currentQuality,
+    isPlaying,
+    playFromList,
+    togglePlay,
+    nextTrack,
+    prevTrack,
+    seekBy,
+    seekTo,
+    pause,
+    resumeFromSystem,
     setSleepGain,
-  } = usePlayer()
+  } = usePlayerTransport()
   const { dataSaver } = useSettings()
   const {
-    view, back, canGoBack, navigate, searchQuery, searchTab,
-    plModal, fullOpen, setFullOpen, lyricsOpen, setLyricsOpen, closePlaylistModal,
+    view,
+    back,
+    canGoBack,
+    navigate,
+    deepLinkPlay,
+    plModal,
+    importModalOpen,
+    setImportModalOpen,
+    shareTargetState,
+    closeShareToVibex,
+    cmdOpen,
+    setCmdOpen,
+    dspOpen,
+    setDspOpen,
+    fullOpen,
+    setFullOpen,
+    lyricsOpen,
+    setLyricsOpen,
+    closePlaylistModal,
   } = useUI()
 
-  // The timer fades over the last 20s rather than cutting: see lib/sleep.js.
+  // Deep-link auto-load (`/?play=<trackId>&t=<sec>`) when opening a shared song link.
+  useEffect(() => {
+    if (!deepLinkPlay?.id || handledDeepLinkRef.current) return
+    handledDeepLinkRef.current = true
+    const rawId = String(deepLinkPlay.id)
+    const isYt = rawId.startsWith('yt:')
+    const cleanId = isYt ? rawId.slice(3) : rawId
+    const req = isYt
+      ? api(
+          `/import-playlist?sourceUrl=${encodeURIComponent(`https://www.youtube.com/watch?v=${cleanId}`)}`
+        ).then((d) => d?.tracks?.[0] || null)
+      : api(`/songs?ids=${encodeURIComponent(cleanId)}`).then((d) =>
+          Array.isArray(d) ? d[0] : d?.data?.[0] || d?.[0] || null
+        )
+    req
+      .then((song) => {
+        if (!song?.id) return
+        playFromList([song], 0)
+        if (deepLinkPlay.sec > 0) {
+          setTimeout(() => seekTo(deepLinkPlay.sec), 500)
+        }
+      })
+      .catch(() => {})
+  }, [deepLinkPlay, playFromList, seekTo])
+
   const sleep = useSleepTimer(
     useCallback(() => {
       pause()
@@ -60,10 +121,6 @@ export default function App() {
     setSleepGain
   )
 
-  // The failure advice has to match where the app is actually running: the
-  // native shell and the deployed site have no local server to start, and a
-  // phone that is offline needs a different sentence from a dev machine whose
-  // gateway is down.
   const checkApi = useCallback(() => {
     setChecking(true)
     return probeApi().then((ok) => {
@@ -88,8 +145,6 @@ export default function App() {
     checkApi()
   }, [checkApi])
 
-  // An installed app can sit backgrounded for hours. When the connection comes
-  // back, retry the probe instead of leaving the user on the offline screen.
   useEffect(() => {
     const onOnline = () => {
       if (apiOnline === false) checkApi()
@@ -100,33 +155,79 @@ export default function App() {
 
   // Escape closes the top-most layer only.
   const onEscape = useCallback(() => {
-    if (plModal) closePlaylistModal()
+    if (cmdOpen) setCmdOpen(false)
+    else if (shareTargetState?.open) closeShareToVibex()
+    else if (dspOpen) setDspOpen(false)
+    else if (importModalOpen) setImportModalOpen(false)
+    else if (plModal) closePlaylistModal()
     else if (lyricsOpen) setLyricsOpen(false)
     else if (fullOpen) setFullOpen(false)
-  }, [plModal, lyricsOpen, fullOpen, closePlaylistModal, setLyricsOpen, setFullOpen])
+  }, [
+    cmdOpen,
+    shareTargetState,
+    closeShareToVibex,
+    dspOpen,
+    importModalOpen,
+    plModal,
+    lyricsOpen,
+    fullOpen,
+    setCmdOpen,
+    setDspOpen,
+    setImportModalOpen,
+    closePlaylistModal,
+    setLyricsOpen,
+    setFullOpen,
+  ])
 
-  // Lockscreen / notification controls. Essential once this runs on a phone,
-  // and a genuine upgrade for desktop media keys too.
   const mediaActions = useMemo(
     () => ({
-      // The system play button must recover a torn-down iOS audio session, not
-      // just call play() on a dead element.
       play: () => resumeFromSystem(),
       pause,
+      toggle: togglePlay,
       next: nextTrack,
       prev: prevTrack,
       seekBy,
       seekTo,
+      setDucking: (duck) => setSleepGain?.(duck ? 0.25 : 1),
     }),
-    [resumeFromSystem, pause, nextTrack, prevTrack, seekBy, seekTo]
+    [resumeFromSystem, pause, togglePlay, nextTrack, prevTrack, seekBy, seekTo, setSleepGain]
   )
-  useMediaSession({ current, isPlaying, clock, dataSaver, actions: mediaActions })
 
   const backActions = useMemo(
-    () => ({ closeDrawer: () => setDrawer(false), closePlaylistModal, setLyricsOpen, setFullOpen, back }),
-    [closePlaylistModal, setLyricsOpen, setFullOpen, back]
+    () => ({
+      closeDrawer: () => setDrawer(false),
+      closeCmd: () => setCmdOpen(false),
+      closeShare: () => closeShareToVibex(),
+      closeDsp: () => setDspOpen(false),
+      closeImport: () => setImportModalOpen(false),
+      closePlaylistModal,
+      setLyricsOpen,
+      setFullOpen,
+      back,
+    }),
+    [
+      setCmdOpen,
+      closeShareToVibex,
+      setDspOpen,
+      setImportModalOpen,
+      closePlaylistModal,
+      setLyricsOpen,
+      setFullOpen,
+      back,
+    ]
   )
-  useAndroidBack({ drawer, plModal, lyricsOpen, fullOpen, canGoBack, actions: backActions })
+  useAndroidBack({
+    drawer,
+    cmdOpen,
+    shareOpen: Boolean(shareTargetState?.open),
+    dspOpen,
+    importModalOpen,
+    plModal,
+    lyricsOpen,
+    fullOpen,
+    canGoBack,
+    actions: backActions,
+  })
 
   useKeyboardShortcuts({
     onToggle: togglePlay,
@@ -134,16 +235,16 @@ export default function App() {
     onPrev: prevTrack,
     onSeek: seekBy,
     onEscape,
+    onCommandPalette: useCallback(() => setCmdOpen((v) => !v), [setCmdOpen]),
   })
 
-  // An overlay owns the scroll lock while it is up.
   useEffect(() => {
-    const locked = fullOpen || lyricsOpen
+    const locked = fullOpen || lyricsOpen || cmdOpen || dspOpen || importModalOpen
     document.body.style.overflow = locked ? 'hidden' : ''
     return () => {
       document.body.style.overflow = ''
     }
-  }, [fullOpen, lyricsOpen])
+  }, [fullOpen, lyricsOpen, cmdOpen, dspOpen, importModalOpen])
 
   const onTitle = useCallback((title, count) => setHeading({ title, count: count || '' }), [])
   const onCount = useCallback((count) => setHeading((h) => ({ ...h, count })), [])
@@ -157,10 +258,6 @@ export default function App() {
       })
   }, [view])
 
-  /**
-   * Opening in a named window keeps the click gesture intact, so Chrome treats
-   * the response as a real user-initiated download rather than a popup.
-   */
   const onDownload = useCallback(
     async (e) => {
       e?.preventDefault()
@@ -168,16 +265,16 @@ export default function App() {
         setStatus('No downloadable link for this song — replay it and retry.', true)
         return
       }
-      // Android has no gateway to ask, so it fetches, tags and saves the file
-      // itself using the very same tagger the server uses.
-      if (isNative()) {
+      if (isNativeApp()) {
         try {
           const { downloadSongNative } = await import('./lib/download.js')
           const r = await downloadSongNative(current, currentQuality, (stage) =>
             setStatus(`${stage} ${decodeHtml(current.name)}`)
           )
           const mb = (r.bytes / 1048576).toFixed(1)
-          setStatus(`Saved ${r.name} (${mb} MB${r.tagged ? ', tagged' : ''}) to Documents/VIBEX`)
+          setStatus(
+            `Saved ${r.name} (${mb} MB${r.tagged ? ', tagged' : ''}) to ${r.folder || 'Music/VIBEX'}`
+          )
         } catch (err) {
           setStatus(err?.message || 'Download failed.', true)
         }
@@ -191,8 +288,6 @@ export default function App() {
     [current, currentQuality, setStatus]
   )
 
-  // Library, playlists and stats live entirely on this device, so an installed
-  // app is still useful with no connection. Only catalogue views need the API.
   const offlineSafe =
     view.kind === 'library' || view.kind === 'myplaylist' || view.kind === 'stats'
 
@@ -282,7 +377,17 @@ export default function App() {
       <FullPlayer onDownload={onDownload} />
       <LyricsOverlay />
       <PlaylistModal />
+      <DspRackModal />
+      <ImportPlaylistModal />
+      <ShareToVibexModal />
+      <CommandPalette />
       <YouTubeEmbed />
+      <MediaSessionBridge
+        current={current}
+        isPlaying={isPlaying}
+        dataSaver={dataSaver}
+        actions={mediaActions}
+      />
     </>
   )
 }

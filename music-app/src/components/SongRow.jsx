@@ -5,29 +5,31 @@ import { isYtTrack } from '../lib/sources.js'
 import { Icon } from './Icon.jsx'
 
 /**
- * One row in any song list. `onRemove` swaps the "add to playlist" control for
- * a remove button when the row is shown inside a user playlist.
- *
- * The row itself is clickable, and the artwork carries a real play button so
- * the same action is reachable with a keyboard. Every icon-only control has an
- * aria-label: `title` alone is not announced reliably by TalkBack.
+ * One row in any song list. Supports instant play, Play Next, Offline Pin,
+ * Like, Add/Remove Playlist, Artist Exclude, and Radio.
  */
 export const SongRow = memo(function SongRow({
   song,
+  index = 0,
   num,
   playing,
   liked,
+  pinned = false,
+  pinning = false,
   dataSaver,
   onPlay,
+  onPlayNext,
+  onTogglePin,
   onLike,
   onAddToPlaylist,
   onRemove,
   onRadio,
   onExclude,
 }) {
+  const firePlay = () => onPlay?.(song, index)
   const stop = (fn) => (e) => {
     e.stopPropagation()
-    fn()
+    fn?.(song, index)
   }
   const title = decodeHtml(song.name)
   const artist = decodeHtml(artistsOf(song))
@@ -35,15 +37,19 @@ export const SongRow = memo(function SongRow({
   return (
     <div
       className={
-        'song-row' + (playing ? ' playing' : '') + (onExclude ? ' with-exclude' : '')
+        'song-row' +
+        (playing ? ' playing' : '') +
+        (onExclude ? ' with-exclude' : '') +
+        (onPlayNext || onTogglePin ? ' with-queue-ops' : '')
       }
-      onClick={onPlay}
+      onClick={firePlay}
       aria-current={playing ? 'true' : undefined}
     >
       <div className="s-art">
         <img
           src={imgOf(song, dataSaver)}
           loading="lazy"
+          decoding="async"
           alt=""
           onError={(e) => {
             e.currentTarget.style.opacity = 0.25
@@ -68,9 +74,16 @@ export const SongRow = memo(function SongRow({
         <div className="s-title">
           {num ? `${num}. ` : ''}
           {title}
-          {/* Which catalogue this came from, so a mixed list stays readable. */}
+          {pinned && (
+            <span className="src-badge offline-badge" title="Saved offline in browser vault">
+              Offline
+            </span>
+          )}
           {isYtTrack(song) && (
-            <span className="src-badge" title="From YouTube Music — plays in the app only">
+            <span
+              className="src-badge"
+              title="Matched from YouTube Music — plays as pure audio"
+            >
               YT
             </span>
           )}
@@ -79,6 +92,32 @@ export const SongRow = memo(function SongRow({
       </div>
 
       <div className="s-album">{decodeHtml(song.album?.name || '')}</div>
+
+      {onPlayNext && (
+        <button
+          type="button"
+          className="qnext-btn"
+          title="Play next"
+          aria-label={`Play ${title} next`}
+          onClick={stop(onPlayNext)}
+        >
+          <Icon name="queueNext" size={17} />
+        </button>
+      )}
+
+      {onTogglePin && (
+        <button
+          type="button"
+          className={'pin-btn' + (pinned ? ' pinned' : '')}
+          title={pinned ? 'Remove offline copy' : 'Save offline'}
+          aria-label={pinned ? `Remove offline copy of ${title}` : `Save ${title} offline`}
+          aria-pressed={!!pinned}
+          disabled={pinning}
+          onClick={stop(onTogglePin)}
+        >
+          <Icon name="pin" size={17} />
+        </button>
+      )}
 
       <button
         type="button"

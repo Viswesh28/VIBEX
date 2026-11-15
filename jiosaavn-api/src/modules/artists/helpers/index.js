@@ -1,1 +1,1 @@
-export * from './artist.helper.js';
+export * from "./artist.helper.js";

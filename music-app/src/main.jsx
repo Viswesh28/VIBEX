@@ -12,10 +12,8 @@ import { store } from './lib/storage.js'
 import { initInstallPrompt } from './lib/install.js'
 import { registerServiceWorker } from './lib/pwa.js'
 import { applyPlatformClasses, preparePlaybackAudioSession, setThemeColor } from './lib/platform.js'
+import { createSupabaseSyncService } from './lib/supabaseSync.js'
 
-// Before the first paint: mark the platform so standalone-only CSS can apply,
-// restore the saved theme (no dark→light flash), and hand Safari the media
-// audio session. All three are synchronous and cheap.
 applyPlatformClasses()
 const bootTheme = store.get('svTheme', 'dark') === 'light' ? 'light' : 'dark'
 document.documentElement.classList.toggle('light', bootTheme === 'light')
@@ -26,12 +24,14 @@ preparePlaybackAudioSession()
 initInstallPrompt()
 registerServiceWorker()
 
+const cloudAccountProvider = createSupabaseSyncService()
+
 // Provider order matters: Player reads Settings, Library and Status.
 const tree = (
   <React.StrictMode>
     <StatusProvider>
       <SettingsProvider>
-        <LibraryProvider>
+        <LibraryProvider accountProvider={cloudAccountProvider}>
           <PlayerProvider>
             <UIProvider>
               <App />
@@ -43,9 +43,6 @@ const tree = (
   </React.StrictMode>
 )
 
-// Route JioSaavn calls through the native HTTP stack *before* anything can
-// fetch — the home feed fires as soon as App mounts. Resolves immediately and
-// does nothing in a browser, and a failure here must not block the UI.
 installNativeHttp()
   .catch(() => {})
   .then(() => createRoot(document.getElementById('root')).render(tree))

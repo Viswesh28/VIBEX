@@ -9,17 +9,20 @@ import {
 } from 'react'
 import { api } from '../lib/api.js'
 import { decodeHtml } from '../lib/format.js'
+import { sanitizeTrackForPersistence, trackKey } from '../lib/models.js'
+import {
+  PLAYBACK_FAILURE,
+  PLAYBACK_STATE,
+  classifyPlaybackFailure,
+  decideFailureAction,
+  initialPlaybackMachine,
+  playbackFailureCopy,
+  transitionPlaybackState,
+} from '../lib/playbackState.js'
+import { createJioSaavnStreamResolver, createYtMusicStreamResolver } from '../lib/providers.js'
 import { artistsOf, effQ, streamOf } from '../lib/song.js'
 import { isYtTrack, playbackCopy, playbackPlan } from '../lib/sources.js'
-import { EMBED_NOTE, videoIdOf } from '../lib/ytEmbed.js'
-import {
-  forgetStream,
-  invalidateStreams,
-  mintYtStream,
-  streamFailureCopy,
-  streamMintBridge,
-} from '../lib/ytStream.js'
-import { isNative } from '../lib/config.js'
+import { EMBED_NOTE, isLongForm, videoIdOf } from '../lib/ytEmbed.js'
 import { isIOS, preparePlaybackAudioSession } from '../lib/platform.js'
 import { store } from '../lib/storage.js'
 import {
@@ -49,12 +52,22 @@ import {
 } from '../lib/stream.js'
 import { EVENTS, track as telemetry } from '../lib/telemetry.js'
 import { buildTaste, rankByTaste, recentlyPlayedIds } from '../lib/taste.js'
+import { applyDeckPlaybackRate, applyDspSettings, createAudioDspChain } from '../lib/audioDsp.js'
+import { isPipOpen, isPipSupported, openPipPlayer, subscribePipState, updatePipPlayer, closePipPlayer } from '../lib/pipPlayer.js'
 import { useSettings } from './SettingsContext.jsx'
 import { useLibrary } from './LibraryContext.jsx'
 import { useStatus } from './StatusContext.jsx'
 
-const Ctx = createContext(null)
-export const usePlayer = () => useContext(Ctx)
+const TransportCtx = createContext(null)
+const ClockCtx = createContext({ cur: 0, dur: 0 })
+
+export const usePlayerTransport = () => useContext(TransportCtx)
+export const usePlayerClock = () => useContext(ClockCtx)
+export const usePlayer = () => {
+  const transport = useContext(TransportCtx)
+  const clock = useContext(ClockCtx)
+  return transport ? { ...transport, clock } : null
+}
 
 const RADIO_LOOKAHEAD = 4
 const RADIO_BATCH = 5
@@ -129,10 +142,20 @@ function readSavedPosition(songId) {
  * is never interrupted by a React re-render. Only the values the UI actually
  * paints (current index, play state, clock) live in state.
  */
-export function PlayerProvider({ children }) {
+export function PlayerProvider({ children, streamResolver = null }) {
   const settings = useSettings()
   const { statsOnPlay, flushStats, loadStats } = useLibrary()
   const { setStatus } = useStatus()
+
+  const defaultSaavnResolver = useMemo(() => createJioSaavnStreamResolver(), [])
+  const defaultYtResolver = useMemo(() => createYtMusicStreamResolver(), [])
+  const resolverFor = useCallback(
+    (song) => {
+      if (streamResolver) return streamResolver
+      return isYtTrack(song) ? defaultYtResolver : defaultSaavnResolver
+    },
+    [defaultSaavnResolver, defaultYtResolver, streamResolver]
+  )
 
   // Read once, before the first paint, so the restored track is in the very
   // first render rather than flashing "Nothing playing".
@@ -152,10 +175,28 @@ export function PlayerProvider({ children }) {
   // Transition truth, not a timer: the badge and the cover cross-fade read this.
   const [transition, setTransition] = useState({ state: 'idle', kind: null, reason: null, dur: 0 })
   const [stopReason, setStopReason] = useState(null)
+  // Explicit playback state machine: Idle → Resolving → Ready → Buffering → Playing ↔ Paused → Ended (+ Failed).
+  const [playbackMachine, setPlaybackMachine] = useState(initialPlaybackMachine)
+  const machineRef = useRef(playbackMachine)
+  machineRef.current = playbackMachine
+  const dispatchMachine = useCallback((event) => {
+    setPlaybackMachine((prev) => {
+      const next = transitionPlaybackState(prev, event)
+      machineRef.current = next
+      return next
+    })
+  }, [])
   // The long-form embed, when one is open: { id, name, subtitle, videoId }.
   // A different kind of playback from everything else in this file — YouTube's
   // player, not ours — so it is state rather than a fifth deck.
-  const [longForm, setLongForm] = useState(null)
+  const [embedTrack, setLongForm] = useState(null)
+  const [recentHistory, setRecentHistory] = useState(() => {
+    const v = store.getJSON('svRecentHistory', [])
+    return Array.isArray(v) ? v.filter((x) => x && x.id).slice(0, 30) : []
+  })
+  const [pipActive, setPipActive] = useState(() => isPipOpen())
+
+  useEffect(() => subscribePipState(setPipActive), [])
 
   // --- decks ---
   const deckA = useRef(null)
@@ -175,8 +216,9 @@ export function PlayerProvider({ children }) {
   const fadeLaw = useRef('equalPower')
   const fadeIdleTimer = useRef(null)
 
-  // --- web audio (live spectrum) ---
+  // --- web audio (DSP rack + live spectrum) ---
   const actx = useRef(null)
+  const dspChain = useRef(null)
   const analyser = useRef(null)
   const freqData = useRef(null)
 
@@ -219,15 +261,16 @@ export function PlayerProvider({ children }) {
   idxRef.current = currentIndex
   setRef.current = settings
 
-  // Persist the queue (capped) and the current index. A relaunch restores the
-  // track paused; nothing autoplays, which iOS would block anyway.
+  // Persist the queue (capped) and the current index, stripping transient or
+  // expiring stream URLs (`?expire=...` / `expiresAtEpochMs`) so stale raw CDN
+  // tokens are never saved across reloads.
   useEffect(() => {
     if (!queue.length) {
       store.remove(SESSION_KEY)
       return
     }
     store.setJSON(SESSION_KEY, {
-      queue: queue.slice(0, QUEUE_CAP),
+      queue: queue.slice(0, QUEUE_CAP).map(sanitizeTrackForPersistence).filter(Boolean),
       index: currentIndex,
       at: Date.now(),
     })
@@ -245,10 +288,13 @@ export function PlayerProvider({ children }) {
   const active = () => activeRef.current || deckA.current
   const other = () => (activeRef.current === deckA.current ? deckB.current : deckA.current)
 
-  const wantLive = useCallback(
-    () => setRef.current.viz.on && setRef.current.viz.style === 'spectrum' && setRef.current.liveOK,
-    []
-  )
+  const wantLive = useCallback(() => {
+    const s = setRef.current
+    const dspWanted = Boolean(
+      s.dsp?.eqOn || s.dsp?.loudnessNorm || Number(s.dsp?.reverbMix) > 0 || s.dsp?.slowedReverb
+    )
+    return ((s.viz.on && s.viz.style === 'spectrum') || dspWanted) && s.liveOK
+  }, [])
 
   const ensureGraph = useCallback(
     (el) => {
@@ -261,22 +307,28 @@ export function PlayerProvider({ children }) {
             return
           }
           actx.current = new AC()
+          dspChain.current = createAudioDspChain(actx.current)
+          if (dspChain.current && setRef.current.dsp) {
+            applyDspSettings(dspChain.current, setRef.current.dsp)
+          }
           analyser.current = actx.current.createAnalyser()
           analyser.current.fftSize = 256
           analyser.current.smoothingTimeConstant = 0.82
           freqData.current = new Uint8Array(analyser.current.frequencyBinCount)
+          if (dspChain.current) {
+            dspChain.current.output.connect(analyser.current)
+          }
           analyser.current.connect(actx.current.destination)
         }
+        const graphTarget = dspChain.current ? dspChain.current.input : analyser.current
         if (!el._src) {
           el._src = actx.current.createMediaElementSource(el)
-          // A per-deck gain lane means the crossfade can be scheduled on the
-          // audio clock instead of being approximated with element.volume.
           if (typeof actx.current.createGain === 'function') {
             el._xfade = actx.current.createGain()
             el._src.connect(el._xfade)
-            el._xfade.connect(analyser.current)
+            el._xfade.connect(graphTarget)
           } else {
-            el._src.connect(analyser.current)
+            el._src.connect(graphTarget)
           }
         }
         if (actx.current.state === 'suspended') actx.current.resume()
@@ -287,11 +339,23 @@ export function PlayerProvider({ children }) {
     [wantLive]
   )
 
+  // Live-update 10-band EQ, loudness normalizer, reverb, speed, and pitch lock.
+  useEffect(() => {
+    if (dspChain.current && settings.dsp) {
+      applyDspSettings(dspChain.current, settings.dsp)
+    }
+    for (const el of [deckA.current, deckB.current]) {
+      applyDeckPlaybackRate(el, settings.dsp)
+      if (el?.src && !el.paused) ensureGraph(el)
+    }
+  }, [ensureGraph, settings.dsp])
+
   // A deck must be marked crossorigin *before* it loads, or the analyser gets
   // silence from a tainted stream.
   const prepDeck = useCallback(
     (el) => {
       if (!el) return
+      applyDeckPlaybackRate(el, setRef.current.dsp)
       if (wantLive()) {
         el.setAttribute('crossorigin', 'anonymous')
         ensureGraph(el)
@@ -639,6 +703,14 @@ export function PlayerProvider({ children }) {
         ? { id: song.id, kind: song._prov.kind, reason: song._prov.reason }
         : null
       statsOnPlay(song)
+      if (song?.id && !setRef.current.privateSession) {
+        const clean = sanitizeTrackForPersistence(song) || song
+        setRecentHistory((prev) => {
+          const next = [clean, ...prev.filter((x) => x.id !== clean.id)].slice(0, 30)
+          store.setJSON('svRecentHistory', next)
+          return next
+        })
+      }
       setStopReason(null)
       autoplayFailed.current = false
       radioFailed.current = false
@@ -722,26 +794,27 @@ export function PlayerProvider({ children }) {
    * instead of the old catch-all "No stream URL for this song."
    */
   const unplayableCopy = useCallback((song) => {
-    const plan = playbackPlan(song, { native: isNative(), canMint: Boolean(streamMintBridge()) })
+    const plan = playbackPlan(song, { embed: true })
     return playbackCopy(plan.reason) || 'This track has no stream to play.'
   }, [])
 
   /**
-   * Long-form YouTube items open in YouTube's own player.
+   * YouTube items open in YouTube's own player.
    *
-   * This is not a fallback and not an error path: an hour-long mix is a
-   * different kind of thing from a track, and the embed is the player that
-   * streams it well. The local decks are paused first — two players making
-   * sound at once is never what anyone meant — and nothing here mints.
+   * This is not a fallback and not an error path any more: it is the only
+   * route a YouTube track has, in the browser and in the app alike, because
+   * nothing here extracts audio. The local decks are paused first — two
+   * players making sound at once is never what anyone meant.
    */
-  const openLongForm = useCallback(
-    (song) => {
+  const openEmbed = useCallback(
+    (song, idx) => {
       const videoId = videoIdOf(song)
       if (!videoId) {
         setStatus(unplayableCopy(song), true)
         return
       }
       cancelFade()
+      loadSeqRef.current += 1
       playingRef.current = false
       for (const el of [deckA.current, deckB.current]) {
         try {
@@ -750,47 +823,109 @@ export function PlayerProvider({ children }) {
           /* ignore */
         }
       }
-      setIsPlaying(false)
+      // The embed is a queue item like any other: its index moves, so the bar,
+      // the queue highlight and MediaSession all describe what is actually
+      // playing. Without this the queue stayed on the previous track and the
+      // app looked idle while YouTube was making sound.
+      if (typeof idx === 'number' && idx >= 0) {
+        setCurrentIndex(idx)
+        idxRef.current = idx
+        streamAttempts.current = 0
+        afterStart(song)
+      }
+      const key = trackKey(song) || song.id
+      dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'embed' })
+      dispatchMachine({ type: 'RESOLVE_READY', mode: 'embed' })
+      dispatchMachine({ type: 'PLAYING' })
+      playingRef.current = true
+      setIsPlaying(true)
+      setClock({ cur: 0, dur: Number(song.duration) || 0 })
       setLongForm({ id: song.id, name: song.name, subtitle: song.subtitle || '', videoId })
       setStatus(EMBED_NOTE)
     },
-    [cancelFade, setStatus, unplayableCopy]
+    [afterStart, cancelFade, dispatchMachine, setStatus, unplayableCopy]
   )
 
-  const closeLongForm = useCallback(() => {
+  const embedCmdRef = useRef(null)
+  const embedOpenRef = useRef(false)
+  const clockRef = useRef({ cur: 0, dur: 0 })
+  const loadSeqRef = useRef(0)
+
+  useEffect(() => {
+    embedOpenRef.current = Boolean(embedTrack)
+  }, [embedTrack])
+
+  useEffect(() => {
+    clockRef.current = clock
+  }, [clock])
+
+  const registerEmbedCommand = useCallback((fn) => {
+    embedCmdRef.current = typeof fn === 'function' ? fn : null
+    return () => {
+      if (embedCmdRef.current === fn) embedCmdRef.current = null
+    }
+  }, [])
+
+  /**
+   * What YouTube's player reports, in this app's terms.
+   *
+   * `onStateChange` is the only honest source for an embed: it is the player
+   * that knows whether it is playing, and the one that knows the video ended.
+   * Ending advances the queue exactly like an `<audio>` deck does — including
+   * repeat-one, which is answered with a command rather than a new open, so the
+   * same video restarts instead of reloading.
+   */
+  const reportEmbed = useCallback((state, detail) => {
+    if (state === 'progress' && detail && typeof detail === 'object') {
+      setClock((prev) => ({
+        cur: Number.isFinite(detail.cur) ? detail.cur : prev.cur,
+        dur: Number.isFinite(detail.dur) && detail.dur > 0 ? detail.dur : prev.dur,
+      }))
+      return ''
+    }
+    if (state === 'buffering') {
+      dispatchMachine({ type: 'BUFFERING' })
+      return ''
+    }
+    if (state === 'playing') {
+      playingRef.current = true
+      dispatchMachine({ type: 'PLAYING' })
+      setIsPlaying(true)
+      return ''
+    }
+    if (state === 'paused') {
+      playingRef.current = false
+      dispatchMachine({ type: 'PAUSED' })
+      setIsPlaying(false)
+      return ''
+    }
+    if (state === 'error') {
+      playingRef.current = false
+      setIsPlaying(false)
+      const category = classifyPlaybackFailure({ embedCode: detail })
+      dispatchMachine({ type: 'FAILED', category })
+      return ''
+    }
+    if (state === 'ended') {
+      playingRef.current = false
+      setIsPlaying(false)
+      dispatchMachine({ type: 'ENDED' })
+      if (setRef.current.repeat === 'one') return 'replay'
+      // The next track owns the screen, whichever kind it is; if it is another
+      // embed, `openEmbed` immediately puts it back.
+      setLongForm(null)
+      advanceRef.current?.({ manual: false })
+    }
+    return ''
+  }, [dispatchMachine])
+
+  const closeEmbed = useCallback(() => {
+    playingRef.current = false
+    setIsPlaying(false)
     setLongForm(null)
     setStatus('Closed YouTube’s player.')
   }, [setStatus])
 
-  /**
-   * The only route to YouTube audio: mint it from a real page on this device.
-   *
-   * The server cannot, and says so (ADR 0001/0003); a WebView running YouTube's
-   * own script can. `mintYtStream` owns the validity gate, so a URL that only
-   * serves a preview never reaches the player — the failure comes back typed
-   * and is shown as itself, not as a mid-song dropout.
-   *
-   * Returns the URL, or null after explaining why on the status line.
-   */
-  const mintUrl = useCallback(
-    async (song) => {
-      const bridge = streamMintBridge()
-      if (!bridge) {
-        // Native but no plugin: the plan's own refusal is the honest answer.
-        setStatus(unplayableCopy(song), true)
-        return null
-      }
-      const res = await mintYtStream({
-        videoId: song?.videoId || String(song?.id || '').replace(/^yt:/, ''),
-        bridge,
-      })
-      if (res.ok) return res.url
-      telemetry(EVENTS.streamFailed, { songId: song?.id, reason: res.reason })
-      setStatus(streamFailureCopy(res.reason) || unplayableCopy(song), true)
-      return null
-    },
-    [setStatus, unplayableCopy]
-  )
 
 
   const resolveQuality = useCallback((song) => {
@@ -803,17 +938,111 @@ export function PlayerProvider({ children }) {
     resolveQualityRef.current = resolveQuality
   }, [resolveQuality])
 
-  /** A YouTube track with no URL: mint, then continue on the same path. */
-  const resolveUrl = useCallback(
-    async (song) => {
-      const url = streamOf(song, resolveQuality(song))
-      if (url) return url
-      if (!isYtTrack(song)) return null
-      const plan = playbackPlan(song, { native: isNative(), canMint: Boolean(streamMintBridge()) })
-      if (!plan.willMint) return null
-      return mintUrl(song)
+  const hydrateMatchedQueueItem = useCallback((idx, matchedSong, expectedId) => {
+    if (!matchedSong?.downloadUrl?.length) return
+    setQueueState((prev) => {
+      if (!prev[idx]) return prev
+      const existing = prev[idx]
+      if (expectedId && existing.id !== expectedId) return prev
+      const updated = {
+        ...existing,
+        downloadUrl: matchedSong.downloadUrl,
+        _matchedSaavnId: matchedSong.id || existing._matchedSaavnId,
+        duration: Number(existing.duration) || Number(matchedSong.duration) || 0,
+        image: existing.image?.length ? existing.image : matchedSong.image,
+        artists: existing.artists?.primary?.length ? existing.artists : matchedSong.artists,
+      }
+      const next = [...prev]
+      next[idx] = updated
+      queueRef.current = next
+      return next
+    })
+  }, [])
+
+  const prewarmNextTrack = useCallback(
+    (idx) => {
+      if (streamResolver) return
+      const q = queueRef.current
+      if (!q.length) return
+      const nextIdx = (idx + 1) % q.length
+      if (nextIdx === idx) return
+      const nextSong = q[nextIdx]
+      if (!nextSong || !isYtTrack(nextSong) || nextSong.downloadUrl?.length) {
+        return
+      }
+      const expectedId = nextSong.id
+      const key = trackKey(nextSong) || nextSong.id
+      defaultYtResolver
+        .resolve(key, resolveQuality(nextSong), {
+          track: nextSong,
+          dataSaver: setRef.current.dataSaver,
+        })
+        .then((res) => {
+          if (res?.matchedSong) hydrateMatchedQueueItem(nextIdx, res.matchedSong, expectedId)
+        })
+        .catch(() => {})
     },
-    [mintUrl, resolveQuality]
+    [defaultYtResolver, hydrateMatchedQueueItem, resolveQuality, streamResolver]
+  )
+
+  /** Resolve a stream via `StreamResolver` when a custom resolver is active or URLs expired/stripped. */
+  const resolveViaAdapter = useCallback(
+    async (song, idx, { isReResolve = false, onResolved }) => {
+      const seq = ++loadSeqRef.current
+      const key = trackKey(song) || song?.id
+      // Immediately silence all prior audio/embed transports so old audio can
+      // never bleed under the newly selected track's thumbnail while resolving.
+      cancelFade()
+      setLongForm(null)
+      for (const deckEl of [deckA.current, deckB.current]) {
+        try {
+          deckEl?.pause()
+        } catch {
+          /* ignore */
+        }
+      }
+      dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream', isReResolve })
+      setCurrentIndex(idx)
+      idxRef.current = idx
+      setClock({ cur: 0, dur: Number(song?.duration) || 0 })
+      try {
+        const resolved = await resolverFor(song).resolve(key, resolveQuality(song), {
+          track: song,
+          forceRefresh: isReResolve,
+          dataSaver: setRef.current.dataSaver,
+        })
+        if (loadSeqRef.current !== seq || idxRef.current !== idx || queueRef.current[idx]?.id !== song?.id) {
+          return
+        }
+        if (resolved?.mode === 'embed') {
+          openEmbed(song, idx)
+          return
+        }
+        if (!resolved?.uri) {
+          throw { category: PLAYBACK_FAILURE.UnsupportedFormat }
+        }
+        setLongForm(null)
+        if (resolved.matchedSong) {
+          hydrateMatchedQueueItem(idx, resolved.matchedSong, song?.id)
+        }
+        prewarmNextTrack(idx)
+        dispatchMachine({ type: 'RESOLVE_READY', mode: 'stream' })
+        dispatchMachine({ type: 'BUFFERING' })
+        onResolved(resolved.uri)
+      } catch (err) {
+        if (loadSeqRef.current !== seq) return
+        if (isYtTrack(song) && videoIdOf(song)) {
+          openEmbed(song, idx)
+          return
+        }
+        const category = classifyPlaybackFailure(err)
+        const msg = err?.message || playbackFailureCopy(category)
+        dispatchMachine({ type: 'FAILED', category, message: msg })
+        setIsPlaying(false)
+        setStatus(msg, true)
+      }
+    },
+    [cancelFade, dispatchMachine, hydrateMatchedQueueItem, openEmbed, prewarmNextTrack, resolveQuality, resolverFor, setStatus]
   )
 
   /** Load track `i` onto the idle deck and crossfade into it. */
@@ -823,50 +1052,43 @@ export function PlayerProvider({ children }) {
       if (!q.length) return
       const idx = ((i % q.length) + q.length) % q.length
       const s = q[idx]
+      const key = trackKey(s) || s?.id
       const finishSwap = (url) => {
         if (!url) return
         if (isExpired(url)) {
           telemetry(EVENTS.streamFailed, { songId: s.id, reason: FAILURE.staleUrl })
         }
+        setLongForm(null)
         const outEl = active()
         const inEl = other()
         setCurrentIndex(idx)
         idxRef.current = idx
         streamAttempts.current = 0
+        dispatchMachine({ type: 'RESOLVE_READY', mode: 'stream' })
+        dispatchMachine({ type: 'PLAYING' })
         prepDeck(inEl)
         inEl.src = url
         activeRef.current = inEl
         startFade(outEl, inEl, durSec, lawOverride)
         afterStart(s)
+        prewarmNextTrack(idx)
         setStatus('Playing: ' + decodeHtml(s.name) + (durSec > 0.6 ? ` (${durSec.toFixed(1)}s blend)` : ''))
-      };
+      }
 
       const direct = streamOf(s, resolveQuality(s))
-      if (direct) {
+      if (!streamResolver && direct && !isExpired(direct)) {
+        loadSeqRef.current += 1
+        dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream' })
         finishSwap(direct)
         return
       }
-      const plan = playbackPlan(s, {
-        native: isNative(),
-        canMint: Boolean(streamMintBridge()),
-        // Only a browser tab has an origin YouTube's embed accepts, and only a
-        // tab needs it: the app mints long items like any other file.
-        embed: !isNative(),
-      })
-      if (plan.mode === 'embed') {
-        openLongForm(s)
+      if (streamResolver || s?.id) {
+        resolveViaAdapter(s, idx, { onResolved: finishSwap })
         return
       }
-      if (!plan.willMint) {
-        setStatus(unplayableCopy(s), true)
-        return
-      }
-      // A cold mint is 2–5 s, so the blend cannot start until it lands. The
-      // queued track is announced while it waits rather than looking wedged.
-      setStatus('Resolving ' + decodeHtml(s.name) + ' on this device…')
-      resolveUrl(s).then(finishSwap)
+      setStatus(unplayableCopy(s), true)
     },
-    [afterStart, openLongForm, prepDeck, resolveQuality, resolveUrl, setStatus, startFade, unplayableCopy]
+    [afterStart, dispatchMachine, openEmbed, prepDeck, prewarmNextTrack, resolveQuality, resolveViaAdapter, setStatus, startFade, streamResolver, unplayableCopy]
   )
 
   const playTrack = useCallback(
@@ -882,11 +1104,15 @@ export function PlayerProvider({ children }) {
       cancelFade()
       const idx = ((i % q.length) + q.length) % q.length
       const s = q[idx]
+      const key = trackKey(s) || s?.id
       const start = (url) => {
         if (!url) return
+        setLongForm(null)
         setCurrentIndex(idx)
         idxRef.current = idx
         streamAttempts.current = 0
+        dispatchMachine({ type: 'RESOLVE_READY', mode: 'stream' })
+        dispatchMachine({ type: 'PLAYING' })
         prepDeck(el)
         el.src = url
         writeVol(el, baseVol.current, sleepMul.current)
@@ -894,31 +1120,24 @@ export function PlayerProvider({ children }) {
         armResume(el, s)
         el.play().catch((e) => setStatus('Playback blocked: ' + e.message + ' (tap play)', true))
         afterStart(s)
+        prewarmNextTrack(idx)
         setStatus('Playing: ' + decodeHtml(s.name))
       }
 
       const direct = streamOf(s, resolveQuality(s))
-      if (direct) {
+      if (!streamResolver && direct && !isExpired(direct)) {
+        loadSeqRef.current += 1
+        dispatchMachine({ type: 'RESOLVE_START', trackKey: key, mode: 'stream' })
         start(direct)
         return
       }
-      const plan = playbackPlan(s, {
-        native: isNative(),
-        canMint: Boolean(streamMintBridge()),
-        embed: !isNative(),
-      })
-      if (plan.mode === 'embed') {
-        openLongForm(s)
+      if (streamResolver || s?.id) {
+        resolveViaAdapter(s, idx, { onResolved: start })
         return
       }
-      if (!plan.willMint) {
-        setStatus(unplayableCopy(s), true)
-        return
-      }
-      setStatus('Resolving ' + decodeHtml(s.name) + ' on this device…')
-      resolveUrl(s).then(start)
+      setStatus(unplayableCopy(s), true)
     },
-    [afterStart, armResume, cancelFade, openLongForm, prepDeck, resetDeckGain, resolveQuality, resolveUrl, setStatus, swapTo, unplayableCopy]
+    [afterStart, armResume, cancelFade, dispatchMachine, openEmbed, prepDeck, prewarmNextTrack, resetDeckGain, resolveQuality, resolveViaAdapter, setStatus, streamResolver, swapTo, unplayableCopy]
   )
 
   const stopPlayback = useCallback(
@@ -1077,6 +1296,15 @@ export function PlayerProvider({ children }) {
   const prevTrack = useCallback(() => {
     const q = queueRef.current
     if (!q.length) return
+    if (embedOpenRef.current && embedCmdRef.current) {
+      if ((clockRef.current.cur || 0) > 3) {
+        embedCmdRef.current('seekTo', [0, true])
+        setClock((c) => ({ ...c, cur: 0 }))
+        return
+      }
+      playTrack(idxRef.current - 1)
+      return
+    }
     const el = active()
     // Mirrors every other player: a second press within 3s goes back a track.
     if (el.currentTime > 3) {
@@ -1119,43 +1347,30 @@ export function PlayerProvider({ children }) {
     // resolveQuality honours an automatic downgrade; using the raw preference
     // here would quietly undo the recovery on the next reload.
     const direct = streamOf(s, resolveQuality(s))
-    if (direct) {
+    if (!streamResolver && direct && !isExpired(direct)) {
       apply(direct)
       return
     }
 
-    // A minted URL that failed mid-stream is usually expired or IP-bound to a
-    // network we have left. One re-mint is allowed; `mintYtStream` enforces it.
-    if (!isYtTrack(s)) return
-    const bridge = streamMintBridge()
-    if (!bridge) return
-    forgetStream(s.videoId || String(s.id || '').replace(/^yt:/, ''))
-    mintYtStream({
-      videoId: s.videoId || String(s.id || '').replace(/^yt:/, ''),
-      bridge,
-      force: true,
-    }).then((res) => {
-      if (res.ok) apply(res.url)
-      else setStatus(streamFailureCopy(res.reason) || unplayableCopy(s), true)
-    })
-  }, [cancelFade, prepDeck, resolveQuality, setStatus, unplayableCopy])
-
-  /**
-   * A minted URL is bound to the address that minted it, so leaving Wi-Fi makes
-   * every cached URL a 403 — before its `expire` says anything is wrong. Drop
-   * them now rather than discovering it a track later.
-   */
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined
-    const drop = () => invalidateStreams()
-    const events = ['online', 'offline', 'focus']
-    events.forEach((e) => window.addEventListener(e, drop))
-    return () => events.forEach((e) => window.removeEventListener(e, drop))
-  }, [])
+    // Expired reference: re-resolve fresh playback URL via StreamResolver once.
+    resolveViaAdapter(s, idxRef.current, { isReResolve: true, onResolved: apply })
+  }, [cancelFade, prepDeck, resolveQuality, resolveViaAdapter, streamResolver])
 
   const togglePlay = useCallback(() => {
     if (idxRef.current < 0) {
       if (queueRef.current.length) playTrack(0)
+      return
+    }
+    if (embedOpenRef.current && embedCmdRef.current) {
+      if (playingRef.current) {
+        embedCmdRef.current('pauseVideo')
+        playingRef.current = false
+        setIsPlaying(false)
+      } else {
+        embedCmdRef.current('playVideo')
+        playingRef.current = true
+        setIsPlaying(true)
+      }
       return
     }
     const el = active()
@@ -1179,6 +1394,12 @@ export function PlayerProvider({ children }) {
       if (queueRef.current.length) playTrack(0)
       return
     }
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('playVideo')
+      playingRef.current = true
+      setIsPlaying(true)
+      return
+    }
     const el = active()
     if (!el.src) {
       playTrack(idxRef.current)
@@ -1190,10 +1411,16 @@ export function PlayerProvider({ children }) {
 
   const seekTo = useCallback((seconds) => {
     cancelFade()
-    const el = active()
     if (idxRef.current < 0) return
+    const target = Math.max(0, seconds)
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('seekTo', [target, true])
+      setClock((c) => ({ ...c, cur: target }))
+      return
+    }
+    const el = active()
     try {
-      el.currentTime = Math.max(0, seconds)
+      el.currentTime = target
     } catch {
       /* ignore */
     }
@@ -1201,6 +1428,12 @@ export function PlayerProvider({ children }) {
 
   const pause = useCallback(() => {
     cancelFade()
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('pauseVideo')
+      playingRef.current = false
+      setIsPlaying(false)
+      return
+    }
     try {
       active().pause()
     } catch {
@@ -1212,10 +1445,20 @@ export function PlayerProvider({ children }) {
     cancelFade()
     const el = active()
     const q = queueRef.current
+    const clamped = Math.min(1, Math.max(0, frac))
+    if (embedOpenRef.current && embedCmdRef.current) {
+      const tot = clockRef.current.dur || q[idxRef.current]?.duration || 0
+      if (tot > 0 && idxRef.current >= 0) {
+        const target = tot * clamped
+        embedCmdRef.current('seekTo', [target, true])
+        setClock((c) => ({ ...c, cur: target }))
+      }
+      return
+    }
     const tot = (isFinite(el.duration) && el.duration) || q[idxRef.current]?.duration
     if (tot && idxRef.current >= 0) {
       try {
-        el.currentTime = tot * Math.min(1, Math.max(0, frac))
+        el.currentTime = tot * clamped
       } catch {
         /* ignore */
       }
@@ -1223,8 +1466,15 @@ export function PlayerProvider({ children }) {
   }, [cancelFade])
 
   const seekBy = useCallback((delta) => {
-    const el = active()
     if (idxRef.current < 0) return
+    if (embedOpenRef.current && embedCmdRef.current) {
+      const upper = clockRef.current.dur || 1e9
+      const target = Math.max(0, Math.min(upper, (clockRef.current.cur || 0) + delta))
+      embedCmdRef.current('seekTo', [target, true])
+      setClock((c) => ({ ...c, cur: target }))
+      return
+    }
+    const el = active()
     try {
       el.currentTime = Math.max(0, Math.min(el.duration || 1e9, el.currentTime + delta))
     } catch {
@@ -1281,6 +1531,9 @@ export function PlayerProvider({ children }) {
   const setSleepGain = useCallback((g) => {
     const mul = Number.isFinite(g) ? Math.max(0, Math.min(1, g)) : 1
     sleepMul.current = mul
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('setVolume', [Math.round(baseVol.current * mul * 100)])
+    }
     // Mid-crossfade the tick owns the writes; it reads sleepMul on each frame.
     if (!fadeTimer.current) {
       writeVol(active(), baseVol.current, mul)
@@ -1296,6 +1549,9 @@ export function PlayerProvider({ children }) {
   const setVolume = useCallback((v) => {
     baseVol.current = v
     setVolumeState(v)
+    if (embedOpenRef.current && embedCmdRef.current) {
+      embedCmdRef.current('setVolume', [Math.round(v * sleepMul.current * 100)])
+    }
     if (!fadeTimer.current) {
       try {
         writeVol(active(), v, sleepMul.current)
@@ -1319,12 +1575,18 @@ export function PlayerProvider({ children }) {
     const onPlay = (e) => {
       if (e.target !== active()) return
       playingRef.current = true
+      dispatchMachine({ type: 'PLAYING' })
       setIsPlaying(true)
     }
     const onPause = (e) => {
       if (e.target !== active()) return
       playingRef.current = false
+      dispatchMachine({ type: 'PAUSED' })
       setIsPlaying(false)
+    }
+    const onWaiting = (e) => {
+      if (e.target !== active()) return
+      dispatchMachine({ type: 'BUFFERING' })
     }
 
     const onTime = (e) => {
@@ -1335,7 +1597,9 @@ export function PlayerProvider({ children }) {
       const dur = (isFinite(el.duration) && el.duration) || 0
       const cur = el.currentTime || 0
       const tot = dur || q[idxRef.current]?.duration || 0
-      setClock({ cur, dur: tot })
+      setClock((prev) =>
+        Math.abs(prev.cur - cur) < 0.08 && prev.dur === tot ? prev : { cur, dur: tot }
+      )
 
       // Begin the overlap early enough that the outgoing track ends silent.
       const remain = dur ? dur - cur : -1
@@ -1366,6 +1630,7 @@ export function PlayerProvider({ children }) {
       if (e.target !== active()) return
       const s = setRef.current
       const el = active()
+      dispatchMachine({ type: 'ENDED' })
       if (s.repeat === 'one') {
         cancelFade()
         try {
@@ -1382,9 +1647,10 @@ export function PlayerProvider({ children }) {
     const onError = (e) => {
       const el = e.target
       if (el !== active()) return
-      // A CDN without CORS headers taints the deck. Drop the analyser, reload
-      // the same stream without crossorigin, and keep the music going.
-      if (el.hasAttribute('crossorigin') && !el._corsFix) {
+      const currentUrl = el.currentSrc || el.src
+      // Never waste the error event reloading an already-expired signed URL
+      // without `crossorigin` — an expired link needs re-resolution, not CORS fallback.
+      if (el.hasAttribute('crossorigin') && !el._corsFix && !isExpired(currentUrl)) {
         el._corsFix = true
         setRef.current.setLiveOK(false)
         if (el._src) {
@@ -1420,18 +1686,28 @@ export function PlayerProvider({ children }) {
       const available = song?.downloadUrl || []
       const urls = el.currentSrc || el.src
       const signed = parseExpiry(urls) != null
-      telemetry(EVENTS.streamFailed, { songId: song?.id, reason })
+      const category =
+        signed && isExpired(urls)
+          ? PLAYBACK_FAILURE.ExpiredPlaybackReference
+          : classifyPlaybackFailure(e, { url: urls })
+      telemetry(EVENTS.streamFailed, { songId: song?.id, reason, category })
+
+      const decision = decideFailureAction(category, {
+        networkAttempts: machineRef.current.networkAttempts,
+        reResolvedCount: machineRef.current.reResolvedCount,
+      })
 
       const attempt = streamAttempts.current
       streamAttempts.current += 1
 
-      if (signed && isExpired(urls) && attempt < 2) {
-        // A signed URL past its expiry needs a fresh one, not a retry.
+      if (decision.action === 're_resolve') {
+        // Expired playback reference: re-resolve strictly ONCE via StreamResolver.
         reloadRef.current()
         return
       }
 
-      if (attempt < 1 && (reason === FAILURE.network || reason === FAILURE.aborted || reason === FAILURE.unknown)) {
+      if (decision.action === 'retry_network' && attempt < 1 && (reason === FAILURE.network || reason === FAILURE.aborted || reason === FAILURE.unknown)) {
+        dispatchMachine({ type: 'NETWORK_RETRY' })
         setStatus('Connection hiccup — retrying the stream…', true)
         try {
           el.load()
@@ -1451,15 +1727,37 @@ export function PlayerProvider({ children }) {
         return
       }
 
+      // If an `<audio>` stream for a YouTube item fails, recover on the SAME
+      // track's own YouTube audio transport instead of skipping to a different
+      // song in the queue (keeping thumbnail, title, and audio 100% synced).
+      if (!streamResolver && isYtTrack(song) && videoIdOf(song)) {
+        openEmbed(song, idxRef.current)
+        return
+      }
+
+      const errSeq = loadSeqRef.current
+      dispatchMachine({ type: 'FAILED', category, message: playbackFailureCopy(category) })
       setStatus(failureMessage(reason), true)
-      setTimeout(() => {
-        if (active() === el) advanceRef.current?.({ manual: false })
-      }, 900)
+      // Do not silently substitute another track when authorization, region, or
+      // rights/DRM errors occur — surface the failure honestly instead.
+      if (
+        category !== PLAYBACK_FAILURE.AuthorizationRequired &&
+        category !== PLAYBACK_FAILURE.NotAvailableInRegion &&
+        category !== PLAYBACK_FAILURE.RightsOrDrm &&
+        !streamResolver
+      ) {
+        setTimeout(() => {
+          if (loadSeqRef.current === errSeq && !embedOpenRef.current && active() === el) {
+            advanceRef.current?.({ manual: false })
+          }
+        }, 900)
+      }
     }
 
     decks.forEach((el) => {
       el.addEventListener('play', onPlay)
       el.addEventListener('pause', onPause)
+      el.addEventListener('waiting', onWaiting)
       el.addEventListener('timeupdate', onTime)
       el.addEventListener('ended', onEnded)
       el.addEventListener('error', onError)
@@ -1469,12 +1767,13 @@ export function PlayerProvider({ children }) {
       decks.forEach((el) => {
         el.removeEventListener('play', onPlay)
         el.removeEventListener('pause', onPause)
+        el.removeEventListener('waiting', onWaiting)
         el.removeEventListener('timeupdate', onTime)
         el.removeEventListener('ended', onEnded)
         el.removeEventListener('error', onError)
       })
     }
-  }, [swapTo, cancelFade, stopPlayback, nextTrack, setStatus])
+  }, [swapTo, cancelFade, dispatchMachine, stopPlayback, nextTrack, setStatus, streamResolver])
 
   // Persist the playhead on a slow tick, and immediately when the app is
   // backgrounded or closed — a phone kills the tab without warning.
@@ -1532,13 +1831,29 @@ export function PlayerProvider({ children }) {
   }, [])
 
   const setQueue = useCallback(
-    (list, { play = null } = {}) => {
+    (list, { play = null, onlyIfIdle = false } = {}) => {
+      const currentIdx = idxRef.current
+      const activeSong = currentIdx >= 0 ? queueRef.current[currentIdx] : null
+
+      // Browsing/searching another source or query must never wipe out an
+      // already active track or session before the listener taps a new song.
+      if (onlyIfIdle && activeSong) {
+        return
+      }
+
       setQueueState(list)
       queueRef.current = list
       resetContext(list)
+
       if (play === null) {
-        setCurrentIndex(-1)
-        idxRef.current = -1
+        if (activeSong) {
+          const preservedIdx = list.findIndex((s) => s?.id && s.id === activeSong.id)
+          setCurrentIndex(preservedIdx)
+          idxRef.current = preservedIdx
+        } else {
+          setCurrentIndex(-1)
+          idxRef.current = -1
+        }
       }
     },
     [resetContext]
@@ -1555,7 +1870,9 @@ export function PlayerProvider({ children }) {
   )
 
   const resetNowPlaying = useCallback(() => {
+    loadSeqRef.current += 1
     playingRef.current = false
+    setLongForm(null)
     cancelFade()
     try {
       const el = active()
@@ -1569,7 +1886,8 @@ export function PlayerProvider({ children }) {
     idxRef.current = -1
     setIsPlaying(false)
     setClock({ cur: 0, dur: 0 })
-  }, [cancelFade])
+    dispatchMachine({ type: 'RESET' })
+  }, [cancelFade, dispatchMachine])
 
   const qMove = useCallback((i, dir) => {
     setQueueState((prev) => {
@@ -1588,6 +1906,76 @@ export function PlayerProvider({ children }) {
       return n
     })
   }, [])
+
+  const qReorder = useCallback((fromIdx, toIdx) => {
+    setQueueState((prev) => {
+      if (
+        fromIdx === toIdx ||
+        fromIdx < 0 ||
+        toIdx < 0 ||
+        fromIdx >= prev.length ||
+        toIdx >= prev.length
+      ) {
+        return prev
+      }
+      const next = [...prev]
+      const [moved] = next.splice(fromIdx, 1)
+      next.splice(toIdx, 0, moved)
+      queueRef.current = next
+      setCurrentIndex((ci) => {
+        let nextCi = ci
+        if (ci === fromIdx) nextCi = toIdx
+        else if (fromIdx < ci && ci <= toIdx) nextCi = ci - 1
+        else if (toIdx <= ci && ci < fromIdx) nextCi = ci + 1
+        idxRef.current = nextCi
+        return nextCi
+      })
+      return next
+    })
+  }, [])
+
+  const playNext = useCallback(
+    (song) => {
+      if (!song?.id) return
+      const prev = queueRef.current
+      const curIdx = idxRef.current
+      if (!prev.length || curIdx < 0) {
+        setQueueState([song])
+        queueRef.current = [song]
+        resetContext([song])
+        playTrack(0)
+        return
+      }
+      const before = prev.slice(0, curIdx + 1)
+      const after = prev.slice(curIdx + 1).filter((s) => s.id !== song.id)
+      const next = [...before, song, ...after]
+      setQueueState(next)
+      queueRef.current = next
+      prewarmNextTrack(curIdx)
+      setStatus(`Playing next: ${decodeHtml(song.name)}`)
+    },
+    [playTrack, prewarmNextTrack, resetContext, setStatus]
+  )
+
+  const addToQueue = useCallback(
+    (song) => {
+      if (!song?.id) return
+      const prev = queueRef.current
+      const curIdx = idxRef.current
+      if (!prev.length || curIdx < 0) {
+        setQueueState([song])
+        queueRef.current = [song]
+        resetContext([song])
+        playTrack(0)
+        return
+      }
+      const next = [...prev, song]
+      setQueueState(next)
+      queueRef.current = next
+      setStatus(`Added to queue: ${decodeHtml(song.name)}`)
+    },
+    [playTrack, resetContext, setStatus]
+  )
 
   const qRemove = useCallback(
     (i) => {
@@ -1672,41 +2060,73 @@ export function PlayerProvider({ children }) {
       ? '12kbps'
       : settings.qualityPref
 
-  const value = useMemo(
+  const togglePip = useCallback(async () => {
+    if (isPipOpen()) {
+      closePipPlayer()
+      return false
+    }
+    return openPipPlayer({
+      current,
+      isPlaying,
+      progressFrac: clockRef.current.dur ? clockRef.current.cur / clockRef.current.dur : 0,
+      onTogglePlay: togglePlay,
+      onPrev: prevTrack,
+      onNext: nextTrack,
+    })
+  }, [current, isPlaying, nextTrack, prevTrack, togglePlay])
+
+  useEffect(() => {
+    if (!pipActive) return
+    updatePipPlayer({
+      current,
+      isPlaying,
+      progressFrac: clock.dur ? clock.cur / clock.dur : 0,
+    })
+  }, [pipActive, current, isPlaying, clock])
+
+  const transportValue = useMemo(
     () => ({
-      queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
-      setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
+      queue, currentIndex, current, isPlaying, volume, currentQuality,
+      recentHistory,
+      setQueue, playFromList, playTrack, playNext, addToQueue, qReorder,
+      nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
-      // The long-form embed: open, and this is what is open. Null otherwise.
-      longForm, closeLongForm,
-      // Transition truth for the "Mixing" badge, plus typed stop reasons so the
-      // UI can offer the right recovery instead of one generic error.
+      embedTrack, closeEmbed, reportEmbed, registerEmbedCommand,
       transition,
       stopReason,
+      playbackState: playbackMachine.state,
+      playbackFailure: playbackMachine.failure,
+      reResolvedCount: playbackMachine.reResolvedCount,
       dismissRecommendation,
       clearForcedQuality,
+      pipActive,
+      pipSupported: isPipSupported(),
+      togglePip,
       analyserRef: analyser, freqDataRef: freqData,
       audioRef: activeRef,
-      // Exposed so the UI can explain iOS-specific behaviour without probing
-      // the user agent on every render.
       ios: isIOS(),
     }),
     [
-      queue, currentIndex, current, isPlaying, clock, volume, currentQuality,
-      setQueue, playFromList, playTrack, nextTrack, prevTrack, togglePlay, play, pause,
+      queue, currentIndex, current, isPlaying, volume, currentQuality,
+      recentHistory,
+      setQueue, playFromList, playTrack, playNext, addToQueue, qReorder,
+      nextTrack, prevTrack, togglePlay, play, pause,
       seekFrac, seekBy, seekTo, setVolume, setSleepGain, reloadActive, qMove, qRemove, qClear,
       startRadioFrom, startArtistRadio, resetNowPlaying, resumeFromSystem,
-      transition, stopReason, dismissRecommendation, clearForcedQuality,
-      longForm, closeLongForm,
+      transition, stopReason, playbackMachine, dismissRecommendation, clearForcedQuality,
+      pipActive, togglePip,
+      embedTrack, closeEmbed, reportEmbed, registerEmbedCommand,
     ]
   )
 
   return (
-    <Ctx.Provider value={value}>
-      {children}
-      <audio ref={deckA} preload="metadata" />
-      <audio ref={deckB} preload="metadata" />
-    </Ctx.Provider>
+    <TransportCtx.Provider value={transportValue}>
+      <ClockCtx.Provider value={clock}>
+        {children}
+        <audio ref={deckA} preload="metadata" />
+        <audio ref={deckB} preload="metadata" />
+      </ClockCtx.Provider>
+    </TransportCtx.Provider>
   )
 }
